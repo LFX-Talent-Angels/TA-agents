@@ -8,10 +8,10 @@ This is a **subrepo** of the Talent Angels workspace.
 
 ## Read first
 
-1. The workspace policy: `../TA-workspace/CLAUDE.md`
+1. The workspace policy: `../CLAUDE.md`
    (or https://github.com/LFX-Talent-Angels/TA-workspace → `CLAUDE.md`).
    It is **authoritative** — git rules, DCO, secrets, agent conventions.
-2. `../TA-workspace/docs/architecture/SYSTEM.md` — high-level architecture.
+2. `../docs/architecture/SYSTEM.md` — high-level architecture.
 3. This file and `AGENTS.md` for code-specific rules.
 
 ## What lives here

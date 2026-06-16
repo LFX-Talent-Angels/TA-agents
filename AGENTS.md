@@ -5,9 +5,9 @@ working in `TA-agents`, the main code repo of Talent Angels.
 
 ## Read first
 
-1. `../TA-workspace/CLAUDE.md` — **authoritative** project policy (git, DCO,
+1. `../CLAUDE.md` — **authoritative** project policy (git, DCO,
    secrets, conventions). On GitHub: `LFX-Talent-Angels/TA-workspace`.
-2. `../TA-workspace/docs/architecture/SYSTEM.md` — architecture.
+2. `../docs/architecture/SYSTEM.md` — architecture.
 3. `CLAUDE.md` in this repo — code-specific rules.
 
 Treat `CLAUDE.md` files as authoritative. This file only routes non-Claude
@@ -19,7 +19,7 @@ agents; keep both in sync.
   pytest, type-check with mypy.
 - Branch + PR flow. Every commit DCO signed-off (`git commit -s`). Never push to
   `main`.
-- Never create `.env*` files or commit secrets. Use `.env.example`.
+- Never commit `.env*` files or secrets (a local, gitignored `.env` is fine). Use `.env.example`.
 - New behavior ships with a test.
 - Interpret Claude slash-commands (`/review`, `/ship`, `/qa`) as workflow intent;
   use your own equivalents or do the steps manually.

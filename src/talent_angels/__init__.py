@@ -1,13 +1,22 @@
-"""Talent Angels — a suite of AI Graph Agents over skill/task/occupation taxonomies.
+"""Talent Angels — the assistant runtime over skill/task/occupation taxonomies.
 
-Core agents:
-    - locator    : pinpoint a node from natural language
-    - connector  : neighbors of a node
-    - pathfinder : routes between two nodes
+One main assistant (LangGraph loop) owns the user's goal and dispatches four
+map-work capabilities implemented as skills + tools (see ARCHITECTURE.md and
+TA-workspace ADR-0003):
+
+    - skills.locate    : free text -> node candidates + confidence  (Resolve)
+    - skills.connect   : neighbors/hierarchy of a resolved node     (Reveal)
+    - skills.pathfind  : routes between two resolved nodes          (Compose)
+    - skills.evaluate  : rank routes under a named policy           (Rank)
 
 Supporting layers:
-    - graph      : knowledge graph model + Graph-RAG retrieval
-    - taxonomies : load & normalize ESCO, O*NET, SFIA, BLS, Lightcast
+    - assistant : intent -> plan -> dispatch -> merge -> answer
+    - contracts : typed results (Pydantic v2) crossing every boundary
+    - runlog    : one structured record per turn
+    - api       : thin FastAPI edge (no reasoning here)
+
+Graph suites (ingestion, schemas, suite tools) live in the sibling repo
+TA-taxonomies and are consumed as a versioned library.
 """
 
-__version__ = "0.0.1"
+__version__ = "0.1.0"

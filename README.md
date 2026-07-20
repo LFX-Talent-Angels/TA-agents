@@ -1,22 +1,28 @@
 # TA-agents
 
-> Main project of **Talent Angels** — a suite of AI Graph Agents that reason over
+> Main project of **Talent Angels** — the assistant runtime that reasons over
 > skill, task, and occupation taxonomies via Graph-RAG.
 
 Part of the [`LFX-Talent-Angels`](https://github.com/LFX-Talent-Angels) org. For
 project-wide docs, onboarding, and rules, see
 [`TA-workspace`](https://github.com/LFX-Talent-Angels/TA-workspace).
 
-## Agents
+## Architecture in one paragraph
 
-- **Locator** — pinpoints a skill/task/occupation in the taxonomies.
-- **Connector** — lists the nodes directly preceding/succeeding a location.
-- **Pathfinder** — traces all routes between two locations (learning journeys).
-- **Evaluator** *(future)* — ranks paths by relevance, distance, profile fit.
+**One main assistant** owns the user's goal and dispatches four map-work
+capabilities implemented as **skills + tools** (the team's Sprint 2
+architecture, ratified in ADR-0003):
 
-## Taxonomies
+- **Locator** *(Resolve)* — pinpoints a skill/task/occupation; attaches confidence.
+- **Connector** *(Reveal)* — lists the nodes around a resolved location.
+- **Pathfinder** *(Compose)* — traces routes between two locations (learning journeys).
+- **Evaluator** *(Rank)* — scores routes under an explicit, named policy.
 
-ESCO · O*NET · SFIA · BLS · Lightcast.
+Taxonomy graphs (ESCO · O*NET · SFIA · BLS · fifth slot under review) live as
+**suites** in the sibling repo
+[`TA-taxonomies`](https://github.com/LFX-Talent-Angels/TA-taxonomies), consumed
+here as a versioned library through the suite contract. Details:
+[`ARCHITECTURE.md`](./ARCHITECTURE.md).
 
 ## Quick start
 
@@ -38,9 +44,11 @@ pytest
 
 ```
 src/talent_angels/
-├── locator/      connector/      pathfinder/      # the agents
-├── graph/        # knowledge graph + Graph-RAG retrieval
-└── taxonomies/   # ESCO, O*NET, SFIA, BLS, Lightcast loaders
+├── assistant/    # the LangGraph loop: intent → plan → dispatch → merge → answer
+├── skills/       # locate/ connect/ pathfind/ evaluate/
+├── contracts/    # typed results (Pydantic v2)
+├── runlog/       # structured per-turn record
+└── api/          # thin FastAPI edge
 tests/
 ```
 

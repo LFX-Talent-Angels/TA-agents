@@ -8,8 +8,14 @@ license = { text = "Apache-2.0" }
 authors = [{ name = "The Talent Angels Authors" }]
 keywords = ["graph-rag", "knowledge-graph", "ai-agents", "skills", "taxonomies", "esco", "onet", "sfia"]
 dependencies = [
-  # Core deps are intentionally minimal for the skeleton.
-  # Add as decisions are made (see TA-workspace/docs/decisions/).
+  # Stack per TA-workspace ADR-0005 (versions pinned as code lands).
+  "pydantic>=2",
+  "langgraph",
+  "anthropic",
+  "fastapi",
+  "python-dotenv",
+  # "ta-taxonomies" — the suite-contract library (sibling repo), added once
+  # its first version is published/installable (ADR-0004).
 ]
 
 [project.optional-dependencies]

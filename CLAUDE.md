@@ -1,8 +1,8 @@
 # TA-agents
 
-The **main project** of Talent Angels: the suite of AI Graph Agents (Locator,
-Connector, Pathfinder) and the Graph-RAG layer that reasons over skill, task, and
-occupation taxonomies.
+The **main project** of Talent Angels: the assistant runtime — one main
+assistant (LangGraph) dispatching the Locate/Connect/Pathfind/Evaluate skills
+over taxonomy graph suites.
 
 This is a **subrepo** of the Talent Angels workspace.
 
@@ -11,27 +11,48 @@ This is a **subrepo** of the Talent Angels workspace.
 1. The workspace policy: `../CLAUDE.md`
    (or https://github.com/LFX-Talent-Angels/TA-workspace → `CLAUDE.md`).
    It is **authoritative** — git rules, DCO, secrets, agent conventions.
-2. `../docs/architecture/SYSTEM.md` — high-level architecture.
-3. This file and `AGENTS.md` for code-specific rules.
+2. `../docs/architecture/SYSTEM.md` — cross-repo architecture + suite contract.
+3. `ARCHITECTURE.md` in this repo — runtime internals. **Follow it**; the
+   architectural rules below are summaries.
+4. This file and `AGENTS.md` for code-specific rules.
 
 ## What lives here
 
 ```
 src/talent_angels/
-├── locator/        # pinpoint a node from natural language
-├── connector/      # neighbors of a node
-├── pathfinder/     # routes between two nodes
-├── graph/          # knowledge graph model, ingestion, Graph-RAG retrieval
-└── taxonomies/     # load & normalize ESCO, O*NET, SFIA, BLS, Lightcast
-tests/              # pytest
+├── assistant/      # intent → plan → dispatch → merge → answer (LangGraph)
+├── skills/         # locate/ connect/ pathfind/ evaluate/ — skills + tools
+├── contracts/      # AgentResult + typed refs (Pydantic v2)
+├── runlog/         # one structured record per turn
+└── api/            # FastAPI edge — thin, no reasoning
+tests/              # pytest; golden evals in tests/evals/
 ```
+
+Taxonomy ingestion, graph schemas, and the suite-contract implementation live
+in the sibling repo **`TA-taxonomies`** — never here. This repo imports only
+the suite-contract surface.
+
+## Architectural rules (short form — full text in ARCHITECTURE.md)
+
+- Only the **main assistant** talks to the user or changes the plan. Skills
+  never own the goal; tools know nothing about agents.
+- **Typed results cross every boundary** (AgentResult) — never prose.
+- Only graph data is cited as taxonomy fact; model inference is labeled.
+- Node IDs are **suite-scoped**; no cross-suite identity without an explicit
+  crosswalk. Evidence is a **pointer, not a payload** (licensing).
+- **Determinism is pushed down**: traversal, depth caps, top-K cuts, scoring
+  live in tools/code, not in model calls.
+- Skills run **inline by default**; a subagent only with a measurement that
+  isolation pays (see ARCHITECTURE.md "Subagent rule").
+- Every turn writes a run-log record.
 
 ## Conventions
 
 - **Python 3.11+.** Package is `talent_angels`, src-layout (`src/`).
 - Formatting/linting: **ruff**; types: **mypy** (be pragmatic early on).
-- Tests: **pytest**. New behavior ships with a test.
-- Keep modules small and single-purpose; one agent concern per package.
+- Tests: **pytest**. New behavior ships with a test; new skills ship with
+  golden evals.
+- Keep modules small and single-purpose; one capability per skill package.
 - Configuration via environment variables — see `.env.example`. **Never** commit
   real keys or `.env` files.
 
@@ -52,5 +73,6 @@ workspace `CLAUDE.md` and `CONTRIBUTING.md`.
 
 ## AI agents
 
-Read this file and `AGENTS.md` before changing code. Review and test agent
-output; you own what you submit. Record non-obvious decisions in `TA-memory`.
+Read this file, `ARCHITECTURE.md`, and `AGENTS.md` before changing code. Review
+and test agent output; you own what you submit. Record non-obvious decisions in
+`TA-memory`.

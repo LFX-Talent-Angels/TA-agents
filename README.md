@@ -18,7 +18,7 @@ architecture, ratified in ADR-0003):
 - **Pathfinder** *(Compose)* — traces routes between two locations (learning journeys).
 - **Evaluator** *(Rank)* — scores routes under an explicit, named policy.
 
-Taxonomy graphs (ESCO · O*NET · SFIA · BLS · fifth slot under review) live as
+Taxonomy graphs (O*NET · BLS · ESCO · SFIA structure-only · Sweden JobTech, per ADR-0006) live as
 **suites** in the sibling repo
 [`TA-taxonomies`](https://github.com/LFX-Talent-Angels/TA-taxonomies), consumed
 here as a versioned library through the suite contract. Details:

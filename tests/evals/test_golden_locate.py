@@ -9,10 +9,13 @@ import json
 from pathlib import Path
 
 import pytest
-from ta_taxonomies.suites.esco.db import neo4j_driver
-from ta_taxonomies.suites.esco.tools import EscoSuite
 
-from talent_angels.skills.locate import ESCO_SUITE_NAME, locate
+pytest.importorskip("ta_taxonomies")
+
+from ta_taxonomies.suites.esco.db import neo4j_driver  # noqa: E402
+from ta_taxonomies.suites.esco.tools import EscoSuite  # noqa: E402
+
+from talent_angels.skills.locate import ESCO_SUITE_NAME, locate  # noqa: E402
 
 GOLDEN_PATH = Path(__file__).parent / "golden_locate.json"
 

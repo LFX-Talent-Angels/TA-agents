@@ -9,9 +9,12 @@ CONTRIBUTING.md: fixture-backed tests should skip, not hard-fail, in CI).
 from __future__ import annotations
 
 import pytest
-from ta_taxonomies.contract.models import Candidate, Node, ToolResult
 
-from talent_angels.skills.locate import ESCO_SUITE_NAME, locate, open_esco_suite
+pytest.importorskip("ta_taxonomies")
+
+from ta_taxonomies.contract.models import Candidate, Node, ToolResult  # noqa: E402
+
+from talent_angels.skills.locate import ESCO_SUITE_NAME, locate, open_esco_suite  # noqa: E402
 
 
 class FakeSuite:

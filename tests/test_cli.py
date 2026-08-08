@@ -5,9 +5,12 @@ from __future__ import annotations
 import json
 
 import pytest
-from ta_taxonomies.suites.esco.db import neo4j_driver
 
-from talent_angels.cli import main
+pytest.importorskip("ta_taxonomies")
+
+from ta_taxonomies.suites.esco.db import neo4j_driver  # noqa: E402
+
+from talent_angels.cli import main  # noqa: E402
 
 
 def _neo4j_reachable() -> bool:

@@ -3,15 +3,18 @@
 from __future__ import annotations
 
 import pytest
-from ta_taxonomies.contract.models import Candidate, Node, ToolResult
 
-from talent_angels.assistant import (
+pytest.importorskip("ta_taxonomies")
+
+from ta_taxonomies.contract.models import Candidate, Node, ToolResult  # noqa: E402
+
+from talent_angels.assistant import (  # noqa: E402
     CAPABILITY_LOCATE,
     build_graph,
     classify_capability,
 )
-from talent_angels.llm.stub_client import StubLLMClient
-from talent_angels.skills.locate import ESCO_SUITE_NAME, open_esco_suite
+from talent_angels.llm.stub_client import StubLLMClient  # noqa: E402
+from talent_angels.skills.locate import ESCO_SUITE_NAME, open_esco_suite  # noqa: E402
 
 
 class FakeSuite:

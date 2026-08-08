@@ -3,10 +3,13 @@
 from __future__ import annotations
 
 import pytest
-from fastapi.testclient import TestClient
-from ta_taxonomies.suites.esco.db import neo4j_driver
 
-from talent_angels.api.app import create_app
+pytest.importorskip("ta_taxonomies")
+
+from fastapi.testclient import TestClient  # noqa: E402
+from ta_taxonomies.suites.esco.db import neo4j_driver  # noqa: E402
+
+from talent_angels.api.app import create_app  # noqa: E402
 
 
 def _neo4j_reachable() -> bool:

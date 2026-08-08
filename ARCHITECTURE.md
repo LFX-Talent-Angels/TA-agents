@@ -99,14 +99,14 @@ the measurement below, not a hunch.
 ## Contracts
 
 ```python
-class AgentResult(BaseModel):          # returned by every skill dispatch
-    capability: str                    # locate | connect | pathfind | evaluate
-    suite: str                         # esco | onet | sfia | bls | ...
-    nodes: list[NodeRef]               # suite-scoped IDs + source + source_id
+class AgentResult(BaseModel):  # returned by every skill dispatch
+    capability: str  # locate | connect | pathfind | evaluate
+    suite: str  # esco | onet | sfia | bls | ...
+    nodes: list[NodeRef]  # suite-scoped IDs + source + source_id
     edges: list[EdgeRef]
-    evidence: list[EvidencePointer]    # pointer, not payload
+    evidence: list[EvidencePointer]  # pointer, not payload
     confidence: float | None
-    warnings: list[str]                # incl. "no link", truncation counts
+    warnings: list[str]  # incl. "no link", truncation counts
 ```
 
 The suite contract itself (`search_nodes`, `get_neighbors`, `enumerate_paths`,

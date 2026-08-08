@@ -1,0 +1,102 @@
+{
+  "suite": "esco",
+  "note": "Expected values captured from a live run against the ESCO fixture (TA-taxonomies fixture.json) — see NOTES.md. Re-capture if the fixture changes.",
+  "cases": [
+    {
+      "question": "software developer",
+      "kind": "occupation",
+      "expected_top_id": "esco:occupation:f2b15a0e-e65a-438a-affb-29b9d50b77d1",
+      "expected_confidence": 0.95,
+      "expected_method": "exact_pref",
+      "expected_warnings": []
+    },
+    {
+      "question": "data analyst",
+      "kind": "occupation",
+      "expected_top_id": "esco:occupation:d3edb8f8-3a06-47a0-8fb9-9b212c006aa2",
+      "expected_confidence": 0.95,
+      "expected_method": "exact_pref",
+      "expected_warnings": []
+    },
+    {
+      "question": "data scientist",
+      "kind": "occupation",
+      "expected_top_id": "esco:occupation:258e46f9-0075-4a2e-adae-1ff0477e0f30",
+      "expected_confidence": 0.95,
+      "expected_method": "exact_pref",
+      "expected_warnings": []
+    },
+    {
+      "question": "web developer",
+      "kind": "occupation",
+      "expected_top_id": "esco:occupation:c40a2919-48a9-40ea-b506-1f34f693496d",
+      "expected_confidence": 0.95,
+      "expected_method": "exact_pref",
+      "expected_warnings": []
+    },
+    {
+      "question": "ICT security administrator",
+      "kind": "occupation",
+      "expected_top_id": "esco:occupation:0464b062-cea6-4164-b10d-956c61956ae7",
+      "expected_confidence": 0.95,
+      "expected_method": "exact_pref",
+      "expected_warnings": []
+    },
+    {
+      "question": "software analyst",
+      "kind": "occupation",
+      "expected_top_id": "esco:occupation:04ba4d6c-957d-417f-bf63-5b9e015a9f86",
+      "expected_confidence": 0.95,
+      "expected_method": "exact_pref",
+      "expected_warnings": []
+    },
+    {
+      "question": "programmer",
+      "kind": "occupation",
+      "expected_top_id": "esco:occupation:f2b15a0e-e65a-438a-affb-29b9d50b77d1",
+      "expected_confidence": 0.90,
+      "expected_method": "exact_alt",
+      "expected_warnings": []
+    },
+    {
+      "question": "data expert",
+      "kind": "occupation",
+      "expected_top_id": "esco:occupation:258e46f9-0075-4a2e-adae-1ff0477e0f30",
+      "expected_confidence": 0.90,
+      "expected_method": "exact_alt",
+      "expected_warnings": []
+    },
+    {
+      "question": "CISO",
+      "kind": "occupation",
+      "expected_top_id": "esco:occupation:0464b062-cea6-4164-b10d-956c61956ae7",
+      "expected_confidence": 0.90,
+      "expected_method": "exact_alt",
+      "expected_warnings": []
+    },
+    {
+      "question": "Software Developer",
+      "kind": "occupation",
+      "expected_top_id": "esco:occupation:f2b15a0e-e65a-438a-affb-29b9d50b77d1",
+      "expected_confidence": 0.85,
+      "expected_method": "casefold_pref",
+      "expected_warnings": []
+    },
+    {
+      "question": "developer",
+      "kind": "occupation",
+      "expected_top_id": "esco:occupation:f2b15a0e-e65a-438a-affb-29b9d50b77d1",
+      "expected_confidence": 0.70,
+      "expected_method": "contains",
+      "expected_warnings": ["ambiguous"]
+    },
+    {
+      "question": "xyzzy-nonexistent-occupation",
+      "kind": "occupation",
+      "expected_top_id": null,
+      "expected_confidence": null,
+      "expected_method": null,
+      "expected_warnings": ["not_found"]
+    }
+  ]
+}

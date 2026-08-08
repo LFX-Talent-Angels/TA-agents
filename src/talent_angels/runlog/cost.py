@@ -46,11 +46,8 @@ def estimate_llm_cost_usd(
     # A/B report (MVP plan Sec 2.7). Equal to `total` on a turn with no cache
     # activity, which is why the plan's example record shows them matching.
     uncached_baseline = (
-        (usage.input_tokens + usage.cache_read_input_tokens + usage.cache_creation_input_tokens)
-        * rates["input_per_million"]
-        / _PER_MILLION
-        + output_cost
-    )
+        usage.input_tokens + usage.cache_read_input_tokens + usage.cache_creation_input_tokens
+    ) * rates["input_per_million"] / _PER_MILLION + output_cost
 
     return CostBreakdown(
         llm=uncached_baseline,

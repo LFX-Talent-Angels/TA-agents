@@ -1,8 +1,8 @@
 """Headless CLI — same turn logic as the API, no server required.
 
-    python -m talent_angels.cli query "software developer"
-    python -m talent_angels.cli locate "software developer" --kind occupation
-    python -m talent_angels.cli bench
+python -m talent_angels.cli query "software developer"
+python -m talent_angels.cli locate "software developer" --kind occupation
+python -m talent_angels.cli bench
 """
 
 from __future__ import annotations
@@ -31,9 +31,7 @@ def _build_parser() -> argparse.ArgumentParser:
     query_parser.add_argument("question")
     query_parser.add_argument("--kind", default=None)
 
-    locate_parser = sub.add_parser(
-        "locate", help="Run Locate directly (bypasses intent routing)."
-    )
+    locate_parser = sub.add_parser("locate", help="Run Locate directly (bypasses intent routing).")
     locate_parser.add_argument("question")
     locate_parser.add_argument("--kind", default=None)
 

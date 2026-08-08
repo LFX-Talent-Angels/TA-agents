@@ -14,6 +14,7 @@ dependencies = [
   "anthropic",
   "fastapi",
   "python-dotenv",
+  "pyyaml",
   # "ta-taxonomies" — the suite-contract library (sibling repo), added once
   # its first version is published/installable (ADR-0004).
 ]

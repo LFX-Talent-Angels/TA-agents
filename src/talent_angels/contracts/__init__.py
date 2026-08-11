@@ -2,5 +2,14 @@
 
 AgentResult: capability, suite, nodes, edges, evidence, confidence, warnings.
 Node IDs are suite-scoped; every node carries source + source_id; evidence is
-a pointer, not a payload. Prose never crosses boundaries. Skeleton.
+a pointer, not a payload. Prose never crosses boundaries.
 """
+
+from talent_angels.contracts.models import (
+    AgentResult,
+    EdgeRef,
+    EvidencePointer,
+    NodeRef,
+)
+
+__all__ = ["AgentResult", "EdgeRef", "EvidencePointer", "NodeRef"]

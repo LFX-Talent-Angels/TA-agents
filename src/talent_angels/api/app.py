@@ -5,7 +5,6 @@ reasoning lives here (ARCHITECTURE.md).
 
 from __future__ import annotations
 
-import os
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
 
@@ -14,7 +13,7 @@ from fastapi import FastAPI
 from talent_angels.api.schemas import HealthResponse, QueryRequest, QueryResponse, UsageInfo
 from talent_angels.assistant import run_turn
 from talent_angels.assistant.intent import CAPABILITY_CONNECT, Capability
-from talent_angels.llm import get_llm_client
+from talent_angels.llm.factory import get_answer_mode, get_llm_client
 from talent_angels.suites import SuiteRegistry, default_suite_registry
 
 
@@ -23,7 +22,7 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     with app.state.registry.open() as runtime:
         app.state.runtime = runtime
         app.state.llm_client = get_llm_client()
-        app.state.answer_mode = os.environ.get("ANSWER_MODE", "structured").strip() or "structured"
+        app.state.answer_mode = get_answer_mode()
         yield
 
 

@@ -27,6 +27,7 @@ class GenAIUsage(BaseModel):
     request_model: str = ""
     input_tokens: int = 0
     output_tokens: int = 0
+    reasoning_tokens: int = 0
     cache_read_input_tokens: int = 0
     cache_creation_input_tokens: int = 0
     calls: int = 0
@@ -44,6 +45,7 @@ class GraphStats(BaseModel):
 
 
 class CostBreakdown(BaseModel):
+    known: bool = True
     llm: float = 0.0
     llm_with_cache_savings: float = 0.0
     total: float = 0.0

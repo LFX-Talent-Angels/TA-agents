@@ -20,10 +20,23 @@ def test_stub_model_costs_nothing() -> None:
     assert cost.llm == 0.0
 
 
-def test_unknown_model_falls_back_to_stub_zero_cost() -> None:
+def test_unknown_model_marks_dollar_cost_unknown() -> None:
     usage = LLMUsage(input_tokens=1000, output_tokens=500)
     cost = estimate_llm_cost_usd(usage, "not-a-real-model")
+
     assert cost.total == 0.0
+    assert cost.known is False
+    assert cost.rate_card == "unpriced:not-a-real-model"
+
+
+def test_openrouter_free_model_records_tokens_at_zero_cost() -> None:
+    usage = LLMUsage(input_tokens=1_000, output_tokens=500, reasoning_tokens=300)
+
+    cost = estimate_llm_cost_usd(usage, "openrouter/nvidia/nemotron-3-ultra-550b-a55b:free")
+
+    assert cost.total == 0.0
+    assert cost.known is True
+    assert usage.reasoning_tokens == 300
 
 
 def test_known_model_prices_input_and_output_tokens() -> None:

@@ -27,9 +27,19 @@ def load_rate_card() -> dict[str, Any]:
 def estimate_llm_cost_usd(
     usage: LLMUsage, model: str, *, rate_card: dict[str, Any] | None = None
 ) -> CostBreakdown:
-    """Cost of one LLM call, cache-aware. Unknown/zero-usage models cost $0."""
+    """Cost of one LLM call, cache-aware.
+
+    Registered models, including deliberate $0 entries, stay ``known=True``.
+    Unknown models return ``known=False`` and zero dollar amounts so an
+    unpriced model is never reported as a priced $0 stub.
+    """
     card = rate_card or load_rate_card()
-    rates = card["models"].get(model) or card["models"]["stub"]
+    rates = card["models"].get(model)
+    if rates is None:
+        return CostBreakdown(
+            known=False,
+            rate_card=f"unpriced:{model}",
+        )
 
     input_cost = usage.input_tokens * rates["input_per_million"] / _PER_MILLION
     output_cost = usage.output_tokens * rates["output_per_million"] / _PER_MILLION

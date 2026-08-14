@@ -11,8 +11,26 @@ from fastapi.testclient import TestClient
 from talent_angels import cli
 from talent_angels.api.app import create_app
 from talent_angels.cli import main
+from talent_angels.llm.protocol import LLMResult, LLMUsage, Message
 from talent_angels.suites import SuiteRegistry, SuiteRuntime
 from tests.fakes.taxonomy import FakeCandidate, FakeEdge, FakeNode, FakeToolResult
+
+
+class RecordingLLMClient:
+    provider = "test"
+    model = "recorder"
+
+    def __init__(self) -> None:
+        self.calls: list[list[Message]] = []
+
+    def complete(self, messages: list[Message]) -> LLMResult:
+        self.calls.append(messages)
+        return LLMResult(
+            text="phrased",
+            provider=self.provider,
+            model=self.model,
+            usage=LLMUsage(input_tokens=3, output_tokens=2),
+        )
 
 
 class FakeSuite:
@@ -163,3 +181,48 @@ def test_cli_bench_serializes_separate_locate_metrics(
     assert baseline["hit_at_1_questions"] == 1
     assert baseline["candidate_recall"] == 1.0
     assert baseline["candidate_recall_questions"] == 1
+
+
+def test_cli_locate_uses_natural_answer_mode(
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    recorder = RecordingLLMClient()
+    monkeypatch.setenv("ANSWER_MODE", "natural")
+    monkeypatch.setattr(cli, "get_llm_client", lambda: recorder)
+
+    assert main(["locate", "accountant"], registry=_registry()) == 0
+
+    output = json.loads(capsys.readouterr().out)
+    assert output["answer"] == "phrased"
+    assert len(recorder.calls) == 1
+
+
+def test_cli_bench_stays_structured_when_natural_mode_is_set(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    recorder = RecordingLLMClient()
+    monkeypatch.setenv("ANSWER_MODE", "natural")
+    monkeypatch.setattr(cli, "get_llm_client", lambda: recorder)
+    golden_path = tmp_path / "golden.json"
+    golden_path.write_text(
+        json.dumps(
+            {
+                "cases": [
+                    {
+                        "question": "accountant",
+                        "kind": "occupation",
+                        "expected_top_id": "test:occupation:1",
+                    }
+                ]
+            }
+        ),
+        encoding="utf-8",
+    )
+    monkeypatch.setattr(cli, "GOLDEN_LOCATE_PATH", golden_path)
+
+    assert main(["bench"], registry=_registry()) == 0
+    json.loads(capsys.readouterr().out)
+    assert recorder.calls == []

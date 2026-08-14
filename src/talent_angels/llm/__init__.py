@@ -2,8 +2,9 @@
 
 `LLM_PROVIDER=none` (default) is a deterministic, zero-token stub — Locate
 runs entirely on `search_nodes` and never needs this. `LLM_PROVIDER=anthropic`
-is the one real provider wired for Gate A; new providers are new client
-modules behind the same `LLMClient` protocol, chosen by `get_llm_client()`.
+is the original Gate A path. `LLM_PROVIDER=litellm` is the unified adapter
+(OpenRouter first). New providers are new client modules behind the same
+`LLMClient` protocol, chosen by `get_llm_client()`.
 """
 
 from talent_angels.llm.factory import get_llm_client

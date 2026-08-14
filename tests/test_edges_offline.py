@@ -8,6 +8,7 @@ from contextlib import contextmanager
 import pytest
 from fastapi.testclient import TestClient
 
+from talent_angels import cli
 from talent_angels.api.app import create_app
 from talent_angels.cli import main
 from talent_angels.suites import SuiteRegistry, SuiteRuntime
@@ -63,3 +64,41 @@ def test_api_uses_injected_registry_and_adapter_health() -> None:
     assert response.status_code == 200
     assert response.json()["suite"] == "test"
     assert response.json()["result"]["nodes"][0]["pref_label"] == "accountant"
+
+
+def test_cli_bench_serializes_separate_locate_metrics(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    golden_path = tmp_path / "golden.json"
+    golden_path.write_text(
+        json.dumps(
+            {
+                "cases": [
+                    {
+                        "question": "accountant",
+                        "kind": "occupation",
+                        "expected_top_id": "test:occupation:1",
+                    },
+                    {
+                        "question": "ambiguous accountant",
+                        "kind": "occupation",
+                        "metric": "candidate_recall",
+                        "expected_top_id": "test:occupation:1",
+                    },
+                ]
+            }
+        ),
+        encoding="utf-8",
+    )
+    monkeypatch.setattr(cli, "GOLDEN_LOCATE_PATH", golden_path)
+
+    assert main(["bench"], registry=_registry()) == 0
+
+    report = json.loads(capsys.readouterr().out)
+    baseline = report["baseline"]
+    assert baseline["hit_at_1_accuracy"] == 1.0
+    assert baseline["hit_at_1_questions"] == 1
+    assert baseline["candidate_recall"] == 1.0
+    assert baseline["candidate_recall_questions"] == 1

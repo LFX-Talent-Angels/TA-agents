@@ -27,6 +27,14 @@ jobs:
       - name: Format check
         run: ruff format --check .
       - name: Type-check
-        run: mypy src || true   # advisory while the codebase is young
-      - name: Test
-        run: pytest -q
+        run: mypy src
+      - name: Offline tests
+        run: pytest -q --ignore=tests/integration
+      - name: Report integration availability
+        run: pytest -q tests/integration -rs
+      - name: Install merged taxonomy contract
+        run: >-
+          pip install
+          "ta-taxonomies @ git+https://github.com/LFX-Talent-Angels/TA-taxonomies.git@5c4019d1a8101733bc19423b32a3443a07e81cd4"
+      - name: Verify taxonomy contract compatibility
+        run: pytest -q tests/integration/test_taxonomy_contract.py

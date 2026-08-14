@@ -9,20 +9,59 @@ the suite, see `ta_taxonomies.suites.esco.config`) into TA-agents'
 
 from __future__ import annotations
 
-from typing import Protocol
-
-from ta_taxonomies.contract.models import Node, ToolResult
+from collections.abc import Mapping, Sequence
+from typing import Protocol, cast
 
 from talent_angels.contracts import AgentResult, EvidencePointer, NodeRef
+
+
+class TaxonomyNode(Protocol):
+    @property
+    def id(self) -> str: ...
+
+    @property
+    def kind(self) -> str: ...
+
+    @property
+    def label(self) -> str: ...
+
+    @property
+    def source(self) -> str: ...
+
+    @property
+    def source_id(self) -> str: ...
+
+    @property
+    def properties(self) -> Mapping[str, object]: ...
+
+
+class SearchCandidate(Protocol):
+    @property
+    def node(self) -> TaxonomyNode: ...
+
+    @property
+    def confidence(self) -> float: ...
+
+
+class SearchResult(Protocol):
+    @property
+    def candidates(self) -> Sequence[SearchCandidate]: ...
+
+    @property
+    def evidence(self) -> Sequence[str]: ...
+
+    @property
+    def warnings(self) -> Sequence[str]: ...
 
 
 class SearchableSuite(Protocol):
     """The slice of the suite contract Locate needs — any suite qualifies."""
 
-    def search_nodes(self, text: str, kind: str | None = None) -> ToolResult: ...
+    def search_nodes(self, text: str, kind: str | None = None) -> SearchResult: ...
 
 
-def _node_ref(node: Node, suite: str) -> NodeRef:
+def _node_ref(node: TaxonomyNode, suite: str) -> NodeRef:
+    alt_labels = cast(Sequence[str], node.properties.get("alt_labels") or ())
     return NodeRef(
         id=node.id,
         suite=suite,
@@ -30,7 +69,7 @@ def _node_ref(node: Node, suite: str) -> NodeRef:
         source_id=node.source_id,
         kind=node.kind,
         pref_label=node.label,
-        alt_labels=list(node.properties.get("alt_labels") or []),
+        alt_labels=list(alt_labels),
     )
 
 

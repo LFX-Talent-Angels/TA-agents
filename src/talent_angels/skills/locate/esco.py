@@ -13,8 +13,6 @@ from contextlib import contextmanager
 from ta_taxonomies.suites.esco.db import neo4j_driver
 from ta_taxonomies.suites.esco.tools import EscoSuite
 
-ESCO_SUITE_NAME = "esco"
-
 
 @contextmanager
 def open_esco_suite() -> Iterator[EscoSuite]:

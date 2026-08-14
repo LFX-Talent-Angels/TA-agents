@@ -68,5 +68,8 @@ def build_answer(
         ),
         Message(role="user", content=summary),
     ]
-    llm_result, stage = measure_complete(llm_client, messages, stage="answer")
+    try:
+        llm_result, stage = measure_complete(llm_client, messages, stage="answer")
+    except RuntimeError:
+        return summary, None
     return llm_result.text, stage

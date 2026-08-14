@@ -12,9 +12,17 @@ from typing import Protocol, runtime_checkable
 from pydantic import BaseModel, Field
 
 
+class ToolInvocation(BaseModel):
+    id: str = ""
+    name: str
+    arguments: dict[str, object] = Field(default_factory=dict)
+
+
 class Message(BaseModel):
-    role: str  # "system" | "user" | "assistant"
-    content: str
+    role: str  # "system" | "user" | "assistant" | "tool"
+    content: str = ""
+    tool_call_id: str | None = None
+    tool_calls: list[ToolInvocation] | None = None
 
 
 class LLMUsage(BaseModel):
@@ -32,6 +40,7 @@ class LLMResult(BaseModel):
     provider: str
     model: str
     usage: LLMUsage = Field(default_factory=LLMUsage)
+    tool_calls: list[ToolInvocation] = Field(default_factory=list)
 
 
 @runtime_checkable
@@ -39,6 +48,8 @@ class LLMClient(Protocol):
     provider: str
     model: str
 
-    def complete(self, messages: list[Message]) -> LLMResult:
+    def complete(
+        self, messages: list[Message], *, tools: list[dict[str, object]] | None = None
+    ) -> LLMResult:
         """Return drafted text plus usage. Zero tokens for the `none` stub."""
         ...

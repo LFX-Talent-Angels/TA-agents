@@ -115,6 +115,43 @@ def test_litellm_accepts_model_response_objects() -> None:
     assert result.usage.output_tokens == 2
 
 
+def test_litellm_maps_tool_calls() -> None:
+    def complete(**kwargs: object) -> dict[str, object]:
+        assert kwargs.get("tools")
+        assert "tool_choice" not in kwargs
+        assert "extra_body" not in kwargs
+        return {
+            "model": "actual-model",
+            "choices": [
+                {
+                    "finish_reason": "tool_calls",
+                    "message": {
+                        "content": None,
+                        "tool_calls": [
+                            {
+                                "id": "call-1",
+                                "function": {
+                                    "name": "search_nodes",
+                                    "arguments": '{"text":"software developer"}',
+                                },
+                            }
+                        ],
+                    },
+                }
+            ],
+            "usage": {"prompt_tokens": 4, "completion_tokens": 3},
+        }
+
+    result = LiteLLMClient(model=MODEL, completion_fn=complete).complete(
+        [Message(role="user", content="skills?")],
+        tools=[{"type": "function", "function": {"name": "search_nodes"}}],
+    )
+
+    assert result.text == ""
+    assert result.tool_calls[0].name == "search_nodes"
+    assert result.tool_calls[0].arguments == {"text": "software developer"}
+
+
 def test_litellm_omits_reasoning_when_disabled() -> None:
     def complete(**kwargs: object) -> dict[str, object]:
         assert "reasoning" not in kwargs

@@ -29,7 +29,9 @@ class AnthropicLLMClient:
             )
         self._client = anthropic.Anthropic(api_key=key)
 
-    def complete(self, messages: list[Message]) -> LLMResult:
+    def complete(
+        self, messages: list[Message], *, tools: list[dict[str, object]] | None = None
+    ) -> LLMResult:
         system_text = "\n".join(m.content for m in messages if m.role == "system")
         turns: list[dict[str, Any]] = [
             {"role": m.role, "content": m.content} for m in messages if m.role != "system"

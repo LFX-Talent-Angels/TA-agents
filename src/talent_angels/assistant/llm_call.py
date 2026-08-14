@@ -9,10 +9,17 @@ from talent_angels.runlog import StageUsage
 
 
 def measure_complete(
-    client: LLMClient, messages: list[Message], *, stage: str
+    client: LLMClient,
+    messages: list[Message],
+    *,
+    stage: str,
+    tools: list[dict[str, object]] | None = None,
 ) -> tuple[LLMResult, StageUsage]:
     started = perf_counter()
-    result = client.complete(messages)
+    if tools is None:
+        result = client.complete(messages)
+    else:
+        result = client.complete(messages, tools=tools)
     latency_ms = (perf_counter() - started) * 1000
     usage = result.usage
     return result, StageUsage(

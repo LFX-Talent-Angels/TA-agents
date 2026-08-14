@@ -33,7 +33,9 @@ def test_cli_locate_command_prints_json_result(capsys: pytest.CaptureFixture[str
     output = json.loads(capsys.readouterr().out)
     assert output["capability"] == "locate"
     assert output["confidence"] == 0.95
-    assert output["cost_usd"] == 0.0
+    assert output["cost_usd"]["known"] is True
+    assert output["cost_usd"]["total"] == 0.0
+    assert output["tokens"]["calls"] == 0
 
 
 def test_cli_query_command_routes_via_heuristic_intent(capsys: pytest.CaptureFixture[str]) -> None:

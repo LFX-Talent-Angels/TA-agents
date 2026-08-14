@@ -61,6 +61,7 @@ def test_graph_answers_locate_question_structured() -> None:
     final_state = graph.invoke({"question": "software developer"})
 
     assert final_state["capability"] == CAPABILITY_LOCATE
+    assert final_state["plan"].capabilities == ("locate",)
     assert final_state["result"].confidence == 0.95
     assert "software developer" in final_state["answer"]
     assert "95%" in final_state["answer"]
@@ -75,6 +76,7 @@ def test_graph_reports_unimplemented_capability_honestly() -> None:
     )
 
     assert final_state["capability"] == "connect"
+    assert final_state["plan"].capabilities == ("locate", "connect")
     assert final_state["result"].nodes == []
     assert "capability_not_implemented:connect" in final_state["result"].warnings
     assert "no match found" in final_state["answer"].lower()
@@ -137,3 +139,36 @@ def test_turn_separates_cache_and_runlog_by_suite(
     assert onet_cached.record.efficiency.result_cache_hit is True
     records = [json.loads(line) for line in runlog_path.read_text().splitlines()]
     assert [record["suite"] for record in records] == ["onet", "esco", "onet"]
+
+
+@pytest.mark.parametrize(
+    ("question", "expected_plan"),
+    [
+        (
+            "What essential skills does a software developer need?",
+            ("locate", "connect"),
+        ),
+        (
+            "What is the skill gap from data analyst to data scientist?",
+            ("locate", "connect", "pathfind"),
+        ),
+    ],
+)
+def test_turn_records_cumulative_plan(
+    question: str,
+    expected_plan: tuple[str, ...],
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path,
+) -> None:
+    monkeypatch.setenv("RUNLOG_PATH", str(tmp_path / "runlog.jsonl"))
+    monkeypatch.setenv("LLM_PROVIDER", "none")
+
+    outcome = run_turn(
+        suite=FakeSuite(FakeToolResult()),
+        suite_name="esco",
+        llm_client=StubLLMClient(),
+        question=question,
+    )
+
+    assert outcome.plan.capabilities == expected_plan
+    assert tuple(outcome.record.plan) == expected_plan

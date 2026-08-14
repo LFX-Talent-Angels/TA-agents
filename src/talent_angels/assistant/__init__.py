@@ -13,6 +13,13 @@ from talent_angels.assistant.intent import (
     CAPABILITY_PATHFIND,
     classify_capability,
 )
+from talent_angels.assistant.planning import (
+    ExecutionPlan,
+    Intent,
+    PlanStep,
+    build_plan,
+    build_plan_for_capability,
+)
 from talent_angels.assistant.state import AssistantState
 from talent_angels.assistant.turn import TurnOutcome, run_turn
 
@@ -21,9 +28,14 @@ __all__ = [
     "CAPABILITY_LOCATE",
     "CAPABILITY_PATHFIND",
     "AssistantState",
+    "ExecutionPlan",
+    "Intent",
+    "PlanStep",
     "ResultCache",
     "TurnOutcome",
     "build_graph",
+    "build_plan",
+    "build_plan_for_capability",
     "classify_capability",
     "run_turn",
 ]

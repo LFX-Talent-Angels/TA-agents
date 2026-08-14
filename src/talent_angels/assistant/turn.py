@@ -14,7 +14,11 @@ from dataclasses import dataclass
 from talent_angels.assistant.answer import build_answer
 from talent_angels.assistant.cache import ResultCache
 from talent_angels.assistant.graph import SearchableSuite, build_graph
-from talent_angels.assistant.intent import CAPABILITY_LOCATE
+from talent_angels.assistant.intent import CAPABILITY_LOCATE, Capability
+from talent_angels.assistant.planning import (
+    ExecutionPlan,
+    build_plan_for_capability,
+)
 from talent_angels.contracts import AgentResult
 from talent_angels.llm import LLMClient, LLMUsage
 from talent_angels.runlog import (
@@ -32,7 +36,8 @@ from talent_angels.skills.locate import ESCO_SUITE_NAME, locate
 
 @dataclass
 class TurnOutcome:
-    capability: str
+    capability: Capability
+    plan: ExecutionPlan
     result: AgentResult
     answer: str
     record: RunLogRecord
@@ -61,6 +66,7 @@ def run_turn(
     cache_hit = False
     if force_locate:
         capability = CAPABILITY_LOCATE
+        plan = build_plan_for_capability(capability, suites=(suite_name,))
         cached = cache.get(suite_name, capability, question) if cache else None
         if cached is not None:
             result = cached
@@ -79,6 +85,7 @@ def run_turn(
         )
         final_state = graph.invoke({"question": question, "kind": kind})
         capability = final_state["capability"]
+        plan = final_state["plan"]
         result = final_state["result"]
         answer = final_state["answer"]
         llm_usage = final_state.get("llm_usage")
@@ -101,7 +108,7 @@ def run_turn(
 
     record = RunLogRecord(
         suite=result.suite,
-        plan=[capability],
+        plan=list(plan.capabilities),
         question=question,
         efficiency=EfficiencyInfo(
             mode=(
@@ -123,4 +130,10 @@ def run_turn(
     )
     append_record(record)
 
-    return TurnOutcome(capability=capability, result=result, answer=answer, record=record)
+    return TurnOutcome(
+        capability=capability,
+        plan=plan,
+        result=result,
+        answer=answer,
+        record=record,
+    )

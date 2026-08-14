@@ -10,38 +10,29 @@ from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
 
 from fastapi import FastAPI
-from ta_taxonomies.suites.esco.db import neo4j_driver
-from ta_taxonomies.suites.esco.tools import EscoSuite
 
 from talent_angels.api.schemas import HealthResponse, QueryRequest, QueryResponse, UsageInfo
 from talent_angels.assistant import run_turn
 from talent_angels.llm import get_llm_client
+from talent_angels.suites import SuiteRegistry, default_suite_registry
 
 
 @asynccontextmanager
 async def lifespan(app: FastAPI) -> AsyncIterator[None]:
-    driver_cm = neo4j_driver()
-    driver, database = driver_cm.__enter__()
-    app.state.driver = driver
-    app.state.suite = EscoSuite(driver, database=database)
-    app.state.llm_client = get_llm_client()
-    app.state.answer_mode = os.environ.get("ANSWER_MODE", "structured").strip() or "structured"
-    try:
+    with app.state.registry.open() as runtime:
+        app.state.runtime = runtime
+        app.state.llm_client = get_llm_client()
+        app.state.answer_mode = os.environ.get("ANSWER_MODE", "structured").strip() or "structured"
         yield
-    finally:
-        driver_cm.__exit__(None, None, None)
 
 
-def create_app() -> FastAPI:
+def create_app(*, registry: SuiteRegistry | None = None) -> FastAPI:
     app = FastAPI(title="Talent Angels — TA-agents", version="0.1.0", lifespan=lifespan)
+    app.state.registry = registry or default_suite_registry()
 
     @app.get("/v1/health", response_model=HealthResponse)
     def health() -> HealthResponse:
-        try:
-            app.state.driver.verify_connectivity()
-            reachable = True
-        except Exception:
-            reachable = False
+        reachable = app.state.runtime.is_reachable()
         return HealthResponse(status="ok", neo4j_reachable=reachable)
 
     @app.post("/v1/query", response_model=QueryResponse)
@@ -57,7 +48,8 @@ def create_app() -> FastAPI:
 
 def _handle(app: FastAPI, payload: QueryRequest, *, force_locate: bool) -> QueryResponse:
     outcome = run_turn(
-        suite=app.state.suite,
+        suite=app.state.runtime.suite,
+        suite_name=app.state.runtime.name,
         llm_client=app.state.llm_client,
         question=payload.question,
         kind=payload.kind,

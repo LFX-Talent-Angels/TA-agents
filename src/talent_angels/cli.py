@@ -14,11 +14,9 @@ from collections.abc import Sequence
 from pathlib import Path
 from typing import Any
 
-from ta_taxonomies.suites.esco.db import neo4j_driver
-from ta_taxonomies.suites.esco.tools import EscoSuite
-
 from talent_angels.assistant import ResultCache, run_turn
 from talent_angels.llm import get_llm_client
+from talent_angels.suites import SuiteRegistry, default_suite_registry
 
 GOLDEN_LOCATE_PATH = Path(__file__).resolve().parents[2] / "tests" / "evals" / "golden_locate.json"
 
@@ -43,17 +41,18 @@ def _build_parser() -> argparse.ArgumentParser:
     return parser
 
 
-def main(argv: Sequence[str] | None = None) -> int:
+def main(argv: Sequence[str] | None = None, *, registry: SuiteRegistry | None = None) -> int:
     args = _build_parser().parse_args(argv)
+    selected_registry = registry or default_suite_registry()
 
     if args.command == "bench":
-        return _run_bench()
+        return _run_bench(selected_registry)
 
-    with neo4j_driver() as (driver, database):
-        suite = EscoSuite(driver, database=database)
+    with selected_registry.open() as runtime:
         llm_client = get_llm_client()
         outcome = run_turn(
-            suite=suite,
+            suite=runtime.suite,
+            suite_name=runtime.name,
             llm_client=llm_client,
             question=args.question,
             kind=args.kind,
@@ -65,6 +64,7 @@ def main(argv: Sequence[str] | None = None) -> int:
             {
                 "run_id": outcome.record.run_id,
                 "capability": outcome.capability,
+                "suite": outcome.result.suite,
                 "answer": outcome.answer,
                 "confidence": outcome.result.confidence,
                 "warnings": outcome.result.warnings,
@@ -76,18 +76,21 @@ def main(argv: Sequence[str] | None = None) -> int:
     return 0
 
 
-def _run_bench() -> int:
+def _run_bench(registry: SuiteRegistry) -> int:
     cases = json.loads(GOLDEN_LOCATE_PATH.read_text(encoding="utf-8"))["cases"]
 
-    with neo4j_driver() as (driver, database):
-        suite = EscoSuite(driver, database=database)
+    with registry.open() as runtime:
         llm_client = get_llm_client()
 
-        baseline = _run_pass(suite, llm_client, cases, cache=None)
+        baseline = _run_pass(runtime.suite, runtime.name, llm_client, cases, cache=None)
 
         result_cache = ResultCache()
-        _run_pass(suite, llm_client, cases, cache=result_cache)  # warm the cache
-        optimized = _run_pass(suite, llm_client, cases, cache=result_cache)  # all hits
+        _run_pass(
+            runtime.suite, runtime.name, llm_client, cases, cache=result_cache
+        )  # warm the cache
+        optimized = _run_pass(
+            runtime.suite, runtime.name, llm_client, cases, cache=result_cache
+        )  # all hits
 
     mean_cost_per_locate = baseline["total_cost_usd"] / len(cases)
     report = {
@@ -105,7 +108,14 @@ def _run_bench() -> int:
     return 0
 
 
-def _run_pass(suite: Any, llm_client: Any, cases: list[dict], *, cache: ResultCache | None) -> dict:
+def _run_pass(
+    suite: Any,
+    suite_name: str,
+    llm_client: Any,
+    cases: list[dict],
+    *,
+    cache: ResultCache | None,
+) -> dict:
     hits = 0
     scored = 0
     total_cost = 0.0
@@ -113,6 +123,7 @@ def _run_pass(suite: Any, llm_client: Any, cases: list[dict], *, cache: ResultCa
     for case in cases:
         outcome = run_turn(
             suite=suite,
+            suite_name=suite_name,
             llm_client=llm_client,
             question=case["question"],
             kind=case["kind"],

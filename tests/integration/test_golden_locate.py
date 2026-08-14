@@ -15,10 +15,8 @@ pytest.importorskip(
     reason="TA-taxonomies is not installed; install the sibling package for integration tests",
 )
 
-from ta_taxonomies.suites.esco.db import neo4j_driver  # noqa: E402
-from ta_taxonomies.suites.esco.tools import EscoSuite  # noqa: E402
-
-from talent_angels.skills.locate import ESCO_SUITE_NAME, locate  # noqa: E402
+from talent_angels.skills.locate import locate  # noqa: E402
+from talent_angels.suites import default_suite_registry  # noqa: E402
 from tests.integration.support import neo4j_reachable  # noqa: E402
 
 GOLDEN_PATH = Path(__file__).parents[1] / "evals" / "golden_locate.json"
@@ -37,9 +35,8 @@ pytestmark = [
 
 @pytest.mark.parametrize("case", _load_cases(), ids=lambda c: c["question"])
 def test_golden_locate_case(case: dict) -> None:
-    with neo4j_driver() as (driver, database):
-        suite = EscoSuite(driver, database=database)
-        outcome = locate(suite, ESCO_SUITE_NAME, case["question"], kind=case["kind"])
+    with default_suite_registry().open() as runtime:
+        outcome = locate(runtime.suite, runtime.name, case["question"], kind=case["kind"])
 
     assert outcome.warnings == case["expected_warnings"]
     assert outcome.confidence == case["expected_confidence"]
@@ -52,10 +49,9 @@ def test_golden_locate_case(case: dict) -> None:
 def test_golden_locate_hit_at_1_accuracy() -> None:
     cases = [c for c in _load_cases() if c["expected_top_id"] is not None]
     hits = 0
-    with neo4j_driver() as (driver, database):
-        suite = EscoSuite(driver, database=database)
+    with default_suite_registry().open() as runtime:
         for case in cases:
-            outcome = locate(suite, ESCO_SUITE_NAME, case["question"], kind=case["kind"])
+            outcome = locate(runtime.suite, runtime.name, case["question"], kind=case["kind"])
             if outcome.nodes and outcome.nodes[0].id == case["expected_top_id"]:
                 hits += 1
 

@@ -12,10 +12,13 @@ from talent_angels import cli
 from talent_angels.api.app import create_app
 from talent_angels.cli import main
 from talent_angels.suites import SuiteRegistry, SuiteRuntime
-from tests.fakes.taxonomy import FakeCandidate, FakeNode, FakeToolResult
+from tests.fakes.taxonomy import FakeCandidate, FakeEdge, FakeNode, FakeToolResult
 
 
 class FakeSuite:
+    def __init__(self) -> None:
+        self.last_node: FakeNode | None = None
+
     def search_nodes(self, text: str, kind: str | None = None) -> FakeToolResult:
         node = FakeNode(
             id="test:occupation:1",
@@ -25,10 +28,34 @@ class FakeSuite:
             source_id="test-source-1",
             properties={},
         )
+        self.last_node = node
         return FakeToolResult(
             nodes=[node],
             candidates=[FakeCandidate(node=node, confidence=0.9, method="exact")],
             evidence=["test:search:exact"],
+        )
+
+    def get_neighbors(self, node_id: str, rel_types: list[str] | None = None) -> FakeToolResult:
+        assert self.last_node is not None
+        skill = FakeNode(
+            id="test:skill:1",
+            kind="Skill",
+            label="analyse software requirements",
+            source="test",
+            source_id="test-skill-1",
+            properties={},
+        )
+        return FakeToolResult(
+            nodes=[self.last_node, skill],
+            edges=[
+                FakeEdge(
+                    type="HAS_SKILL",
+                    from_id=node_id,
+                    to_id=skill.id,
+                    properties={"relation_type": "essential"},
+                )
+            ],
+            evidence=[f"test:neighbors:{node_id}"],
         )
 
 
@@ -64,6 +91,40 @@ def test_api_uses_injected_registry_and_adapter_health() -> None:
     assert response.status_code == 200
     assert response.json()["suite"] == "test"
     assert response.json()["result"]["nodes"][0]["pref_label"] == "accountant"
+
+
+def test_cli_connect_uses_the_same_assistant_flow(
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    exit_code = main(
+        ["connect", "What essential skills does a software developer need?"],
+        registry=_registry(),
+    )
+
+    assert exit_code == 0
+    output = json.loads(capsys.readouterr().out)
+    assert output["capability"] == "connect"
+    assert "analyse software requirements" in output["answer"]
+
+
+def test_api_connect_reports_both_taxonomy_tool_calls() -> None:
+    with TestClient(create_app(registry=_registry())) as client:
+        response = client.post(
+            "/v1/capabilities/connect",
+            json={"question": "What essential skills does a software developer need?"},
+        )
+
+    assert response.status_code == 200
+    body = response.json()
+    assert body["capability"] == "connect"
+    assert [tool["name"] for tool in body["usage"]["tools"]] == [
+        "search_nodes",
+        "get_neighbors",
+    ]
+    assert body["usage"]["graph"]["queries"] == 2
+    assert body["usage"]["graph"]["total_ms"] == pytest.approx(
+        sum(tool["ms"] for tool in body["usage"]["tools"])
+    )
 
 
 def test_cli_bench_serializes_separate_locate_metrics(

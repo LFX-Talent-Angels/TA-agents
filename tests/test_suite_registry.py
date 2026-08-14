@@ -2,12 +2,30 @@
 
 from __future__ import annotations
 
+import subprocess
+import sys
 from contextlib import contextmanager
 
 import pytest
 
 from talent_angels.suites import SuiteRegistry, SuiteRuntime, UnknownSuiteError
 from tests.fakes.taxonomy import FakeToolResult
+
+
+def test_suite_registry_imports_first_in_a_fresh_process() -> None:
+    completed = subprocess.run(
+        [
+            sys.executable,
+            "-c",
+            "from talent_angels.suites import default_suite_registry; "
+            "assert default_suite_registry().available == ('esco',)",
+        ],
+        check=False,
+        capture_output=True,
+        text=True,
+    )
+
+    assert completed.returncode == 0, completed.stderr
 
 
 class FakeSuite:

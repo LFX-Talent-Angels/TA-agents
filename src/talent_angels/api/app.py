@@ -13,6 +13,7 @@ from fastapi import FastAPI
 
 from talent_angels.api.schemas import HealthResponse, QueryRequest, QueryResponse, UsageInfo
 from talent_angels.assistant import run_turn
+from talent_angels.assistant.intent import CAPABILITY_CONNECT, Capability
 from talent_angels.llm import get_llm_client
 from talent_angels.suites import SuiteRegistry, default_suite_registry
 
@@ -37,16 +38,26 @@ def create_app(*, registry: SuiteRegistry | None = None) -> FastAPI:
 
     @app.post("/v1/query", response_model=QueryResponse)
     def query(payload: QueryRequest) -> QueryResponse:
-        return _handle(app, payload, force_locate=False)
+        return _handle(app, payload)
 
     @app.post("/v1/capabilities/locate", response_model=QueryResponse)
     def locate_capability(payload: QueryRequest) -> QueryResponse:
         return _handle(app, payload, force_locate=True)
 
+    @app.post("/v1/capabilities/connect", response_model=QueryResponse)
+    def connect_capability(payload: QueryRequest) -> QueryResponse:
+        return _handle(app, payload, force_capability=CAPABILITY_CONNECT)
+
     return app
 
 
-def _handle(app: FastAPI, payload: QueryRequest, *, force_locate: bool) -> QueryResponse:
+def _handle(
+    app: FastAPI,
+    payload: QueryRequest,
+    *,
+    force_locate: bool = False,
+    force_capability: Capability | None = None,
+) -> QueryResponse:
     outcome = run_turn(
         suite=app.state.runtime.suite,
         suite_name=app.state.runtime.name,
@@ -55,6 +66,7 @@ def _handle(app: FastAPI, payload: QueryRequest, *, force_locate: bool) -> Query
         kind=payload.kind,
         answer_mode=app.state.answer_mode,
         force_locate=force_locate,
+        force_capability=force_capability,
     )
     record = outcome.record
     return QueryResponse(

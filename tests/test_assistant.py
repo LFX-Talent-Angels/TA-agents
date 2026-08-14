@@ -14,15 +14,30 @@ from talent_angels.assistant import (  # noqa: E402
     run_turn,
 )
 from talent_angels.llm.stub_client import StubLLMClient  # noqa: E402
-from tests.fakes.taxonomy import FakeCandidate, FakeNode, FakeToolResult  # noqa: E402
+from tests.fakes.taxonomy import (  # noqa: E402
+    FakeCandidate,
+    FakeEdge,
+    FakeNode,
+    FakeToolResult,
+)
 
 
 class FakeSuite:
-    def __init__(self, result: FakeToolResult) -> None:
+    def __init__(
+        self, result: FakeToolResult, neighbor_result: FakeToolResult | None = None
+    ) -> None:
         self._result = result
+        self._neighbor_result = neighbor_result or FakeToolResult(warnings=["no_neighbors"])
+        self.search_calls: list[tuple[str, str | None]] = []
+        self.neighbor_calls: list[tuple[str, list[str] | None]] = []
 
     def search_nodes(self, text: str, kind: str | None = None) -> FakeToolResult:
+        self.search_calls.append((text, kind))
         return self._result
+
+    def get_neighbors(self, node_id: str, rel_types: list[str] | None = None) -> FakeToolResult:
+        self.neighbor_calls.append((node_id, rel_types))
+        return self._neighbor_result
 
 
 def _occupation_node() -> FakeNode:
@@ -67,8 +82,35 @@ def test_graph_answers_locate_question_structured() -> None:
     assert "95%" in final_state["answer"]
 
 
-def test_graph_reports_unimplemented_capability_honestly() -> None:
-    suite = FakeSuite(FakeToolResult(warnings=["not_found"]))
+def test_graph_executes_locate_then_connect_for_skill_question() -> None:
+    occupation = _occupation_node()
+    skill = FakeNode(
+        id="esco:skill:fixture-2",
+        kind="Skill",
+        label="computer programming",
+        source="esco",
+        source_id="http://data.europa.eu/esco/skill/fixture-2",
+        properties={},
+    )
+    suite = FakeSuite(
+        FakeToolResult(
+            candidates=[FakeCandidate(node=occupation, confidence=0.95, method="exact_pref")],
+            nodes=[occupation],
+            evidence=["esco:search:exact_pref:software developer"],
+        ),
+        FakeToolResult(
+            nodes=[occupation, skill],
+            edges=[
+                FakeEdge(
+                    type="HAS_SKILL",
+                    from_id=occupation.id,
+                    to_id=skill.id,
+                    properties={"relation_type": "essential"},
+                )
+            ],
+            evidence=[f"esco:neighbors:{occupation.id}"],
+        ),
+    )
     graph = build_graph(suite=suite, llm_client=StubLLMClient(), answer_mode="structured")
 
     final_state = graph.invoke(
@@ -77,9 +119,49 @@ def test_graph_reports_unimplemented_capability_honestly() -> None:
 
     assert final_state["capability"] == "connect"
     assert final_state["plan"].capabilities == ("locate", "connect")
-    assert final_state["result"].nodes == []
-    assert "capability_not_implemented:connect" in final_state["result"].warnings
-    assert "no match found" in final_state["answer"].lower()
+    assert suite.search_calls == [("software developer", "occupation")]
+    assert suite.neighbor_calls == [(occupation.id, ["HAS_SKILL"])]
+    assert [node.pref_label for node in final_state["result"].nodes] == [
+        "software developer",
+        "computer programming",
+    ]
+    assert final_state["result"].edges[0].properties["relation_type"] == "essential"
+    assert [tool.name for tool in final_state["tool_calls"]] == [
+        "search_nodes",
+        "get_neighbors",
+    ]
+    assert "computer programming" in final_state["answer"]
+
+
+def test_graph_does_not_connect_an_ambiguous_subject() -> None:
+    first = _occupation_node()
+    second = FakeNode(
+        id="esco:occupation:fixture-2",
+        kind="Occupation",
+        label="web developer",
+        source="esco",
+        source_id="http://data.europa.eu/esco/occupation/fixture-2",
+        properties={},
+    )
+    suite = FakeSuite(
+        FakeToolResult(
+            candidates=[
+                FakeCandidate(node=first, confidence=0.7, method="contains"),
+                FakeCandidate(node=second, confidence=0.7, method="contains"),
+            ],
+            nodes=[first, second],
+            warnings=["ambiguous"],
+        )
+    )
+    graph = build_graph(suite=suite, llm_client=StubLLMClient(), answer_mode="structured")
+
+    final_state = graph.invoke({"question": "Show skills for developer"})
+
+    assert final_state["result"].capability == "connect"
+    assert "ambiguous" in final_state["result"].warnings
+    assert suite.neighbor_calls == []
+    assert [tool.name for tool in final_state["tool_calls"]] == ["search_nodes"]
+    assert "please clarify" in final_state["answer"].lower()
 
 
 def test_graph_propagates_selected_suite_name() -> None:

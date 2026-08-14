@@ -6,7 +6,7 @@ from collections.abc import Callable, Iterator, Mapping
 from contextlib import AbstractContextManager, contextmanager
 from dataclasses import dataclass
 
-from talent_angels.skills.locate.resolve import SearchableSuite
+from talent_angels.suites.protocol import SuiteTools
 
 HealthCheck = Callable[[], bool]
 
@@ -16,7 +16,7 @@ class SuiteRuntime:
     """An opened taxonomy suite plus infrastructure owned by its adapter."""
 
     name: str
-    suite: SearchableSuite
+    suite: SuiteTools
     health_check: HealthCheck
 
     def is_reachable(self) -> bool:

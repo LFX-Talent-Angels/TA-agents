@@ -69,16 +69,38 @@ def main(argv: Sequence[str] | None = None, *, registry: SuiteRegistry | None = 
             force_capability=(CAPABILITY_CONNECT if args.command == "connect" else None),
         )
 
+    record = outcome.record
     print(
         json.dumps(
             {
-                "run_id": outcome.record.run_id,
+                "run_id": record.run_id,
                 "capability": outcome.capability,
                 "suite": outcome.result.suite,
+                "plan": record.plan,
                 "answer": outcome.answer,
                 "confidence": outcome.result.confidence,
                 "warnings": outcome.result.warnings,
-                "cost_usd": outcome.record.cost_usd.total,
+                "tools": [tool.model_dump() for tool in record.tools],
+                "tokens": {
+                    "input": record.gen_ai.input_tokens,
+                    "output": record.gen_ai.output_tokens,
+                    "reasoning": record.gen_ai.reasoning_tokens,
+                    "calls": record.gen_ai.calls,
+                    "stages": [
+                        {
+                            "stage": stage.stage,
+                            "input": stage.input_tokens,
+                            "output": stage.output_tokens,
+                            "reasoning": stage.reasoning_tokens,
+                        }
+                        for stage in record.gen_ai.stages
+                    ],
+                },
+                "cost_usd": {
+                    "known": record.cost_usd.known,
+                    "total": record.cost_usd.total,
+                    "rate_card": record.cost_usd.rate_card,
+                },
             },
             indent=2,
         )

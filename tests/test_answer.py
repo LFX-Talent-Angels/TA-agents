@@ -89,7 +89,7 @@ def test_structured_connect_answer_names_subject_and_neighbors() -> None:
     assert usage is None
 
 
-def test_connect_stays_zero_token_even_when_natural_mode_is_requested() -> None:
+def test_natural_connect_answer_calls_the_llm() -> None:
     subject = _node(1).model_copy(update={"pref_label": "software developer"})
     skill = _node(2).model_copy(update={"kind": "Skill", "pref_label": "programming"})
     result = AgentResult(
@@ -107,7 +107,9 @@ def test_connect_stays_zero_token_even_when_natural_mode_is_requested() -> None:
         confidence=0.95,
     )
 
-    answer, usage = build_answer(result, llm_client=StubLLMClient(), mode="natural")
+    answer, stage = build_answer(result, llm_client=StubLLMClient(), mode="natural")
 
     assert "programming" in answer
-    assert usage is None
+    assert stage is not None
+    assert stage.stage == "answer"
+    assert stage.calls == 1

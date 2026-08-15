@@ -47,6 +47,6 @@ jobs:
       - name: Install merged taxonomy contract
         run: >-
           pip install
-          "ta-taxonomies @ git+https://github.com/LFX-Talent-Angels/TA-taxonomies.git@5c4019d1a8101733bc19423b32a3443a07e81cd4"
+          "ta-taxonomies @ git+https://github.com/LFX-Talent-Angels/TA-taxonomies.git@8fbf5e489379cf761345d6ec3cdefb68d1578c78"
       - name: Verify taxonomy contract compatibility
         run: pytest -q tests/integration/test_taxonomy_contract.py

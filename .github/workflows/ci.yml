@@ -10,6 +10,7 @@ jobs:
   test:
     runs-on: ubuntu-latest
     strategy:
+      fail-fast: false
       matrix:
         python-version: ["3.11", "3.12"]
     steps:
@@ -31,7 +32,18 @@ jobs:
       - name: Offline tests
         run: pytest -q --ignore=tests/integration
       - name: Report integration availability
-        run: pytest -q tests/integration -rs
+        # Pytest 8+ exits 5 when every collected test is skipped (no
+        # ta-taxonomies / no Neo4j). That report is expected; only a real
+        # failure (or collection error) should fail the job.
+        run: |
+          set +e
+          pytest -q tests/integration -rs
+          status=$?
+          set -e
+          if [ "$status" -eq 0 ] || [ "$status" -eq 5 ]; then
+            exit 0
+          fi
+          exit "$status"
       - name: Install merged taxonomy contract
         run: >-
           pip install

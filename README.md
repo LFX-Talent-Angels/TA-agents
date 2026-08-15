@@ -1,71 +1,246 @@
 # TA-agents
 
-> Main project of **Talent Angels** — the assistant runtime that reasons over
-> skill, task, and occupation taxonomies via Graph-RAG.
+Headless assistant runtime for **Talent Angels**. One main assistant
+interprets a natural-language question, calls deterministic ESCO graph tools
+(Locate / Connect), and returns a cited JSON answer with tokens and cost.
 
-Part of the [`LFX-Talent-Angels`](https://github.com/LFX-Talent-Angels) org. For
-project-wide docs, onboarding, and rules, see
-[`TA-workspace`](https://github.com/LFX-Talent-Angels/TA-workspace).
+Pathfind (routes between two occupations) is **not** in this MVP: those
+questions are refused honestly. Evaluate and multi-taxonomy merge come later.
 
-## Architecture in one paragraph
+Sibling graph library: [`TA-taxonomies`](https://github.com/LFX-Talent-Angels/TA-taxonomies).
+Workspace policy: [`TA-workspace`](https://github.com/LFX-Talent-Angels/TA-workspace).
+Internals: [`ARCHITECTURE.md`](./ARCHITECTURE.md).
 
-**One main assistant** owns the user's goal and dispatches four map-work
-capabilities implemented as **skills + tools** (the team's Sprint 2
-architecture, ratified in ADR-0003):
+---
 
-- **Locator** *(Resolve)* — pinpoints a skill/task/occupation; attaches confidence.
-- **Connector** *(Reveal)* — lists the nodes around a resolved location.
-- **Pathfinder** *(Compose)* — traces routes between two locations (learning journeys).
-- **Evaluator** *(Rank)* — scores routes under an explicit, named policy.
+## What you get
 
-Taxonomy graphs (O*NET · BLS · ESCO · SFIA structure-only · Sweden JobTech, per ADR-0006) live as
-**suites** in the sibling repo
-[`TA-taxonomies`](https://github.com/LFX-Talent-Angels/TA-taxonomies), consumed
-here as a versioned library through the suite contract. Details:
-[`ARCHITECTURE.md`](./ARCHITECTURE.md).
+```text
+you  →  CLI or FastAPI (/docs)
+           →  main assistant (LLM tool loop)
+                 →  search_nodes / get_neighbors   (TA-taxonomies)
+                       →  Neo4j ESCO graph
+```
 
-## Quick start
+- CLI prints one JSON object (`answer`, `plan`, `tools`, `tokens`, `cost_usd`).
+- API is the same turn. Swagger: `http://127.0.0.1:8000/docs`.
+- `.env` is loaded automatically (cwd, then repo root). Shell exports win.
+
+---
+
+## Prerequisites
+
+- Python **3.11+**
+- Docker (local Neo4j)
+- ESCO English **DATABASE** xlsx (CC BY 4.0) — not in git
+- An LLM key for the agentic demo (OpenRouter via LiteLLM)
+
+This README assumes the workspace layout:
+
+```text
+TA-workspace/
+  TA-agents/        ← you are here
+  TA-taxonomies/    ← graph loader + EscoSuite tools
+```
+
+Until [TA-taxonomies PR #5](https://github.com/LFX-Talent-Angels/TA-taxonomies/pull/5)
+merges, live query tools live on branch `feature/esco-tools`. Official
+`main` has the contract and loader only.
+
+---
+
+## 1. Start Neo4j (once)
 
 ```bash
-# Option A: as part of the workspace
-git clone https://github.com/LFX-Talent-Angels/TA-workspace.git
-cd TA-workspace && bash bin/setup-workspace.sh
+cd ../TA-taxonomies
+docker compose up -d
+docker compose ps          # wait until ta-neo4j is healthy
+```
 
-# Option B: standalone
-git clone https://github.com/LFX-Talent-Angels/TA-agents.git
-cd TA-agents
-python -m venv .venv && source .venv/bin/activate
+| | |
+| --- | --- |
+| Browser | http://localhost:7474 |
+| Bolt | `bolt://localhost:7687` |
+| User / password | `neo4j` / `taxonomies-dev` |
+
+Do **not** run `docker compose down -v` — that deletes the volume.
+
+---
+
+## 2. Install taxonomies and load **full** ESCO (once)
+
+The small **fixture** (61 nodes) is for CI only. `--mode fixture` **wipes**
+whatever is in this Neo4j. Do not run it against the demo database.
+
+```bash
+cd ../TA-taxonomies
+git fetch origin
+git switch feature/esco-tools          # needed until PR #5 merges
+
+python3 -m venv .venv
+source .venv/bin/activate              # Windows: .venv\Scripts\activate
 pip install -e ".[dev]"
-cp .env.example .env   # fill in your own keys
-pytest
+pip install openpyxl
+
+# xlsx must include occupations_en.xlsx
+export ESCO_DATA_DIR=data/esco/raw/DATABASE
+ls "$ESCO_DATA_DIR/occupations_en.xlsx"
+
+# This replaces the graph (loader default is wipe). Run it ONCE.
+python -m ta_taxonomies.suites.esco.load --mode full
 ```
 
-Headless CLI (JSON in/out) and a thin FastAPI edge share one `run_turn`:
+Download the English DATABASE package from
+[ESCO download](https://esco.ec.europa.eu/en/use-esco/download) if
+`data/esco/raw/DATABASE/` is empty (gitignored).
+
+### Validate the load (must look like thousands, not 61)
 
 ```bash
-python -m talent_angels.cli query "Where is nurse in ESCO?"
-uvicorn talent_angels.api.app:app --reload   # Swagger: http://127.0.0.1:8000/docs
+python - <<'PY'
+from ta_taxonomies.suites.esco.db import neo4j_driver
+with neo4j_driver() as (driver, database):
+    with driver.session(database=database) as s:
+        print("nodes", s.run("MATCH (n) RETURN count(n) AS c").single()["c"])
+        print("occupations", s.run("MATCH (n:Occupation) RETURN count(n) AS c").single()["c"])
+        print("nurse", s.run(
+            "MATCH (n:Occupation) WHERE toLower(n.pref_label) CONTAINS 'nurse' "
+            "RETURN count(n) AS c"
+        ).single()["c"])
+PY
 ```
 
-Live ESCO queries need Neo4j plus the TA-taxonomies tools slice (PR #5 until
-it merges). Official taxonomies `main` is contract + loader only.
+| Check | Fixture (wrong for demo) | Full ESCO (good) |
+| --- | ---: | ---: |
+| Nodes | 61 | ~18,000 |
+| Occupations | 6 | ~3,039 |
+| `nurse` occupations | 0 | many |
+
+Or in Neo4j Browser:
+
+```cypher
+MATCH (n) RETURN count(n) AS nodes;
+MATCH (n:Occupation) WHERE toLower(n.pref_label) CONTAINS 'nurse'
+RETURN n.pref_label LIMIT 10;
+```
+
+**Keep the graph:** never `--mode fixture` and never `pytest tests/suites/esco`
+against this Bolt URL (those tests reload the fixture and wipe full data).
+
+---
+
+## 3. Install TA-agents
+
+```bash
+cd ../TA-agents
+python3 -m venv .venv
+source .venv/bin/activate
+pip install -e ".[dev]"
+pip install -e ../TA-taxonomies      # same tools branch as step 2
+cp .env.example .env
+```
+
+Edit `.env` (never commit it):
+
+```dotenv
+# Agentic MVP — do not leave this as none for a live demo
+LLM_PROVIDER=litellm
+LLM_MODEL=openrouter/poolside/laguna-s-2.1:free
+OPENROUTER_API_KEY=sk-or-...
+ANSWER_MODE=natural
+LLM_REASONING_ENABLED=false
+
+NEO4J_URI=bolt://localhost:7687
+NEO4J_USER=neo4j
+NEO4J_PASSWORD=taxonomies-dev
+```
+
+Any OpenRouter model slug works as `openrouter/<vendor>/<model>`. The CLI
+reads `.env` by itself; you do not need `source .env`.
+
+Offline tests still use `LLM_PROVIDER=none` (pytest sets that).
+
+---
+
+## 4. Query
+
+```bash
+cd ../TA-agents
+source .venv/bin/activate
+
+python -m talent_angels.cli query "Where is nurse in ESCO?"
+python -m talent_angels.cli query "What essential skills does a software developer need?"
+python -m talent_angels.cli query "developer"
+python -m talent_angels.cli query "What is the skill path from data analyst to data scientist?"
+```
+
+Expect JSON with `plan`, `answer`, `tools`, `tokens`, `cost_usd`.
+
+| Question shape | What should happen |
+| --- | --- |
+| Where is *X* | Locate (`search_nodes`) |
+| Essential skills of *X* | Locate then Connect (`get_neighbors`) |
+| Ambiguous *developer* | Locate + clarification, no neighbors |
+| Path / gap from A to B | Honest Pathfind refusal, no fake skill list |
+
+### HTTP / Swagger
+
+```bash
+uvicorn talent_angels.api.app:app --reload
+```
+
+Open http://127.0.0.1:8000/docs and `POST /v1/query` with
+`{"question": "What essential skills does a software developer need?"}`.
+
+---
+
+## 5. Tests (does not reload ESCO)
+
+```bash
+# Offline — no Neo4j, no API key
+ruff check .
+ruff format --check .
+mypy src
+pytest -q --ignore=tests/integration
+
+# Live — uses whatever is already in Neo4j (full or fixture)
+pytest -q tests/integration -rs
+```
+
+---
+
+## Troubleshooting
+
+| Symptom | Cause |
+| --- | --- |
+| Node count `61`, nurse `not_found` | Fixture graph. Load `--mode full` once. |
+| Full graph disappeared after tests | Taxonomies `pytest tests/suites/esco` wiped it. Reload full; do not run those tests here. |
+| `LLM_PROVIDER=none` / `tokens.calls: 0` | `.env` still has stub mode, or a shell export overrides the file. |
+| `Provider List:` banner | LiteLLM ad, not a crash. Current polish branch suppresses it. |
+| `ModuleNotFoundError: ta_taxonomies` | `pip install -e ../TA-taxonomies` on the tools branch. |
+| Official taxonomies `main` has no `EscoSuite` | Use `feature/esco-tools` until PR #5 merges. |
+
+---
 
 ## Layout
 
 ```
 src/talent_angels/
-├── assistant/    # the LangGraph loop: intent → plan → dispatch → merge → answer
-├── skills/       # locate/ connect/ pathfind/ evaluate/
-├── contracts/    # typed results (Pydantic v2)
-├── runlog/       # structured per-turn record
-└── api/          # thin FastAPI edge
-tests/
+├── assistant/    # LangGraph: intent → plan → tool loop → answer
+├── skills/       # locate / connect / pathfind (skeleton) / evaluate
+├── contracts/    # AgentResult
+├── llm/          # LiteLLM + stub
+├── runlog/       # JSONL + rate card
+├── api/          # thin FastAPI
+└── cli.py
 ```
+
+---
 
 ## Contributing
 
-See [`CONTRIBUTING.md`](./CONTRIBUTING.md). Branch, `git commit -s` (DCO), open a
-PR, request a mentor review.
+See [`CONTRIBUTING.md`](./CONTRIBUTING.md). Branch, `git commit -s` (DCO),
+open a PR, request a mentor review. Never commit `.env` or secrets.
 
 ## License
 

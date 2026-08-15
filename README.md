@@ -10,7 +10,6 @@ questions are refused honestly. Evaluate and multi-taxonomy merge come later.
 Sibling graph library: [`TA-taxonomies`](https://github.com/LFX-Talent-Angels/TA-taxonomies).
 Workspace policy: [`TA-workspace`](https://github.com/LFX-Talent-Angels/TA-workspace).
 Internals: [`ARCHITECTURE.md`](./ARCHITECTURE.md).
-**Mentee pickup:** [`HANDOFF.md`](./HANDOFF.md) — setup, test, then branch from this tip.
 
 ---
 

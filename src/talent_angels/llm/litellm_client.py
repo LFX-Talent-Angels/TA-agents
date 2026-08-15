@@ -2,9 +2,11 @@
 
 from __future__ import annotations
 
+import contextlib
+import io
 import json
 import os
-from collections.abc import Callable, Mapping
+from collections.abc import Callable, Iterator, Mapping
 from typing import Any
 
 from talent_angels.llm.protocol import LLMResult, LLMUsage, Message, ToolInvocation
@@ -28,6 +30,25 @@ def ensure_local_model_cost_map() -> None:
 
 
 ensure_local_model_cost_map()
+
+
+@contextlib.contextmanager
+def _quiet_stdio() -> Iterator[None]:
+    """Hide LiteLLM's import/completion banners (they look like crashes)."""
+    with contextlib.redirect_stdout(io.StringIO()), contextlib.redirect_stderr(io.StringIO()):
+        yield
+
+
+def _silence_litellm_runtime() -> None:
+    os.environ.setdefault("LITELLM_LOG", "ERROR")
+    try:
+        import litellm
+    except Exception:
+        return
+    if hasattr(litellm, "suppress_debug_info"):
+        litellm.suppress_debug_info = True
+    if hasattr(litellm, "set_verbose"):
+        litellm.set_verbose = False
 
 
 def _mapping(value: object) -> Mapping[str, Any]:
@@ -107,14 +128,10 @@ class LiteLLMClient:
         if completion_fn is None:
             ensure_local_model_cost_map()
             os.environ.setdefault("LITELLM_LOG", "ERROR")
-            import contextlib
-            import io
-
-            # LiteLLM prints a "Provider List" banner on import; keep the CLI clean.
-            quiet = contextlib.redirect_stdout(io.StringIO())
-            with quiet, contextlib.redirect_stderr(io.StringIO()):
+            with _quiet_stdio():
                 from litellm import completion
 
+                _silence_litellm_runtime()
             completion_fn = completion
         self._completion = completion_fn
 
@@ -137,12 +154,14 @@ class LiteLLMClient:
             kwargs["extra_body"] = {"reasoning": {"enabled": True}}
 
         try:
-            raw = self._completion(**kwargs)
+            with _quiet_stdio():
+                raw = self._completion(**kwargs)
         except Exception as first:
             if "extra_body" in kwargs:
                 kwargs.pop("extra_body", None)
                 try:
-                    raw = self._completion(**kwargs)
+                    with _quiet_stdio():
+                        raw = self._completion(**kwargs)
                 except Exception as exc:
                     raise RuntimeError(f"LiteLLM provider request failed: {exc}") from exc
             else:

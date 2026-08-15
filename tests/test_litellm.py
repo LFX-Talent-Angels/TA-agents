@@ -256,6 +256,27 @@ def test_ensure_local_model_cost_map_sets_litellm_env(
     assert os.environ[LOCAL_MODEL_COST_MAP_ENV].lower() == "true"
 
 
+def test_litellm_complete_does_not_print_provider_list(
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    def complete(**_kwargs: object) -> dict[str, object]:
+        print("Provider List: OpenAI, Anthropic")
+        return {
+            "model": "actual-model",
+            "choices": [{"finish_reason": "stop", "message": {"content": "ok"}}],
+            "usage": {"prompt_tokens": 1, "completion_tokens": 1},
+        }
+
+    result = LiteLLMClient(model=MODEL, completion_fn=complete).complete(
+        [Message(role="user", content="hello")]
+    )
+
+    captured = capsys.readouterr()
+    assert result.text == "ok"
+    assert "Provider List" not in captured.out
+    assert "Provider List" not in captured.err
+
+
 def test_importing_litellm_uses_bundled_cost_map_without_network() -> None:
     src = Path(__file__).resolve().parents[1] / "src"
     env = os.environ.copy()

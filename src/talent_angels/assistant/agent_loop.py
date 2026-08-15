@@ -6,7 +6,18 @@ import json
 import re
 from dataclasses import dataclass, field
 
-from talent_angels.assistant.intent import CAPABILITY_CONNECT, CAPABILITY_LOCATE, Capability
+from talent_angels.assistant.answer import (
+    PATHFIND_UNAVAILABLE,
+    PATHFIND_UNIMPLEMENTED_WARNING,
+    is_unimplemented_pathfind,
+)
+from talent_angels.assistant.intent import (
+    CAPABILITY_CONNECT,
+    CAPABILITY_LOCATE,
+    CAPABILITY_PATHFIND,
+    Capability,
+    classify_capability,
+)
 from talent_angels.assistant.llm_call import measure_complete
 from talent_angels.assistant.planning import ExecutionPlan, build_plan_for_capability
 from talent_angels.contracts import AgentResult, NodeRef
@@ -19,6 +30,8 @@ from talent_angels.suites.measured import MeasuredSuite
 from talent_angels.suites.protocol import SuiteTools
 
 MAX_TOOL_ROUNDS = 4
+MAX_COMPACT_NODES = 8
+MAX_COMPACT_EDGES = 8
 
 LOOP_SYSTEM = """You are the Talent Angels main assistant.
 Return ONLY a JSON object each turn. Do not invent node IDs or skills.
@@ -55,13 +68,17 @@ class AgentLoopOutcome:
 
 
 def _compact_result(result: AgentResult) -> dict[str, object]:
-    return {
+    omitted_nodes = max(0, len(result.nodes) - MAX_COMPACT_NODES)
+    omitted_edges = max(0, len(result.edges) - MAX_COMPACT_EDGES)
+    payload: dict[str, object] = {
         "capability": result.capability,
         "confidence": result.confidence,
         "warnings": result.warnings,
+        "node_count": len(result.nodes),
+        "edge_count": len(result.edges),
         "nodes": [
             {"id": node.id, "kind": node.kind, "pref_label": node.pref_label}
-            for node in result.nodes[:20]
+            for node in result.nodes[:MAX_COMPACT_NODES]
         ],
         "edges": [
             {
@@ -70,9 +87,14 @@ def _compact_result(result: AgentResult) -> dict[str, object]:
                 "to": edge.target_node_id,
                 "properties": edge.properties,
             }
-            for edge in result.edges[:30]
+            for edge in result.edges[:MAX_COMPACT_EDGES]
         ],
     }
+    if omitted_nodes or omitted_edges:
+        payload["truncated"] = True
+        payload["omitted_nodes"] = omitted_nodes
+        payload["omitted_edges"] = omitted_edges
+    return payload
 
 
 def _execute_tool(
@@ -202,9 +224,26 @@ def _structured_fallback(result: AgentResult) -> str:
 
 
 def _capability_from_result(result: AgentResult | None) -> Capability:
-    if result is not None and result.capability == CAPABILITY_CONNECT:
+    if result is None:
+        return CAPABILITY_LOCATE
+    if result.capability == CAPABILITY_CONNECT:
         return CAPABILITY_CONNECT
+    if result.capability == CAPABILITY_PATHFIND:
+        return CAPABILITY_PATHFIND
     return CAPABILITY_LOCATE
+
+
+def _unimplemented_pathfind(suite_name: str) -> AgentLoopOutcome:
+    result = AgentResult(
+        capability=CAPABILITY_PATHFIND,
+        suite=suite_name,
+        warnings=[PATHFIND_UNIMPLEMENTED_WARNING],
+    )
+    return AgentLoopOutcome(
+        answer=PATHFIND_UNAVAILABLE,
+        result=result,
+        plan=build_plan_for_capability(CAPABILITY_PATHFIND, suites=(suite_name,)),
+    )
 
 
 def run_tool_loop(
@@ -215,6 +254,9 @@ def run_tool_loop(
     llm_client: LLMClient,
     kind: str | None = None,
 ) -> AgentLoopOutcome:
+    if classify_capability(question) == CAPABILITY_PATHFIND:
+        return _unimplemented_pathfind(suite_name)
+
     measured = MeasuredSuite(suite)
     messages: list[Message] = [
         Message(role="system", content=LOOP_SYSTEM),
@@ -265,7 +307,9 @@ def run_tool_loop(
             suite=suite_name,
             warnings=["not_found"],
         )
-    if not answer or looks_like_tool_markup(answer):
+    if is_unimplemented_pathfind(last_result):
+        answer = PATHFIND_UNAVAILABLE
+    elif not answer or looks_like_tool_markup(answer):
         answer = _structured_fallback(last_result)
 
     capability = _capability_from_result(last_result)

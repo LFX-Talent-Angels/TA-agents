@@ -16,6 +16,7 @@ from typing import Any
 
 from talent_angels.assistant import ResultCache, run_turn
 from talent_angels.assistant.intent import CAPABILITY_CONNECT
+from talent_angels.env import load_local_dotenv
 from talent_angels.evals import LocateMetrics
 from talent_angels.llm.factory import get_answer_mode, get_llm_client
 from talent_angels.suites import SuiteRegistry, default_suite_registry
@@ -50,6 +51,7 @@ def _build_parser() -> argparse.ArgumentParser:
 
 
 def main(argv: Sequence[str] | None = None, *, registry: SuiteRegistry | None = None) -> int:
+    load_local_dotenv()
     args = _build_parser().parse_args(argv)
     selected_registry = registry or default_suite_registry()
 

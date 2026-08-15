@@ -11,6 +11,7 @@ from talent_angels.assistant import (  # noqa: E402
     ResultCache,
     build_graph,
     classify_capability,
+    extract_locate_subject,
     run_turn,
 )
 from talent_angels.llm.stub_client import StubLLMClient  # noqa: E402
@@ -57,10 +58,24 @@ def _occupation_node() -> FakeNode:
         ("Where is software developer in ESCO?", "locate"),
         ("What essential skills does a software developer need?", "connect"),
         ("What is the skill gap from data analyst to data scientist?", "pathfind"),
+        ("skill path from data analyst to data scientist", "pathfind"),
+        ("path analyst → scientist", "pathfind"),
     ],
 )
 def test_classify_capability_heuristics(question: str, expected: str) -> None:
     assert classify_capability(question) == expected
+
+
+@pytest.mark.parametrize(
+    ("question", "expected"),
+    [
+        ("Where is nurse in ESCO?", "nurse"),
+        ("software developer", "software developer"),
+        ("Find accountant", "accountant"),
+    ],
+)
+def test_extract_locate_subject(question: str, expected: str) -> None:
+    assert extract_locate_subject(question) == expected
 
 
 def test_graph_answers_locate_question_structured() -> None:

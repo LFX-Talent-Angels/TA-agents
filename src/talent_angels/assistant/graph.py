@@ -11,7 +11,13 @@ from talent_angels.assistant.connect_request import (
     UnsupportedConnectQuery,
     extract_connect_request,
 )
-from talent_angels.assistant.intent import CAPABILITY_CONNECT, CAPABILITY_LOCATE, Capability
+from talent_angels.assistant.intent import (
+    CAPABILITY_CONNECT,
+    CAPABILITY_LOCATE,
+    Capability,
+    classify_capability,
+    extract_locate_subject,
+)
 from talent_angels.assistant.llm_plan import (
     connect_request_from_draft,
     interpret_question,
@@ -57,7 +63,9 @@ def _dispatch_plan(state: AssistantState, *, suite: SuiteTools, suite_name: str)
     measured = MeasuredSuite(suite)
     draft = state.get("plan_draft")
     if capability == CAPABILITY_LOCATE:
-        locate_text = draft.subject if draft and draft.subject else state["question"]
+        locate_text = (
+            draft.subject if draft and draft.subject else extract_locate_subject(state["question"])
+        )
         locate_kind = state.get("kind") or (draft.kind if draft else None)
         result = locate(
             measured,
@@ -154,14 +162,13 @@ def build_graph(
                 )
             except RuntimeError:
                 # Provider failed mid-loop. Finish with heuristic plan +
-                # structured facts so the CLI does not crash.
+                # structured facts so the CLI does not crash. Never treat a
+                # path/gap question as Connect.
                 interpreted = _interpret_intent(
                     state,
                     suite_name=suite_name,
                     llm_client=llm_client,
-                    forced_capability=CAPABILITY_CONNECT
-                    if "skill" in state["question"].lower()
-                    else CAPABILITY_LOCATE,
+                    forced_capability=classify_capability(state["question"]),
                 )
                 dispatched = _dispatch_plan(
                     {**state, **interpreted},

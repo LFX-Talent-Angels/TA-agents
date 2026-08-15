@@ -40,6 +40,16 @@ cp .env.example .env   # fill in your own keys
 pytest
 ```
 
+Headless CLI (JSON in/out) and a thin FastAPI edge share one `run_turn`:
+
+```bash
+python -m talent_angels.cli query "Where is nurse in ESCO?"
+uvicorn talent_angels.api.app:app --reload   # Swagger: http://127.0.0.1:8000/docs
+```
+
+Live ESCO queries need Neo4j plus the TA-taxonomies tools slice (PR #5 until
+it merges). Official taxonomies `main` is contract + loader only.
+
 ## Layout
 
 ```

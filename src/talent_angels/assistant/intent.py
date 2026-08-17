@@ -45,9 +45,18 @@ _CONNECT_KEYWORDS = (
 _SUBJECT_PATTERNS = (
     re.compile(r"^what essential skills does (?:a |an )?(.+?) need\b", re.I),
     re.compile(r"^what skills does (?:a |an )?(.+?) need\b", re.I),
-    re.compile(r"^what skills (?:(?:do )?i |does one )?need to become (?:a |an )?(.+)$", re.I),
-    re.compile(r"skills i need to become (?:a |an )?(.+)$", re.I),
-    re.compile(r"^to become (?:a |an )?(.+)$", re.I),
+    re.compile(
+        r"^what skills (?:(?:do )?i |does one )?need to (?:become|be) (?:a |an |the )?(.+)$",
+        re.I,
+    ),
+    re.compile(
+        r"skills (?:(?:do )?i |does one )?need to (?:become|be) (?:a |an |the )?(.+)$",
+        re.I,
+    ),
+    re.compile(
+        r"^(?:i want to |i'd like to |to )(?:become|be) (?:a |an |the )?(.+)$",
+        re.I,
+    ),
 )
 
 

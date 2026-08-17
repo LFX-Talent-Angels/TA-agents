@@ -278,7 +278,7 @@ def test_graph_falls_back_when_provider_rejects_tools() -> None:
     assert suite.neighbor_calls == [(occupation.id, ["HAS_SKILL"])]
 
 
-def test_graph_uses_tool_loop_when_provider_is_not_stub() -> None:
+def test_graph_uses_planner_when_provider_is_not_stub() -> None:
     occupation = _occupation()
     suite = FakeSuite(
         FakeToolResult(
@@ -290,27 +290,21 @@ def test_graph_uses_tool_loop_when_provider_is_not_stub() -> None:
     client = ScriptedToolClient(
         [
             LLMResult(
-                text='{"tool":"search_nodes","text":"software developer"}',
+                text='{"target":"locate","subject":"software developer","kind":"occupation"}',
                 provider="litellm",
                 model="actual",
                 usage=LLMUsage(input_tokens=5, output_tokens=2),
             ),
-            LLMResult(
-                text='{"final":"Located software developer."}',
-                provider="litellm",
-                model="actual",
-                usage=LLMUsage(input_tokens=6, output_tokens=3),
-            ),
         ]
     )
-    graph = build_graph(suite=suite, llm_client=client, answer_mode="natural")
+    graph = build_graph(suite=suite, llm_client=client, answer_mode="structured")
 
     final_state = graph.invoke({"question": "Where is software developer in ESCO?"})
 
     assert final_state["capability"] == "locate"
-    assert final_state["answer"] == "Located software developer."
-    assert suite.search_calls == [("software developer", None)]
-    assert [stage.stage for stage in final_state["llm_stages"]] == ["act", "answer"]
+    assert "software developer" in final_state["answer"]
+    assert suite.search_calls == [("software developer", "occupation")]
+    assert [stage.stage for stage in final_state["llm_stages"]] == ["intent"]
 
 
 def test_path_question_does_not_list_neighbors() -> None:
@@ -461,7 +455,9 @@ def test_unique_skills_question_connects_after_locate() -> None:
     client = ScriptedToolClient(
         [
             LLMResult(
-                text='{"tool":"search_nodes","text":"software developer","kind":"occupation"}',
+                text=(
+                    '{"tool":"search_nodes","text":"what skills I need to be a software developer"}'
+                ),
                 provider="litellm",
                 model="actual",
                 usage=LLMUsage(input_tokens=4, output_tokens=2),
@@ -476,12 +472,16 @@ def test_unique_skills_question_connects_after_locate() -> None:
     )
 
     outcome = run_tool_loop(
-        question="What essential skills does a software developer need?",
+        question="what skills I need to be a software developer",
         suite=suite,
         suite_name="esco",
         llm_client=client,
     )
 
+    assert suite.search_calls in (
+        [("software developer", "occupation")],
+        [("software developer", None)],
+    )
     assert outcome.result.capability == "connect"
     assert suite.neighbor_calls == [(occupation.id, ["HAS_SKILL"])]
     assert "computer programming" in outcome.answer

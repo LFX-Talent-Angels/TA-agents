@@ -97,6 +97,24 @@ def test_skills_question_upgrades_a_locate_plan_to_connect() -> None:
     assert interpreted.heuristic is False
 
 
+def test_planner_provider_error_falls_back_to_heuristic() -> None:
+    class ExplodingClient:
+        provider = "litellm"
+
+        def complete(self, messages: list[Message]) -> LLMResult:
+            raise RuntimeError("LiteLLM provider request failed")
+
+    interpreted = interpret_question(
+        "What essential skills does a software developer need?",
+        suite_name="esco",
+        llm_client=ExplodingClient(),  # type: ignore[arg-type]
+    )
+
+    assert interpreted.heuristic is True
+    assert interpreted.draft is None
+    assert interpreted.plan.capabilities == ("locate", "connect")
+
+
 def test_invalid_planner_json_falls_back_to_heuristic() -> None:
     client = ScriptedLLMClient("sorry, I cannot make a plan")
 

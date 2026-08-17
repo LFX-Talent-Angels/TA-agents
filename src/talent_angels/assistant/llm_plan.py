@@ -41,15 +41,21 @@ How to choose target:
   ("path from A to B", "skill gap from A to B")
 
 If the user asks for skills, neighbors, or what someone needs, target MUST be
-connect, not locate. Put the occupation/skill name in subject.
+connect, not locate. Put only the occupation or skill name in subject — never
+the whole sentence. "Be" and "become" are the same wrapper.
 
 Do not invent node IDs. Do not write Cypher.
 
 Examples:
 {"target":"locate","subject":"software developer","kind":"occupation"}
+{"target":"locate","subject":"firefighter","kind":"occupation"}
 {"target":"connect","subject":"software developer","kind":"occupation",
  "rel_types":["HAS_SKILL"],"relation_filter":"essential"}
 {"target":"pathfind","subject":"data analyst","secondary_subject":"data scientist"}
+
+Same connect shape for: "what skills does a X need", "what skills I need to be
+a X", "skills I need to become a X", "I want to be a X".
+Same locate shape for: "what is a X", "what does a X do", "where is X".
 """
 
 _PLAN_RANK = {
@@ -168,14 +174,22 @@ def interpret_question(
             stage=None,
         )
 
-    result, stage = measure_complete(
-        llm_client,
-        [
-            Message(role="system", content=PLAN_SYSTEM),
-            Message(role="user", content=question),
-        ],
-        stage="intent",
-    )
+    try:
+        result, stage = measure_complete(
+            llm_client,
+            [
+                Message(role="system", content=PLAN_SYSTEM),
+                Message(role="user", content=question),
+            ],
+            stage="intent",
+        )
+    except RuntimeError:
+        return InterpretedPlan(
+            plan=build_plan(question, suites=(suite_name,)),
+            draft=None,
+            heuristic=True,
+            stage=None,
+        )
     try:
         draft = parse_plan_text(result.text)
         draft = _prefer_stronger_heuristic_target(question, draft)

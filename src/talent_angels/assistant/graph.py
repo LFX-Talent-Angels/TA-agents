@@ -5,7 +5,6 @@ from __future__ import annotations
 from langgraph.graph import END, StateGraph
 from langgraph.graph.state import CompiledStateGraph
 
-from talent_angels.assistant.agent_loop import run_tool_loop
 from talent_angels.assistant.answer import build_answer
 from talent_angels.assistant.connect_request import (
     UnsupportedConnectQuery,
@@ -15,13 +14,11 @@ from talent_angels.assistant.intent import (
     CAPABILITY_CONNECT,
     CAPABILITY_LOCATE,
     Capability,
-    classify_capability,
     extract_locate_subject,
 )
 from talent_angels.assistant.llm_plan import (
     connect_request_from_draft,
     interpret_question,
-    uses_llm_planner,
 )
 from talent_angels.assistant.state import AssistantState
 from talent_angels.contracts import AgentResult
@@ -148,57 +145,8 @@ def build_graph(
     answer_mode: str = "structured",
     forced_capability: Capability | None = None,
 ) -> CompiledStateGraph:
+    """Intent → plan → dispatch → answer. The model names the goal; code walks the graph."""
     graph = StateGraph(AssistantState)
-    if uses_llm_planner(llm_client) and forced_capability is None:
-
-        def _agent(state: AssistantState) -> AssistantState:
-            try:
-                outcome = run_tool_loop(
-                    question=state["question"],
-                    suite=suite,
-                    suite_name=suite_name,
-                    llm_client=llm_client,
-                    kind=state.get("kind"),
-                )
-            except RuntimeError:
-                # Provider failed mid-loop. Finish with heuristic plan +
-                # structured facts so the CLI does not crash. Never treat a
-                # path/gap question as Connect.
-                interpreted = _interpret_intent(
-                    state,
-                    suite_name=suite_name,
-                    llm_client=llm_client,
-                    forced_capability=classify_capability(state["question"]),
-                )
-                dispatched = _dispatch_plan(
-                    {**state, **interpreted},
-                    suite=suite,
-                    suite_name=suite_name,
-                )
-                result = dispatched["result"]
-                answer, stage = build_answer(result, llm_client=llm_client, mode="structured")
-                return {
-                    **interpreted,
-                    **dispatched,
-                    "answer": answer,
-                    "llm_usage": usage_from_stage(stage) if stage is not None else None,
-                }
-            return {
-                "capability": outcome.plan.intent.target,
-                "plan": outcome.plan,
-                "heuristic_intent": False,
-                "result": outcome.result,
-                "tool_calls": outcome.tool_calls,
-                "answer": outcome.answer,
-                "llm_stages": outcome.stages,
-                "llm_usage": usage_from_stage(outcome.stages[-1]) if outcome.stages else None,
-            }
-
-        graph.add_node("agent", _agent)
-        graph.set_entry_point("agent")
-        graph.add_edge("agent", END)
-        return graph.compile()
-
     graph.add_node(
         "interpret_intent",
         lambda s: _interpret_intent(

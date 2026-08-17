@@ -64,6 +64,35 @@ def test_structured_answer_keeps_unique_match_summary() -> None:
     assert usage is None
 
 
+def test_structured_connect_points_at_full_payload_when_truncated() -> None:
+    subject = _node(1).model_copy(update={"pref_label": "software developer"})
+    skills = [
+        _node(i).model_copy(update={"kind": "Skill", "pref_label": f"skill {i}"})
+        for i in range(2, 10)
+    ]
+    result = AgentResult(
+        capability="connect",
+        suite="esco",
+        nodes=[subject, *skills],
+        edges=[
+            EdgeRef(
+                type="HAS_SKILL",
+                suite="esco",
+                source_node_id=subject.id,
+                target_node_id=skill.id,
+            )
+            for skill in skills
+        ],
+        confidence=0.95,
+    )
+
+    answer, usage = build_answer(result, llm_client=StubLLMClient(), mode="natural")
+
+    assert "8 direct connection(s)" in answer
+    assert "full list is in the result payload" in answer
+    assert usage is None
+
+
 def test_structured_connect_answer_names_subject_and_neighbors() -> None:
     subject = _node(1).model_copy(update={"pref_label": "software developer"})
     programming = _node(2).model_copy(

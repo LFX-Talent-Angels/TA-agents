@@ -60,6 +60,7 @@ def _occupation_node() -> FakeNode:
         ("What is the skill gap from data analyst to data scientist?", "pathfind"),
         ("skill path from data analyst to data scientist", "pathfind"),
         ("path analyst → scientist", "pathfind"),
+        ("what skills I need to become a nurse", "connect"),
     ],
 )
 def test_classify_capability_heuristics(question: str, expected: str) -> None:
@@ -72,6 +73,11 @@ def test_classify_capability_heuristics(question: str, expected: str) -> None:
         ("Where is nurse in ESCO?", "nurse"),
         ("software developer", "software developer"),
         ("Find accountant", "accountant"),
+        (
+            "What essential skills does a nurse responsible for general care need?",
+            "nurse responsible for general care",
+        ),
+        ("what skills I need to become a nurse", "nurse"),
     ],
 )
 def test_extract_locate_subject(question: str, expected: str) -> None:

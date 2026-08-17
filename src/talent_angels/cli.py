@@ -82,6 +82,8 @@ def main(argv: Sequence[str] | None = None, *, registry: SuiteRegistry | None = 
                 "answer": outcome.answer,
                 "confidence": outcome.result.confidence,
                 "warnings": outcome.result.warnings,
+                "node_count": len(outcome.result.nodes),
+                "nodes": [node.model_dump() for node in outcome.result.nodes],
                 "tools": [tool.model_dump() for tool in record.tools],
                 "tokens": {
                     "input": record.gen_ai.input_tokens,

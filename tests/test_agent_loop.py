@@ -368,6 +368,125 @@ def test_graph_path_question_does_not_fallback_to_connect() -> None:
     assert final_state["answer"] == PATHFIND_UNAVAILABLE
 
 
+def test_ambiguous_search_stops_without_another_lookup() -> None:
+    first = FakeNode(
+        id="esco:occupation:cook",
+        kind="Occupation",
+        label="diet cook",
+        source="esco",
+        source_id="cook",
+        properties={},
+    )
+    second = FakeNode(
+        id="esco:occupation:nanny",
+        kind="Occupation",
+        label="nanny",
+        source="esco",
+        source_id="nanny",
+        properties={},
+    )
+    suite = FakeSuite(
+        FakeToolResult(
+            candidates=[
+                FakeCandidate(node=first, confidence=0.7, method="contains"),
+                FakeCandidate(node=second, confidence=0.7, method="contains"),
+            ],
+            nodes=[first, second],
+            warnings=["ambiguous"],
+        )
+    )
+    client = ScriptedToolClient(
+        [
+            LLMResult(
+                text='{"tool":"search_nodes","text":"what skills I need to become a nurse"}',
+                provider="litellm",
+                model="actual",
+                usage=LLMUsage(input_tokens=4, output_tokens=2),
+            ),
+            LLMResult(
+                text='{"tool":"search_nodes","text":"nursing"}',
+                provider="litellm",
+                model="actual",
+                usage=LLMUsage(input_tokens=4, output_tokens=2),
+            ),
+        ]
+    )
+
+    outcome = run_tool_loop(
+        question="what skills I need to become a nurse",
+        suite=suite,
+        suite_name="esco",
+        llm_client=client,
+    )
+
+    assert suite.search_calls in ([("nurse", "occupation")], [("nurse", None)])
+    assert len(suite.search_calls) == 1
+    assert "ambiguous" in outcome.result.warnings
+    assert "diet cook" in outcome.answer and "clarify" in outcome.answer.lower()
+    assert outcome.answer.lower().count("diet cook") == 1
+    assert "Candidates:" in outcome.answer
+    assert client.calls  # first act ran
+    assert len(client.calls) == 1
+
+
+def test_unique_skills_question_connects_after_locate() -> None:
+    occupation = _occupation()
+    skill = FakeNode(
+        id="esco:skill:fixture-2",
+        kind="Skill",
+        label="computer programming",
+        source="esco",
+        source_id="http://data.europa.eu/esco/skill/fixture-2",
+        properties={},
+    )
+    suite = FakeSuite(
+        FakeToolResult(
+            candidates=[FakeCandidate(node=occupation, confidence=0.95, method="exact_pref")],
+            nodes=[occupation],
+            evidence=["esco:search:exact_pref:software developer"],
+        ),
+        FakeToolResult(
+            nodes=[occupation, skill],
+            edges=[
+                FakeEdge(
+                    type="HAS_SKILL",
+                    from_id=occupation.id,
+                    to_id=skill.id,
+                    properties={"relation_type": "essential"},
+                )
+            ],
+            evidence=[f"esco:neighbors:{occupation.id}"],
+        ),
+    )
+    client = ScriptedToolClient(
+        [
+            LLMResult(
+                text='{"tool":"search_nodes","text":"software developer","kind":"occupation"}',
+                provider="litellm",
+                model="actual",
+                usage=LLMUsage(input_tokens=4, output_tokens=2),
+            ),
+            LLMResult(
+                text='{"final":"done"}',
+                provider="litellm",
+                model="actual",
+                usage=LLMUsage(input_tokens=4, output_tokens=2),
+            ),
+        ]
+    )
+
+    outcome = run_tool_loop(
+        question="What essential skills does a software developer need?",
+        suite=suite,
+        suite_name="esco",
+        llm_client=client,
+    )
+
+    assert outcome.result.capability == "connect"
+    assert suite.neighbor_calls == [(occupation.id, ["HAS_SKILL"])]
+    assert "computer programming" in outcome.answer
+
+
 def test_compact_result_truncates_neighbors_but_keeps_counts() -> None:
     center = NodeRef(
         id="esco:occupation:1",

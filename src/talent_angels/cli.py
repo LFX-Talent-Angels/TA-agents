@@ -19,6 +19,7 @@ from talent_angels.assistant.intent import CAPABILITY_CONNECT
 from talent_angels.env import load_local_dotenv
 from talent_angels.evals import LocateMetrics
 from talent_angels.llm.factory import get_answer_mode, get_llm_client
+from talent_angels.query_details import write_query_details
 from talent_angels.suites import SuiteRegistry, default_suite_registry
 
 GOLDEN_LOCATE_PATH = Path(__file__).resolve().parents[2] / "tests" / "evals" / "golden_locate.json"
@@ -72,18 +73,19 @@ def main(argv: Sequence[str] | None = None, *, registry: SuiteRegistry | None = 
         )
 
     record = outcome.record
+    details_path = write_query_details(outcome, question=args.question)
     print(
         json.dumps(
             {
+                "answer": outcome.answer,
                 "run_id": record.run_id,
                 "capability": outcome.capability,
                 "suite": outcome.result.suite,
                 "plan": record.plan,
-                "answer": outcome.answer,
                 "confidence": outcome.result.confidence,
                 "warnings": outcome.result.warnings,
                 "node_count": len(outcome.result.nodes),
-                "nodes": [node.model_dump() for node in outcome.result.nodes],
+                "details": str(details_path),
                 "tools": [tool.model_dump() for tool in record.tools],
                 "tokens": {
                     "input": record.gen_ai.input_tokens,

@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 from contextlib import contextmanager
+from pathlib import Path
 
 import pytest
 from fastapi.testclient import TestClient
@@ -88,6 +89,7 @@ def _registry(*, reachable: bool = True) -> SuiteRegistry:
 @pytest.fixture(autouse=True)
 def _local_runtime(monkeypatch: pytest.MonkeyPatch, tmp_path) -> None:
     monkeypatch.setenv("RUNLOG_PATH", str(tmp_path / "runlog.jsonl"))
+    monkeypatch.setenv("QUERY_DETAILS_DIR", str(tmp_path / "query-details"))
     monkeypatch.setenv("LLM_PROVIDER", "none")
     monkeypatch.setenv("LLM_MODEL", "stub")
     monkeypatch.setenv("ANSWER_MODE", "structured")
@@ -98,12 +100,20 @@ def test_cli_uses_injected_registry(capsys: pytest.CaptureFixture[str]) -> None:
 
     assert exit_code == 0
     output = json.loads(capsys.readouterr().out)
+    assert next(iter(output)) == "answer"
+    assert "nodes" not in output
+    assert output["node_count"] == 1
     assert output["suite"] == "test"
     assert output["confidence"] == 0.9
     assert output["plan"] == ["locate"]
     assert output["tokens"]["calls"] == 0
     assert output["cost_usd"]["known"] is True
     assert output["cost_usd"]["total"] == 0.0
+    details = Path(output["details"])
+    assert details.is_file()
+    body = details.read_text(encoding="utf-8")
+    assert "accountant" in body
+    assert "## Answer" in body
 
 
 def test_api_uses_injected_registry_and_adapter_health() -> None:

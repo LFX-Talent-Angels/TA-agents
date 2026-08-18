@@ -23,18 +23,23 @@ gh pr create --fill
 ## Next work (post-MVP)
 
 Branch from `feature/honesty-loop` (or the current demo tip), not from
-official `main`.
+official `main`. Spec:
+[`docs/NEXT-TA-AGENT-REPL.md`](./docs/NEXT-TA-AGENT-REPL.md).
 
-1. **`ta-agent` REPL first** — continuous chat, slash commands (`/quit`,
-   `/help`, `/save`, `/resume`), local session files, existing JSONL run
-   log. Cap what the LLM sees (context window). Tests must show a long
-   session does not grow the prompt without bound.
-2. Pathfind and other skills wait until the REPL is tested.
-3. **Open topic — user knowledge base.** Do not add a vector database or
-   write chat into the ESCO graph until we decide: files only, vectors,
-   a separate knowledge graph, or both. User memory is not taxonomy fact.
-   Discuss on the PR; record the decision as an ADR. Mentee write-up:
-   `data/local/agent-coordination/MENTEE-HANDOFF.md` §1.1 (local only).
+1. **Rich TUI first** — console script `ta-agent` is a conversation
+   (Rich panels, markdown answers, status bar, context-budget meter,
+   `/help` `/quit` `/save` `/resume`). Do not ship “JSON in a loop”
+   as the UI. `cli query` stays for scripts.
+2. **Better logging** — three streams, not one stdout dump:
+   session `transcript.jsonl`, per-turn `runlog.jsonl` (tokens/cost/tools),
+   and a debug log for budget trims. TUI does not print JSON. Cap the
+   LLM prompt; tests must show a long session does not grow it without
+   bound.
+3. **OPEN — memory / persistence.** Slice 1 = files only. **Discuss
+   before coding a store:** files vs vector vs a knowledge graph
+   (separate from ESCO) vs both. Do not add Chroma/Qdrant and do not
+   write chat into the ESCO Neo4j database. Close with an ADR.
+4. Pathfind and other skills wait until the REPL is tested.
 
 ## Tests
 

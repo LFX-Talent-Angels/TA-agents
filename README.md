@@ -4,10 +4,11 @@ Headless assistant runtime for **Talent Angels**. One main assistant
 interprets a natural-language question, calls deterministic ESCO graph tools
 (Locate / Connect), and returns a cited JSON answer with tokens and cost.
 
-Today the CLI is **one shot** (`python -m talent_angels.cli query "…"`).
-The next product slice is a continuous **`ta-agent` REPL** (slash commands,
-local session files). That command is not shipped yet — see
-[Next: `ta-agent` REPL](#next-ta-agent-repl).
+Today the CLI is **one shot** (`python -m talent_angels.cli query "…"`)
+and prints JSON. The next product slice is a **Rich TUI**: `ta-agent`
+opens a continuous chat, with session-scoped logs. That command is not
+shipped yet — see [Next: `ta-agent` REPL](#next-ta-agent-repl) and
+[`docs/NEXT-TA-AGENT-REPL.md`](./docs/NEXT-TA-AGENT-REPL.md).
 
 Pathfind (routes between two occupations) is **not** in this MVP: those
 questions are refused honestly. Evaluate and multi-taxonomy merge come later.
@@ -202,24 +203,53 @@ Open http://127.0.0.1:8000/docs and `POST /v1/query` with
 
 ## Next: `ta-agent` REPL
 
-Not implemented yet. After the 2026-08-19 MVP presentation, new work starts
-here — **not** Pathfind, not a vector DB.
+Not implemented yet. After the 2026-08-19 MVP presentation, new work
+starts here — **not** Pathfind. Full spec:
+[`docs/NEXT-TA-AGENT-REPL.md`](./docs/NEXT-TA-AGENT-REPL.md).
 
-| Intent | Detail |
-| --- | --- |
-| Command | Console script `ta-agent` opens a continuous chat (ChatGPT-style). |
-| Keep | `python -m talent_angels.cli query` stays for scripts and quality cards. |
-| Slash commands | `/quit`, `/help`, `/save`, `/resume` (first slice). |
-| Logs | Every turn still appends `runlog.jsonl`. Session transcripts stay local (`data/local/`, gitignored). |
-| Context window | Do **not** send the full transcript + neighbor lists to the LLM. Budget the prompt (last *N* lines and/or a summary + typed last-locate facts). Log truncation. A long fake session must not grow the prompt without bound. |
+### Rich TUI (required)
 
-**Open topic (discuss; do not implement a store yet):** where does a
-*user* knowledge base live across days — files only, a **vector** store,
-a **knowledge graph** (separate from ESCO), or both? ESCO stays the only
-cited taxonomy. User memory must be labeled as session, never mixed into
-the ESCO Neo4j database. Capture the choice in an ADR when we know the
-need. Full write-up for mentees: local
-`data/local/agent-coordination/MENTEE-HANDOFF.md` §1.1 (gitignored).
+`ta-agent` opens a **good-looking conversation**, not a JSON dump.
+
+- Transcript pane: user / assistant bubbles; assistant text rendered as
+  **markdown**.
+- Status bar: session id, model, capability, warnings, latency, cost,
+  **context-window bar**.
+- Compact tool strip (`search_nodes → 25`). Full node lists stay in
+  `query-details/`, not in the chat.
+- Slash commands: `/help`, `/quit`, `/save`, `/resume`, `/clear`.
+- Theme with [Rich](https://github.com/Textualize/rich). No LiteLLM ads
+  in the pane.
+- Keep `python -m talent_angels.cli query` for scripts and CI.
+
+### Better logging (required)
+
+Stop mixing “what the human sees” with telemetry.
+
+| Stream | Path (gitignored under `data/`) | Purpose |
+| --- | --- | --- |
+| Conversation | `sessions/<id>/transcript.jsonl` | Resume the chat |
+| Turn telemetry | `sessions/<id>/runlog.jsonl` + existing `runlog.jsonl` | tokens, cost, tools — `cli report` |
+| Operator log | `sessions/<id>/debug.log` | budget trims, LLM errors — not the TUI |
+
+The TUI never scrolls raw JSON. Log `context_trimmed` every turn.
+
+### OPEN: memory and persistence (discuss — do not build a store)
+
+**Not decided.** Slice 1 = **files only** (transcript + typed last-locate
+facts). Do **not** add a vector DB or write user chat into the ESCO
+Neo4j graph until we pick one and write an ADR:
+
+| | Store | Use |
+| --- | --- | --- |
+| A | Files only | Resume today (slice 1) |
+| B | Vector store | Fuzzy recall of past turns |
+| C | Knowledge graph (separate from ESCO) | Typed “user chose occupation X” |
+| D | Both | Long-lived personal KB |
+
+ESCO stays the only cited taxonomy. User memory is labeled session, never
+graph fact. How we close this: discuss, then one ADR. Details in
+[`docs/NEXT-TA-AGENT-REPL.md`](./docs/NEXT-TA-AGENT-REPL.md) §3.
 
 ---
 

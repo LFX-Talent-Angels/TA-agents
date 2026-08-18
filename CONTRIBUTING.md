@@ -18,6 +18,23 @@ gh pr create --fill
 - New behavior ships with a pytest test.
 - Never commit secrets or `.env` files — use `.env.example`.
 - At least one mentor approval is required to merge.
+- Every commit must be DCO signed (`git commit -s`). Never push to `main`.
+
+## Next work (post-MVP)
+
+Branch from `feature/honesty-loop` (or the current demo tip), not from
+official `main`.
+
+1. **`ta-agent` REPL first** — continuous chat, slash commands (`/quit`,
+   `/help`, `/save`, `/resume`), local session files, existing JSONL run
+   log. Cap what the LLM sees (context window). Tests must show a long
+   session does not grow the prompt without bound.
+2. Pathfind and other skills wait until the REPL is tested.
+3. **Open topic — user knowledge base.** Do not add a vector database or
+   write chat into the ESCO graph until we decide: files only, vectors,
+   a separate knowledge graph, or both. User memory is not taxonomy fact.
+   Discuss on the PR; record the decision as an ADR. Mentee write-up:
+   `data/local/agent-coordination/MENTEE-HANDOFF.md` §1.1 (local only).
 
 ## Tests
 
@@ -33,13 +50,11 @@ pytest -q --ignore=tests/integration
 Concrete ESCO and Neo4j checks live separately under `tests/integration/`:
 
 ```bash
-# Official TA-taxonomies main (PR #3 contract + PR #4 loader) is enough for
-# the contract-compatibility test. Live Locate/Connect needs PR #5 tools.
+# Official TA-taxonomies main now includes the contract (#3), loader (#4),
+# and EscoSuite tools (#5). That pin is enough for contract checks and
+# live Locate/Connect. Pathfind still needs an agents skill on top of
+# enumerate_paths; score_paths remains a stub.
 pip install -e ../TA-taxonomies
-
-# Until https://github.com/LFX-Talent-Angels/TA-taxonomies/pull/5 merges,
-# checkout that branch (or `feature/esco-tools`) before the editable install.
-# Official main does not ship EscoSuite.search_nodes / get_neighbors.
 
 # Configure Neo4j through the documented environment variables, then run:
 pytest -q tests/integration -rs

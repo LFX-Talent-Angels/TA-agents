@@ -4,6 +4,11 @@ Headless assistant runtime for **Talent Angels**. One main assistant
 interprets a natural-language question, calls deterministic ESCO graph tools
 (Locate / Connect), and returns a cited JSON answer with tokens and cost.
 
+Today the CLI is **one shot** (`python -m talent_angels.cli query "…"`).
+The next product slice is a continuous **`ta-agent` REPL** (slash commands,
+local session files). That command is not shipped yet — see
+[Next: `ta-agent` REPL](#next-ta-agent-repl).
+
 Pathfind (routes between two occupations) is **not** in this MVP: those
 questions are refused honestly. Evaluate and multi-taxonomy merge come later.
 
@@ -25,6 +30,7 @@ you  →  CLI or FastAPI (/docs)
 - CLI prints one JSON object (`answer`, `plan`, `tools`, `tokens`, `cost_usd`).
 - API is the same turn. Swagger: `http://127.0.0.1:8000/docs`.
 - `.env` is loaded automatically (cwd, then repo root). Shell exports win.
+- Per-turn JSONL lives in `runlog.jsonl` (override with `RUNLOG_PATH`).
 
 ---
 
@@ -43,9 +49,9 @@ TA-workspace/
   TA-taxonomies/    ← graph loader + EscoSuite tools
 ```
 
-Until [TA-taxonomies PR #5](https://github.com/LFX-Talent-Angels/TA-taxonomies/pull/5)
-merges, live query tools live on branch `feature/esco-tools`. Official
-`main` has the contract and loader only.
+Official [`TA-taxonomies` `main`](https://github.com/LFX-Talent-Angels/TA-taxonomies)
+includes the suite contract (#3), ESCO loader (#4), and query tools (#5:
+`EscoSuite.search_nodes`, `get_neighbors`, `enumerate_paths`).
 
 ---
 
@@ -75,7 +81,7 @@ whatever is in this Neo4j. Do not run it against the demo database.
 ```bash
 cd ../TA-taxonomies
 git fetch origin
-git switch feature/esco-tools          # needed until PR #5 merges
+git switch main                        # contract + loader + EscoSuite (#5)
 
 python3 -m venv .venv
 source .venv/bin/activate              # Windows: .venv\Scripts\activate
@@ -136,7 +142,7 @@ cd ../TA-agents
 python3 -m venv .venv
 source .venv/bin/activate
 pip install -e ".[dev]"
-pip install -e ../TA-taxonomies      # same tools branch as step 2
+pip install -e ../TA-taxonomies      # official main with EscoSuite
 cp .env.example .env
 ```
 
@@ -194,6 +200,29 @@ Open http://127.0.0.1:8000/docs and `POST /v1/query` with
 
 ---
 
+## Next: `ta-agent` REPL
+
+Not implemented yet. After the 2026-08-19 MVP presentation, new work starts
+here — **not** Pathfind, not a vector DB.
+
+| Intent | Detail |
+| --- | --- |
+| Command | Console script `ta-agent` opens a continuous chat (ChatGPT-style). |
+| Keep | `python -m talent_angels.cli query` stays for scripts and quality cards. |
+| Slash commands | `/quit`, `/help`, `/save`, `/resume` (first slice). |
+| Logs | Every turn still appends `runlog.jsonl`. Session transcripts stay local (`data/local/`, gitignored). |
+| Context window | Do **not** send the full transcript + neighbor lists to the LLM. Budget the prompt (last *N* lines and/or a summary + typed last-locate facts). Log truncation. A long fake session must not grow the prompt without bound. |
+
+**Open topic (discuss; do not implement a store yet):** where does a
+*user* knowledge base live across days — files only, a **vector** store,
+a **knowledge graph** (separate from ESCO), or both? ESCO stays the only
+cited taxonomy. User memory must be labeled as session, never mixed into
+the ESCO Neo4j database. Capture the choice in an ADR when we know the
+need. Full write-up for mentees: local
+`data/local/agent-coordination/MENTEE-HANDOFF.md` §1.1 (gitignored).
+
+---
+
 ## 5. Tests (does not reload ESCO)
 
 ```bash
@@ -217,8 +246,8 @@ pytest -q tests/integration -rs
 | Full graph disappeared after tests | Taxonomies `pytest tests/suites/esco` wiped it. Reload full; do not run those tests here. |
 | `LLM_PROVIDER=none` / `tokens.calls: 0` | `.env` still has stub mode, or a shell export overrides the file. |
 | `Provider List:` banner | LiteLLM ad, not a crash. Current polish branch suppresses it. |
-| `ModuleNotFoundError: ta_taxonomies` | `pip install -e ../TA-taxonomies` on the tools branch. |
-| Official taxonomies `main` has no `EscoSuite` | Use `feature/esco-tools` until PR #5 merges. |
+| `ModuleNotFoundError: ta_taxonomies` | `pip install -e ../TA-taxonomies` on official `main` (includes #5). |
+| `cannot import EscoSuite` | Taxonomies checkout is older than PR #5. Fast-forward `main`. |
 
 ---
 

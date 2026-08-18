@@ -18,15 +18,6 @@ gh pr create --fill
 - New behavior ships with a pytest test.
 - Never commit secrets or `.env` files — use `.env.example`.
 - At least one mentor approval is required to merge.
-- Every commit must be DCO signed (`git commit -s`). Never push to `main`.
-
-## Next work (post-MVP)
-
-Branch from `feature/honesty-loop` (or the current demo tip), not from
-official `main`. The TUI / logging / open memory discussion is **only**
-in the local mentee handoff
-(`data/local/agent-coordination/MENTEE-HANDOFF.md` §1.1) so it can be
-shared as one Slack file. Do not add a second spec in `docs/`.
 
 ## Tests
 
@@ -42,10 +33,7 @@ pytest -q --ignore=tests/integration
 Concrete ESCO and Neo4j checks live separately under `tests/integration/`:
 
 ```bash
-# Official TA-taxonomies main now includes the contract (#3), loader (#4),
-# and EscoSuite tools (#5). That pin is enough for contract checks and
-# live Locate/Connect. Pathfind still needs an agents skill on top of
-# enumerate_paths; score_paths remains a stub.
+# Sibling package from official TA-taxonomies main.
 pip install -e ../TA-taxonomies
 
 # Configure Neo4j through the documented environment variables, then run:

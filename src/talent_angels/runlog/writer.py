@@ -24,3 +24,17 @@ def append_record(record: RunLogRecord, *, path: Path | None = None) -> None:
     with target.open("a", encoding="utf-8") as f:
         f.write(record.model_dump_json())
         f.write("\n")
+
+
+def read_records(*, path: Path | None = None, last: int | None = None) -> list[RunLogRecord]:
+    """Load JSONL turns. ``last`` keeps only the newest N records."""
+    target = path or runlog_path()
+    if not target.is_file():
+        return []
+    rows: list[RunLogRecord] = []
+    for line in target.read_text(encoding="utf-8").splitlines():
+        if line.strip():
+            rows.append(RunLogRecord.model_validate_json(line))
+    if last is None or last <= 0:
+        return rows
+    return rows[-last:]

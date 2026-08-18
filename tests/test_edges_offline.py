@@ -95,6 +95,12 @@ def _local_runtime(monkeypatch: pytest.MonkeyPatch, tmp_path) -> None:
     monkeypatch.setenv("ANSWER_MODE", "structured")
 
 
+def test_cli_module_entrypoint_calls_main() -> None:
+    source = Path(cli.__file__).read_text(encoding="utf-8")
+    assert 'if __name__ == "__main__":' in source
+    assert "sys.exit(main())" in source
+
+
 def test_cli_uses_injected_registry(capsys: pytest.CaptureFixture[str]) -> None:
     exit_code = main(["locate", "accountant"], registry=_registry())
 
@@ -114,6 +120,13 @@ def test_cli_uses_injected_registry(capsys: pytest.CaptureFixture[str]) -> None:
     body = details.read_text(encoding="utf-8")
     assert "accountant" in body
     assert "## Answer" in body
+    assert "## Economics" in body
+    assert "**tokens:**" in body
+    sidecar = details.with_suffix(".json")
+    assert sidecar.is_file()
+    details_json = json.loads(sidecar.read_text(encoding="utf-8"))
+    assert details_json["economics"]["calls"] == 0
+    assert "search_texts" in details_json["economics"]
 
 
 def test_api_uses_injected_registry_and_adapter_health() -> None:
@@ -142,6 +155,55 @@ def test_cli_pathfind_question_is_honest(
     assert "capability_not_implemented:pathfind" in output["warnings"]
     assert "Pathfind is not in this MVP" in output["answer"]
     assert output["tools"] == []
+
+
+def test_cli_quality_writes_full_report(capsys: pytest.CaptureFixture[str], tmp_path: Path) -> None:
+    suite = tmp_path / "suite.json"
+    suite.write_text(
+        json.dumps(
+            {
+                "suite": "test",
+                "cases": [
+                    {
+                        "id": "locate-accountant",
+                        "question": "accountant",
+                        "family": "locate_unique",
+                        "expected_capability": ["locate"],
+                    }
+                ],
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    exit_code = main(["quality", "--suite", str(suite)], registry=_registry())
+
+    assert exit_code == 0
+    captured = capsys.readouterr()
+    output = json.loads(captured.out)
+    assert output["score"] == "1/1"
+    assert "[1/1] running locate-accountant" in captured.err
+    assert "[1/1] PASS locate-accountant" in captured.err
+    report = Path(output["markdown"]).read_text(encoding="utf-8")
+    assert "**tokens:**" in report
+    assert "locate-accountant" in report
+
+
+def test_cli_report_reads_runlog(
+    capsys: pytest.CaptureFixture[str], tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from talent_angels.runlog import RunLogRecord, append_record
+
+    path = tmp_path / "runlog.jsonl"
+    append_record(RunLogRecord(suite="esco", plan=["locate"], question="nurse"), path=path)
+    monkeypatch.setenv("RUNLOG_PATH", str(path))
+
+    exit_code = main(["report", "--last", "5"])
+
+    assert exit_code == 0
+    printed = capsys.readouterr().out
+    assert "TA-agents run log" in printed
+    assert "nurse" in printed or "locate" in printed
 
 
 def test_api_pathfind_question_is_honest() -> None:

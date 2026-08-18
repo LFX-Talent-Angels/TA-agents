@@ -6,13 +6,18 @@ import json
 
 from talent_angels.llm.protocol import LLMUsage
 from talent_angels.runlog import (
+    GenAIUsage,
+    ResultSummary,
     RunLogRecord,
     StageUsage,
+    ToolCall,
     append_record,
     estimate_llm_cost_usd,
     estimate_turn_cost_usd,
     load_rate_card,
+    read_records,
 )
+from talent_angels.runlog.report import format_runlog_report
 
 
 def test_stub_model_costs_nothing() -> None:
@@ -136,3 +141,34 @@ def test_append_record_writes_one_json_line_per_call(tmp_path) -> None:
     assert parsed[0]["question"] == "software developer"
     assert parsed[1]["question"] == "data scientist"
     assert parsed[0]["schema_version"] == 1
+
+
+def test_read_records_keeps_newest_and_parses_tool_args(tmp_path) -> None:
+    path = tmp_path / "runlog.jsonl"
+    older = RunLogRecord(suite="esco", plan=["locate"], question="old")
+    newer = RunLogRecord(
+        suite="esco",
+        plan=["locate", "connect"],
+        question="software developer skills",
+        gen_ai=GenAIUsage(
+            provider_name="litellm",
+            request_model="laguna",
+            calls=1,
+            input_tokens=10,
+        ),
+        tools=[
+            ToolCall(name="search_nodes", ms=8.0, ok=True, args={"text": "software developer"}),
+        ],
+        result=ResultSummary(node_ids=["esco:1"], node_labels=["software developer"]),
+    )
+    append_record(older, path=path)
+    append_record(newer, path=path)
+
+    last = read_records(path=path, last=1)
+
+    assert len(last) == 1
+    assert last[0].question == "software developer skills"
+    assert last[0].tools[0].args["text"] == "software developer"
+    report = format_runlog_report(last)
+    assert "software developer" in report
+    assert "1 in / 0 out" in report or "10/0" in report

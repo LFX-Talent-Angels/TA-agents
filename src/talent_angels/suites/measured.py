@@ -30,6 +30,7 @@ class MeasuredSuite:
                     name="search_nodes",
                     ms=(time.perf_counter() - start) * 1000,
                     ok=ok,
+                    args={"text": text, "kind": kind},
                 )
             )
 
@@ -46,5 +47,6 @@ class MeasuredSuite:
                     name="get_neighbors",
                     ms=(time.perf_counter() - start) * 1000,
                     ok=ok,
+                    args={"node_id": node_id, "rel_types": rel_types},
                 )
             )

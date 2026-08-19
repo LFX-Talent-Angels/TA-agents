@@ -1,0 +1,12 @@
+# Code owners for TA-agents.
+#
+# Mentees own the skills and the runtime. These paths are different: they
+# define the typed boundary, the correctness baseline, or project policy,
+# so they need mentor review.
+
+/src/talent_angels/contracts/  @nosoypoot
+/tests/evals/                  @nosoypoot
+/ARCHITECTURE.md               @nosoypoot
+/CLAUDE.md                     @nosoypoot
+/AGENTS.md                     @nosoypoot
+/.github/                      @nosoypoot

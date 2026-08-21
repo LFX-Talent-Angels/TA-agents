@@ -10,23 +10,18 @@ from pathlib import Path
 
 import pytest
 
-pytest.importorskip("ta_taxonomies")
+pytest.importorskip(
+    "ta_taxonomies",
+    reason="TA-taxonomies is not installed; install the sibling package for integration tests",
+)
 
 from ta_taxonomies.suites.esco.db import neo4j_driver  # noqa: E402
 from ta_taxonomies.suites.esco.tools import EscoSuite  # noqa: E402
 
 from talent_angels.skills.locate import ESCO_SUITE_NAME, locate  # noqa: E402
+from tests.integration.support import neo4j_reachable  # noqa: E402
 
-GOLDEN_PATH = Path(__file__).parent / "golden_locate.json"
-
-
-def _neo4j_reachable() -> bool:
-    try:
-        with neo4j_driver() as (driver, _database):
-            driver.verify_connectivity()
-        return True
-    except Exception:
-        return False
+GOLDEN_PATH = Path(__file__).parents[1] / "evals" / "golden_locate.json"
 
 
 def _load_cases() -> list[dict]:
@@ -34,9 +29,10 @@ def _load_cases() -> list[dict]:
     return data["cases"]
 
 
-pytestmark = pytest.mark.skipif(
-    not _neo4j_reachable(), reason="Neo4j not reachable; see TA-taxonomies NOTES.md"
-)
+pytestmark = [
+    pytest.mark.integration,
+    pytest.mark.skipif(not neo4j_reachable(), reason="Neo4j is not reachable"),
+]
 
 
 @pytest.mark.parametrize("case", _load_cases(), ids=lambda c: c["question"])

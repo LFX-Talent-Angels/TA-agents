@@ -10,11 +10,8 @@ user-facing answer — skills stay passive procedures (ARCHITECTURE.md rule #3).
 
 from __future__ import annotations
 
-from typing import Protocol
-
 from langgraph.graph import END, StateGraph
 from langgraph.graph.state import CompiledStateGraph
-from ta_taxonomies.contract.models import ToolResult
 
 from talent_angels.assistant.answer import build_answer
 from talent_angels.assistant.intent import CAPABILITY_LOCATE, classify_capability
@@ -22,10 +19,7 @@ from talent_angels.assistant.state import AssistantState
 from talent_angels.contracts import AgentResult
 from talent_angels.llm import LLMClient
 from talent_angels.skills.locate import ESCO_SUITE_NAME, locate
-
-
-class SearchableSuite(Protocol):
-    def search_nodes(self, text: str, kind: str | None = None) -> ToolResult: ...
+from talent_angels.skills.locate.resolve import SearchableSuite
 
 
 def _interpret_intent(state: AssistantState) -> AssistantState:

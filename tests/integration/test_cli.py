@@ -6,25 +6,18 @@ import json
 
 import pytest
 
-pytest.importorskip("ta_taxonomies")
-
-from ta_taxonomies.suites.esco.db import neo4j_driver  # noqa: E402
+pytest.importorskip(
+    "ta_taxonomies",
+    reason="TA-taxonomies is not installed; install the sibling package for integration tests",
+)
 
 from talent_angels.cli import main  # noqa: E402
+from tests.integration.support import neo4j_reachable  # noqa: E402
 
-
-def _neo4j_reachable() -> bool:
-    try:
-        with neo4j_driver() as (driver, _database):
-            driver.verify_connectivity()
-        return True
-    except Exception:
-        return False
-
-
-pytestmark = pytest.mark.skipif(
-    not _neo4j_reachable(), reason="Neo4j not reachable; see TA-taxonomies NOTES.md"
-)
+pytestmark = [
+    pytest.mark.integration,
+    pytest.mark.skipif(not neo4j_reachable(), reason="Neo4j is not reachable"),
+]
 
 
 @pytest.fixture(autouse=True)

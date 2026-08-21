@@ -52,3 +52,7 @@ ignore_missing_imports = true
 [tool.pytest.ini_options]
 testpaths = ["tests"]
 pythonpath = ["src"]
+addopts = "--strict-markers"
+markers = [
+  "integration: requires the concrete TA-taxonomies package or a live Neo4j database",
+]

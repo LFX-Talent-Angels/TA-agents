@@ -50,6 +50,7 @@ def import_without_taxonomies(name, *args, **kwargs):
 builtins.__import__ = import_without_taxonomies
 import talent_angels.api.app
 import talent_angels.cli
+import talent_angels.tui.app
 from talent_angels.suites import default_suite_registry
 assert default_suite_registry().available == ("esco",)
 """

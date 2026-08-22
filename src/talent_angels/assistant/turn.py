@@ -18,7 +18,7 @@ from talent_angels.assistant.planning import (
     ExecutionPlan,
     build_plan_for_capability,
 )
-from talent_angels.contracts import AgentResult
+from talent_angels.contracts import AgentResult, NodeRef
 from talent_angels.llm import LLMClient, LLMUsage
 from talent_angels.runlog import (
     EfficiencyInfo,
@@ -33,6 +33,7 @@ from talent_angels.runlog import (
     usage_from_stage,
 )
 from talent_angels.skills.locate import ESCO_SUITE_NAME, locate
+from talent_angels.skills.locate.rank import group_and_sort_locate
 from talent_angels.suites.measured import MeasuredSuite
 from talent_angels.suites.protocol import SuiteTools
 
@@ -75,6 +76,7 @@ def run_turn(
     force_locate: bool = False,
     force_capability: Capability | None = None,
     cache: ResultCache | None = None,
+    bound_node: NodeRef | None = None,
 ) -> TurnOutcome:
     """Run one turn and append its run-log record.
 
@@ -101,6 +103,7 @@ def run_turn(
         else:
             measured = MeasuredSuite(suite)
             result = locate(measured, suite_name, question, kind=kind)
+            result = group_and_sort_locate(measured, result, question, suite_name=suite_name)
             tools = measured.tool_calls
             if cache is not None:
                 cache.set(suite_name, capability, question, result)
@@ -115,7 +118,7 @@ def run_turn(
             answer_mode=answer_mode,
             forced_capability=selected_force,
         )
-        final_state = graph.invoke({"question": question, "kind": kind})
+        final_state = graph.invoke({"question": question, "kind": kind, "bound_node": bound_node})
         capability = final_state["capability"]
         plan = final_state["plan"]
         result = final_state["result"]

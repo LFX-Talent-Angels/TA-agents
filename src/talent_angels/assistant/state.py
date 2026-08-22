@@ -7,7 +7,7 @@ from typing import TypedDict
 from talent_angels.assistant.intent import Capability
 from talent_angels.assistant.llm_plan import PlanDraft
 from talent_angels.assistant.planning import ExecutionPlan
-from talent_angels.contracts import AgentResult
+from talent_angels.contracts import AgentResult, NodeRef
 from talent_angels.llm import LLMUsage
 from talent_angels.runlog import StageUsage, ToolCall
 
@@ -15,6 +15,7 @@ from talent_angels.runlog import StageUsage, ToolCall
 class AssistantState(TypedDict, total=False):
     question: str
     kind: str | None
+    bound_node: NodeRef | None
     capability: Capability
     plan: ExecutionPlan
     plan_draft: PlanDraft | None

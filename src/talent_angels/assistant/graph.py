@@ -9,6 +9,7 @@ from talent_angels.assistant.answer import build_answer
 from talent_angels.assistant.connect_request import (
     UnsupportedConnectQuery,
     extract_connect_request,
+    followup_connect_request,
 )
 from talent_angels.assistant.intent import (
     CAPABILITY_CONNECT,
@@ -21,11 +22,12 @@ from talent_angels.assistant.llm_plan import (
     interpret_question,
 )
 from talent_angels.assistant.state import AssistantState
-from talent_angels.contracts import AgentResult
+from talent_angels.contracts import AgentResult, NodeRef
 from talent_angels.llm import LLMClient
 from talent_angels.runlog import usage_from_stage
 from talent_angels.skills.connect import connect
 from talent_angels.skills.locate import ESCO_SUITE_NAME, locate
+from talent_angels.skills.locate.rank import group_and_sort_locate
 from talent_angels.suites.measured import MeasuredSuite
 from talent_angels.suites.protocol import SuiteTools
 
@@ -70,9 +72,27 @@ def _dispatch_plan(state: AssistantState, *, suite: SuiteTools, suite_name: str)
             locate_text,
             kind=locate_kind,
         )
+        result = group_and_sort_locate(measured, result, locate_text, suite_name=suite_name)
         return {"result": result, "tool_calls": measured.tool_calls}
 
     if capability == CAPABILITY_CONNECT:
+        bound = state.get("bound_node")
+        if isinstance(bound, NodeRef):
+            followup = followup_connect_request(state["question"], bound)
+            if followup is not None:
+                result = connect(
+                    measured,
+                    suite_name,
+                    bound,
+                    request=followup,
+                    confidence=None,
+                    locate_evidence=[],
+                )
+                return {
+                    "result": result,
+                    "tool_calls": measured.tool_calls,
+                }
+
         request = connect_request_from_draft(draft) if draft is not None else None
         if request is None:
             try:
@@ -96,6 +116,7 @@ def _dispatch_plan(state: AssistantState, *, suite: SuiteTools, suite_name: str)
             request.subject,
             kind=locate_kind,
         )
+        located = group_and_sort_locate(measured, located, request.subject, suite_name=suite_name)
         if not located.nodes or "ambiguous" in located.warnings:
             return {
                 "result": located.model_copy(update={"capability": capability}),

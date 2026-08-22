@@ -17,9 +17,13 @@ dependencies = [
   "litellm",
   "python-dotenv",
   "pyyaml",
+  "rich>=13",
   # "ta-taxonomies" — the suite-contract library (sibling repo), added once
   # its first version is published/installable (ADR-0004).
 ]
+
+[project.scripts]
+ta-agent = "talent_angels.tui.app:main"
 
 [project.optional-dependencies]
 dev = [

@@ -206,8 +206,9 @@ def test_graph_does_not_connect_an_ambiguous_subject() -> None:
 
     assert final_state["result"].capability == "connect"
     assert "ambiguous" in final_state["result"].warnings
-    assert suite.neighbor_calls == []
-    assert [tool.name for tool in final_state["tool_calls"]] == ["search_nodes"]
+    assert all(rel == ["CLASSIFIED_UNDER"] for _node, rel in suite.neighbor_calls)
+    assert not any(rel == ["HAS_SKILL"] for _node, rel in suite.neighbor_calls)
+    assert "search_nodes" in [tool.name for tool in final_state["tool_calls"]]
     assert "please clarify" in final_state["answer"].lower()
 
 

@@ -68,7 +68,14 @@ class LiteLLMClient:
         self.reasoning_enabled = reasoning_enabled
         if completion_fn is None:
             ensure_local_model_cost_map()
-            from litellm import completion
+            os.environ.setdefault("LITELLM_LOG", "ERROR")
+            import contextlib
+            import io
+
+            # LiteLLM prints a "Provider List" banner on import; keep the CLI clean.
+            quiet = contextlib.redirect_stdout(io.StringIO())
+            with quiet, contextlib.redirect_stderr(io.StringIO()):
+                from litellm import completion
 
             completion_fn = completion
         self._completion = completion_fn

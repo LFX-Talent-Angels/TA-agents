@@ -3,7 +3,12 @@
 The seam the future Evaluator quality loop attaches to.
 """
 
-from talent_angels.runlog.cost import estimate_llm_cost_usd, load_rate_card
+from talent_angels.runlog.cost import (
+    estimate_llm_cost_usd,
+    estimate_turn_cost_usd,
+    load_rate_card,
+    usage_from_stage,
+)
 from talent_angels.runlog.models import (
     CostBreakdown,
     EfficiencyInfo,
@@ -11,6 +16,7 @@ from talent_angels.runlog.models import (
     GraphStats,
     ResultSummary,
     RunLogRecord,
+    StageUsage,
     ToolCall,
 )
 from talent_angels.runlog.writer import append_record, runlog_path
@@ -22,9 +28,12 @@ __all__ = [
     "GraphStats",
     "ResultSummary",
     "RunLogRecord",
+    "StageUsage",
     "ToolCall",
     "append_record",
     "estimate_llm_cost_usd",
+    "estimate_turn_cost_usd",
     "load_rate_card",
     "runlog_path",
+    "usage_from_stage",
 ]

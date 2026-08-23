@@ -11,10 +11,11 @@ from talent_angels.assistant.connect_request import (
     extract_connect_request,
 )
 from talent_angels.assistant.intent import CAPABILITY_CONNECT, CAPABILITY_LOCATE, Capability
-from talent_angels.assistant.planning import build_plan, build_plan_for_capability
+from talent_angels.assistant.llm_plan import connect_request_from_draft, interpret_question
 from talent_angels.assistant.state import AssistantState
 from talent_angels.contracts import AgentResult
 from talent_angels.llm import LLMClient
+from talent_angels.runlog import usage_from_stage
 from talent_angels.skills.connect import connect
 from talent_angels.skills.locate import ESCO_SUITE_NAME, locate
 from talent_angels.suites.measured import MeasuredSuite
@@ -25,42 +26,58 @@ def _interpret_intent(
     state: AssistantState,
     *,
     suite_name: str,
+    llm_client: LLMClient,
     forced_capability: Capability | None,
 ) -> AssistantState:
-    plan = (
-        build_plan(state["question"], suites=(suite_name,))
-        if forced_capability is None
-        else build_plan_for_capability(forced_capability, suites=(suite_name,))
+    interpreted = interpret_question(
+        state["question"],
+        suite_name=suite_name,
+        llm_client=llm_client,
+        forced_capability=forced_capability,
     )
-    return {"capability": plan.intent.target, "plan": plan}
+    stages = list(state.get("llm_stages") or [])
+    if interpreted.stage is not None:
+        stages.append(interpreted.stage)
+    return {
+        "capability": interpreted.plan.intent.target,
+        "plan": interpreted.plan,
+        "plan_draft": interpreted.draft,
+        "heuristic_intent": interpreted.heuristic,
+        "llm_stages": stages,
+    }
 
 
 def _dispatch_plan(state: AssistantState, *, suite: SuiteTools, suite_name: str) -> AssistantState:
     capability = state["plan"].intent.target
     measured = MeasuredSuite(suite)
+    draft = state.get("plan_draft")
     if capability == CAPABILITY_LOCATE:
+        locate_text = draft.subject if draft and draft.subject else state["question"]
+        locate_kind = state.get("kind") or (draft.kind if draft else None)
         result = locate(
             measured,
             suite_name,
-            state["question"],
-            kind=state.get("kind"),
+            locate_text,
+            kind=locate_kind,
         )
         return {"result": result, "tool_calls": measured.tool_calls}
 
     if capability == CAPABILITY_CONNECT:
-        try:
-            request = extract_connect_request(state["question"])
-        except UnsupportedConnectQuery:
-            return {
-                "result": AgentResult(
-                    capability=capability,
-                    suite=suite_name,
-                    warnings=["unsupported_connect_query"],
-                ),
-                "tool_calls": [],
-            }
+        request = connect_request_from_draft(draft) if draft is not None else None
+        if request is None:
+            try:
+                request = extract_connect_request(state["question"])
+            except UnsupportedConnectQuery:
+                return {
+                    "result": AgentResult(
+                        capability=capability,
+                        suite=suite_name,
+                        warnings=["unsupported_connect_query"],
+                    ),
+                    "tool_calls": [],
+                }
 
-        locate_kind = state.get("kind")
+        locate_kind = state.get("kind") or (draft.kind if draft else None)
         if locate_kind is None and request.rel_types == ("HAS_SKILL",):
             locate_kind = "occupation"
         located = locate(
@@ -99,8 +116,15 @@ def _dispatch_plan(state: AssistantState, *, suite: SuiteTools, suite_name: str)
 
 
 def _answer(state: AssistantState, *, llm_client: LLMClient, answer_mode: str) -> AssistantState:
-    answer, llm_usage = build_answer(state["result"], llm_client=llm_client, mode=answer_mode)
-    return {"answer": answer, "llm_usage": llm_usage}
+    answer, stage = build_answer(state["result"], llm_client=llm_client, mode=answer_mode)
+    stages = list(state.get("llm_stages") or [])
+    if stage is not None:
+        stages.append(stage)
+    return {
+        "answer": answer,
+        "llm_usage": usage_from_stage(stage) if stage is not None else None,
+        "llm_stages": stages,
+    }
 
 
 def build_graph(
@@ -117,6 +141,7 @@ def build_graph(
         lambda s: _interpret_intent(
             s,
             suite_name=suite_name,
+            llm_client=llm_client,
             forced_capability=forced_capability,
         ),
     )

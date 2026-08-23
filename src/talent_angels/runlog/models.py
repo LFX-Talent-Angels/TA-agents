@@ -22,6 +22,22 @@ class EfficiencyInfo(BaseModel):
     heuristic_intent: bool = True
 
 
+class StageUsage(BaseModel):
+    """One LLM call inside a turn (intent or answer)."""
+
+    stage: str
+    provider_name: str = ""
+    request_model: str = ""
+    response_model: str = ""
+    input_tokens: int = 0
+    output_tokens: int = 0
+    reasoning_tokens: int = 0
+    cache_read_input_tokens: int = 0
+    cache_creation_input_tokens: int = 0
+    latency_ms: float = 0.0
+    calls: int = 1
+
+
 class GenAIUsage(BaseModel):
     provider_name: str = "none"
     request_model: str = ""
@@ -31,6 +47,7 @@ class GenAIUsage(BaseModel):
     cache_read_input_tokens: int = 0
     cache_creation_input_tokens: int = 0
     calls: int = 0
+    stages: list[StageUsage] = Field(default_factory=list)
 
 
 class ToolCall(BaseModel):

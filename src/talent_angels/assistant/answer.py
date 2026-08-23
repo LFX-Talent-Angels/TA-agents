@@ -7,16 +7,18 @@ result — never to decide facts (rule #2: only graph data is cited as fact).
 
 from __future__ import annotations
 
+from talent_angels.assistant.llm_call import measure_complete
 from talent_angels.contracts import AgentResult
-from talent_angels.llm import LLMClient, LLMUsage, Message
+from talent_angels.llm import LLMClient, Message
+from talent_angels.runlog import StageUsage
 
 AMBIGUOUS_CHOICE_LIMIT = 3
 
 
 def build_answer(
     result: AgentResult, *, llm_client: LLMClient, mode: str = "structured"
-) -> tuple[str, LLMUsage | None]:
-    """Returns (answer text, LLM usage). Usage is None when no LLM call was made."""
+) -> tuple[str, StageUsage | None]:
+    """Returns (answer text, answer-stage usage). Stage is None when no LLM call ran."""
     if not result.nodes:
         warning = result.warnings[0] if result.warnings else "not_found"
         return f"No match found for capability '{result.capability}' ({warning}).", None
@@ -51,7 +53,7 @@ def build_answer(
         if result.warnings:
             summary += f" [warnings: {', '.join(result.warnings)}]"
 
-    if mode != "natural" or result.capability == "connect":
+    if mode != "natural":
         return summary, None
 
     messages = [
@@ -59,10 +61,12 @@ def build_answer(
             role="system",
             content=(
                 "Rephrase the following taxonomy result as one plain sentence, "
-                "citing only the given facts."
+                "citing only the given facts. Do not add occupations or skills "
+                "that are not listed. If the result is ambiguous, ask the user "
+                "to choose."
             ),
         ),
         Message(role="user", content=summary),
     ]
-    llm_result = llm_client.complete(messages)
-    return llm_result.text, llm_result.usage
+    llm_result, stage = measure_complete(llm_client, messages, stage="answer")
+    return llm_result.text, stage

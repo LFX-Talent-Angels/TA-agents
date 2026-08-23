@@ -7,8 +7,10 @@ import json
 from talent_angels.llm.protocol import LLMUsage
 from talent_angels.runlog import (
     RunLogRecord,
+    StageUsage,
     append_record,
     estimate_llm_cost_usd,
+    estimate_turn_cost_usd,
     load_rate_card,
 )
 
@@ -63,6 +65,61 @@ def test_cache_read_is_cheaper_than_full_price() -> None:
     # so it should roughly match the uncached case's actual cost.
     assert cost_cached.llm == cost_full.total
     assert cost_cached.llm_with_cache_savings == cost_cached.total
+
+
+def test_turn_cost_sums_priced_stages() -> None:
+    stages = [
+        StageUsage(
+            stage="intent",
+            request_model="priced-test-model",
+            input_tokens=2,
+            output_tokens=1,
+        ),
+        StageUsage(
+            stage="answer",
+            request_model="priced-test-model",
+            input_tokens=3,
+            output_tokens=1,
+        ),
+    ]
+    rate_card = {
+        "version": "test",
+        "models": {
+            "priced-test-model": {
+                "input_per_million": 1_000_000.0,
+                "output_per_million": 2_000_000.0,
+                "cache_read_per_million": 0.0,
+                "cache_write_5m_per_million": 0.0,
+            }
+        },
+    }
+
+    cost = estimate_turn_cost_usd(stages, "priced-test-model", rate_card=rate_card)
+
+    assert cost.known is True
+    assert cost.total == 9.0
+
+
+def test_turn_cost_unknown_if_any_stage_is_unpriced() -> None:
+    stages = [
+        StageUsage(stage="intent", request_model="priced-test-model", input_tokens=1),
+        StageUsage(stage="answer", request_model="not-a-real-model", input_tokens=1),
+    ]
+    rate_card = {
+        "version": "test",
+        "models": {
+            "priced-test-model": {
+                "input_per_million": 1.0,
+                "output_per_million": 1.0,
+                "cache_read_per_million": 0.0,
+                "cache_write_5m_per_million": 0.0,
+            }
+        },
+    }
+
+    cost = estimate_turn_cost_usd(stages, "priced-test-model", rate_card=rate_card)
+
+    assert cost.known is False
 
 
 def test_append_record_writes_one_json_line_per_call(tmp_path) -> None:

@@ -26,13 +26,33 @@ from talent_angels.runlog import (
     GraphStats,
     ResultSummary,
     RunLogRecord,
+    StageUsage,
     ToolCall,
     append_record,
-    estimate_llm_cost_usd,
+    estimate_turn_cost_usd,
+    usage_from_stage,
 )
 from talent_angels.skills.locate import ESCO_SUITE_NAME, locate
 from talent_angels.suites.measured import MeasuredSuite
 from talent_angels.suites.protocol import SuiteTools
+
+
+def _usage_from_stages(stages: list[StageUsage]) -> LLMUsage:
+    if not stages:
+        return LLMUsage()
+    merged = LLMUsage()
+    for stage in stages:
+        part = usage_from_stage(stage)
+        merged = LLMUsage(
+            input_tokens=merged.input_tokens + part.input_tokens,
+            output_tokens=merged.output_tokens + part.output_tokens,
+            reasoning_tokens=merged.reasoning_tokens + part.reasoning_tokens,
+            cache_read_input_tokens=merged.cache_read_input_tokens + part.cache_read_input_tokens,
+            cache_creation_input_tokens=(
+                merged.cache_creation_input_tokens + part.cache_creation_input_tokens
+            ),
+        )
+    return merged
 
 
 @dataclass
@@ -84,7 +104,9 @@ def run_turn(
             tools = measured.tool_calls
             if cache is not None:
                 cache.set(suite_name, capability, question, result)
-        answer, llm_usage = build_answer(result, llm_client=llm_client, mode=answer_mode)
+        answer, answer_stage = build_answer(result, llm_client=llm_client, mode=answer_mode)
+        stages = [answer_stage] if answer_stage is not None else []
+        heuristic_intent = True
     else:
         graph = build_graph(
             suite=suite,
@@ -98,11 +120,12 @@ def run_turn(
         plan = final_state["plan"]
         result = final_state["result"]
         answer = final_state["answer"]
-        llm_usage = final_state.get("llm_usage")
+        stages = list(final_state.get("llm_stages") or [])
+        heuristic_intent = bool(final_state.get("heuristic_intent", True))
         tools = final_state["tool_calls"]
-    usage = llm_usage or LLMUsage()
+    usage = _usage_from_stages(stages)
     model = os.environ.get("LLM_MODEL", "").strip() or "stub"
-    cost = estimate_llm_cost_usd(usage, model)
+    cost = estimate_turn_cost_usd(stages, model)
     gen_ai = GenAIUsage(
         provider_name=os.environ.get("LLM_PROVIDER", "none").strip() or "none",
         request_model=model,
@@ -111,7 +134,8 @@ def run_turn(
         reasoning_tokens=usage.reasoning_tokens,
         cache_read_input_tokens=usage.cache_read_input_tokens,
         cache_creation_input_tokens=usage.cache_creation_input_tokens,
-        calls=1 if llm_usage is not None else 0,
+        calls=sum(stage.calls for stage in stages),
+        stages=stages,
     )
     graph_stats = GraphStats(
         queries=len(tools),
@@ -123,12 +147,9 @@ def run_turn(
         plan=list(plan.capabilities),
         question=question,
         efficiency=EfficiencyInfo(
-            mode=(
-                "cached_result"
-                if cache_hit
-                else ("llm_answer" if llm_usage is not None else "tool_only")
-            ),
+            mode=("cached_result" if cache_hit else ("llm_answer" if stages else "tool_only")),
             result_cache_hit=cache_hit,
+            heuristic_intent=heuristic_intent,
         ),
         gen_ai=gen_ai,
         tools=tools,

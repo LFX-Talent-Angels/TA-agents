@@ -98,6 +98,10 @@ def test_cli_uses_injected_registry(capsys: pytest.CaptureFixture[str]) -> None:
     output = json.loads(capsys.readouterr().out)
     assert output["suite"] == "test"
     assert output["confidence"] == 0.9
+    assert output["plan"] == ["locate"]
+    assert output["tokens"]["calls"] == 0
+    assert output["cost_usd"]["known"] is True
+    assert output["cost_usd"]["total"] == 0.0
 
 
 def test_api_uses_injected_registry_and_adapter_health() -> None:

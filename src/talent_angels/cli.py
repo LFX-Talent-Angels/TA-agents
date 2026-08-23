@@ -15,6 +15,7 @@ from pathlib import Path
 from typing import Any
 
 from talent_angels.assistant import ResultCache, run_turn
+from talent_angels.assistant.intent import CAPABILITY_CONNECT
 from talent_angels.evals import LocateMetrics
 from talent_angels.llm import get_llm_client
 from talent_angels.suites import SuiteRegistry, default_suite_registry
@@ -33,6 +34,12 @@ def _build_parser() -> argparse.ArgumentParser:
     locate_parser = sub.add_parser("locate", help="Run Locate directly (bypasses intent routing).")
     locate_parser.add_argument("question")
     locate_parser.add_argument("--kind", default=None)
+
+    connect_parser = sub.add_parser(
+        "connect", help="Run Locate → Connect directly (bypasses intent routing)."
+    )
+    connect_parser.add_argument("question")
+    connect_parser.add_argument("--kind", default=None)
 
     sub.add_parser(
         "bench",
@@ -58,6 +65,7 @@ def main(argv: Sequence[str] | None = None, *, registry: SuiteRegistry | None = 
             question=args.question,
             kind=args.kind,
             force_locate=(args.command == "locate"),
+            force_capability=(CAPABILITY_CONNECT if args.command == "connect" else None),
         )
 
     print(

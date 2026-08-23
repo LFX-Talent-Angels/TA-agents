@@ -8,6 +8,7 @@ from talent_angels.assistant.intent import Capability
 from talent_angels.assistant.planning import ExecutionPlan
 from talent_angels.contracts import AgentResult
 from talent_angels.llm import LLMUsage
+from talent_angels.runlog import ToolCall
 
 
 class AssistantState(TypedDict, total=False):
@@ -16,5 +17,6 @@ class AssistantState(TypedDict, total=False):
     capability: Capability
     plan: ExecutionPlan
     result: AgentResult
+    tool_calls: list[ToolCall]
     answer: str
     llm_usage: LLMUsage | None

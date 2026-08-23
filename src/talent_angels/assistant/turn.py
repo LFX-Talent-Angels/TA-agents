@@ -8,12 +8,11 @@ client of the same assistant).
 from __future__ import annotations
 
 import os
-import time
 from dataclasses import dataclass
 
 from talent_angels.assistant.answer import build_answer
 from talent_angels.assistant.cache import ResultCache
-from talent_angels.assistant.graph import SearchableSuite, build_graph
+from talent_angels.assistant.graph import build_graph
 from talent_angels.assistant.intent import CAPABILITY_LOCATE, Capability
 from talent_angels.assistant.planning import (
     ExecutionPlan,
@@ -32,6 +31,8 @@ from talent_angels.runlog import (
     estimate_llm_cost_usd,
 )
 from talent_angels.skills.locate import ESCO_SUITE_NAME, locate
+from talent_angels.suites.measured import MeasuredSuite
+from talent_angels.suites.protocol import SuiteTools
 
 
 @dataclass
@@ -45,13 +46,14 @@ class TurnOutcome:
 
 def run_turn(
     *,
-    suite: SearchableSuite,
+    suite: SuiteTools,
     suite_name: str = ESCO_SUITE_NAME,
     llm_client: LLMClient,
     question: str,
     kind: str | None = None,
     answer_mode: str = "structured",
     force_locate: bool = False,
+    force_capability: Capability | None = None,
     cache: ResultCache | None = None,
 ) -> TurnOutcome:
     """Run one turn and append its run-log record.
@@ -62,17 +64,24 @@ def run_turn(
     only consulted on the `force_locate` path — the efficiency A/B experiment
     (MVP plan Sec 2.7) targets Locate specifically.
     """
-    start = time.perf_counter()
+    if force_locate and force_capability not in (None, CAPABILITY_LOCATE):
+        raise ValueError("force_locate cannot be combined with another forced capability")
+
     cache_hit = False
-    if force_locate:
+    selected_force = CAPABILITY_LOCATE if force_locate else force_capability
+    tools: list[ToolCall]
+    if selected_force == CAPABILITY_LOCATE:
         capability = CAPABILITY_LOCATE
         plan = build_plan_for_capability(capability, suites=(suite_name,))
         cached = cache.get(suite_name, capability, question) if cache else None
         if cached is not None:
             result = cached
             cache_hit = True
+            tools = []
         else:
-            result = locate(suite, suite_name, question, kind=kind)
+            measured = MeasuredSuite(suite)
+            result = locate(measured, suite_name, question, kind=kind)
+            tools = measured.tool_calls
             if cache is not None:
                 cache.set(suite_name, capability, question, result)
         answer, llm_usage = build_answer(result, llm_client=llm_client, mode=answer_mode)
@@ -82,6 +91,7 @@ def run_turn(
             suite_name=suite_name,
             llm_client=llm_client,
             answer_mode=answer_mode,
+            forced_capability=selected_force,
         )
         final_state = graph.invoke({"question": question, "kind": kind})
         capability = final_state["capability"]
@@ -89,8 +99,7 @@ def run_turn(
         result = final_state["result"]
         answer = final_state["answer"]
         llm_usage = final_state.get("llm_usage")
-    elapsed_ms = (time.perf_counter() - start) * 1000
-
+        tools = final_state["tool_calls"]
     usage = llm_usage or LLMUsage()
     model = os.environ.get("LLM_MODEL", "").strip() or "stub"
     cost = estimate_llm_cost_usd(usage, model)
@@ -103,8 +112,10 @@ def run_turn(
         cache_creation_input_tokens=usage.cache_creation_input_tokens,
         calls=1 if llm_usage is not None else 0,
     )
-    tools = [ToolCall(name="search_nodes", ms=elapsed_ms, ok=True)]
-    graph_stats = GraphStats(queries=1, total_ms=elapsed_ms)
+    graph_stats = GraphStats(
+        queries=len(tools),
+        total_ms=sum(tool.ms for tool in tools),
+    )
 
     record = RunLogRecord(
         suite=result.suite,

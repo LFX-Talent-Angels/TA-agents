@@ -1,7 +1,7 @@
 """User-facing answer packaging tests."""
 
 from talent_angels.assistant.answer import build_answer
-from talent_angels.contracts import AgentResult, NodeRef
+from talent_angels.contracts import AgentResult, EdgeRef, NodeRef
 from talent_angels.llm.stub_client import StubLLMClient
 
 
@@ -47,4 +47,67 @@ def test_structured_answer_keeps_unique_match_summary() -> None:
     answer, usage = build_answer(result, llm_client=StubLLMClient(), mode="structured")
 
     assert answer == "candidate 1 (Occupation, id=esco:occupation:1) — confidence 95%"
+    assert usage is None
+
+
+def test_structured_connect_answer_names_subject_and_neighbors() -> None:
+    subject = _node(1).model_copy(update={"pref_label": "software developer"})
+    programming = _node(2).model_copy(
+        update={"kind": "Skill", "pref_label": "computer programming"}
+    )
+    testing = _node(3).model_copy(update={"kind": "Skill", "pref_label": "software testing"})
+    result = AgentResult(
+        capability="connect",
+        suite="esco",
+        nodes=[subject, programming, testing],
+        edges=[
+            EdgeRef(
+                type="HAS_SKILL",
+                suite="esco",
+                source_node_id=subject.id,
+                target_node_id=programming.id,
+                properties={"relation_type": "essential"},
+            ),
+            EdgeRef(
+                type="HAS_SKILL",
+                suite="esco",
+                source_node_id=subject.id,
+                target_node_id=testing.id,
+                properties={"relation_type": "essential"},
+            ),
+        ],
+        confidence=0.95,
+    )
+
+    answer, usage = build_answer(result, llm_client=StubLLMClient(), mode="structured")
+
+    assert "software developer" in answer
+    assert "computer programming" in answer
+    assert "software testing" in answer
+    assert "2 direct connection(s)" in answer
+    assert "95%" in answer
+    assert usage is None
+
+
+def test_connect_stays_zero_token_even_when_natural_mode_is_requested() -> None:
+    subject = _node(1).model_copy(update={"pref_label": "software developer"})
+    skill = _node(2).model_copy(update={"kind": "Skill", "pref_label": "programming"})
+    result = AgentResult(
+        capability="connect",
+        suite="esco",
+        nodes=[subject, skill],
+        edges=[
+            EdgeRef(
+                type="HAS_SKILL",
+                suite="esco",
+                source_node_id=subject.id,
+                target_node_id=skill.id,
+            )
+        ],
+        confidence=0.95,
+    )
+
+    answer, usage = build_answer(result, llm_client=StubLLMClient(), mode="natural")
+
+    assert "programming" in answer
     assert usage is None

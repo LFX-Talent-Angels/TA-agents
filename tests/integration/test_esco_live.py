@@ -44,3 +44,30 @@ def test_graph_end_to_end_against_live_esco_fixture() -> None:
     assert final_state["result"].confidence == 0.95
     assert "software developer" in final_state["answer"].lower()
     assert final_state["result"].suite == ESCO_SUITE_NAME
+
+
+def test_graph_connects_software_developer_to_essential_skills() -> None:
+    with default_suite_registry().open() as runtime:
+        graph = build_graph(
+            suite=runtime.suite,
+            suite_name=runtime.name,
+            llm_client=StubLLMClient(),
+            answer_mode="structured",
+        )
+        final_state = graph.invoke(
+            {"question": "What essential skills does a software developer need?"}
+        )
+
+    result = final_state["result"]
+    assert final_state["capability"] == "connect"
+    assert final_state["plan"].capabilities == ("locate", "connect")
+    assert result.nodes[0].pref_label == "software developer"
+    assert result.edges
+    assert all(edge.type == "HAS_SKILL" for edge in result.edges)
+    assert all(edge.properties.get("relation_type") == "essential" for edge in result.edges)
+    assert all(node.kind == "Skill" for node in result.nodes[1:])
+    assert [tool.name for tool in final_state["tool_calls"]] == [
+        "search_nodes",
+        "get_neighbors",
+    ]
+    assert len(result.evidence) == 2

@@ -31,6 +31,18 @@ def build_answer(
             f"Ambiguous locate result — confidence {confidence_pct}. "
             f"Candidates: {rendered}{remainder}. Please clarify which candidate you mean."
         )
+    elif result.capability == "connect":
+        center = result.nodes[0]
+        neighbors = result.nodes[1:]
+        rendered = "; ".join(node.pref_label for node in neighbors[:5])
+        remaining = len(neighbors) - min(len(neighbors), 5)
+        remainder = f"; {remaining} more" if remaining else ""
+        summary = (
+            f"{center.pref_label} — confidence {confidence_pct}; "
+            f"{len(result.edges)} direct connection(s): {rendered}{remainder}"
+        )
+        if result.warnings:
+            summary += f" [warnings: {', '.join(result.warnings)}]"
     else:
         top = result.nodes[0]
         summary = f"{top.pref_label} ({top.kind}, id={top.id}) — confidence {confidence_pct}"
@@ -39,14 +51,14 @@ def build_answer(
         if result.warnings:
             summary += f" [warnings: {', '.join(result.warnings)}]"
 
-    if mode != "natural":
+    if mode != "natural" or result.capability == "connect":
         return summary, None
 
     messages = [
         Message(
             role="system",
             content=(
-                "Rephrase the following Locate result as one plain sentence, "
+                "Rephrase the following taxonomy result as one plain sentence, "
                 "citing only the given facts."
             ),
         ),

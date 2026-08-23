@@ -80,9 +80,7 @@ def test_phrase_chat_miss_rejects_invented_skill_page() -> None:
 
 def test_phrase_map_unique_locate_rejects_related_titles_not_on_card() -> None:
     result = AgentResult(capability="locate", suite="esco", nodes=[_occ()], confidence=0.95)
-    client = _Scripted(
-        "Located **software developer**. Also try **Software Engineer**."
-    )
+    client = _Scripted("Located **software developer**. Also try **Software Engineer**.")
     text = phrase_map(
         client,
         question="software developer",

@@ -2,11 +2,12 @@
 
 from __future__ import annotations
 
+import json
 import os
 from collections.abc import Callable, Mapping
 from typing import Any
 
-from talent_angels.llm.protocol import LLMResult, LLMUsage, Message
+from talent_angels.llm.protocol import LLMResult, LLMUsage, Message, ToolInvocation
 
 DEFAULT_MAX_TOKENS = 1024
 LOCAL_MODEL_COST_MAP_ENV = "LITELLM_LOCAL_MODEL_COST_MAP"
@@ -52,6 +53,43 @@ def _optional_int(value: object, field: str) -> int:
     return _required_int(value, field)
 
 
+def _parse_tool_calls(value: object) -> list[ToolInvocation]:
+    if value is None:
+        return []
+    if not isinstance(value, list):
+        raise ValueError("LiteLLM response tool_calls must be a list")
+    parsed: list[ToolInvocation] = []
+    for item in value:
+        payload = _mapping(item)
+        function = payload.get("function", payload)
+        fn = _mapping(function) if function is not None else {}
+        name = fn.get("name") or payload.get("name")
+        if not isinstance(name, str) or not name:
+            raise ValueError("LiteLLM tool call requires a name")
+        raw_args = fn.get("arguments", payload.get("arguments", {}))
+        arguments: dict[str, object]
+        if raw_args is None or raw_args == "":
+            arguments = {}
+        elif isinstance(raw_args, dict):
+            arguments = dict(raw_args)
+        elif isinstance(raw_args, str):
+            loaded = json.loads(raw_args) if raw_args.strip() else {}
+            if not isinstance(loaded, dict):
+                raise ValueError("LiteLLM tool call arguments must be an object")
+            arguments = loaded
+        else:
+            raise ValueError("LiteLLM tool call arguments must be an object")
+        call_id = payload.get("id")
+        parsed.append(
+            ToolInvocation(
+                id=call_id if isinstance(call_id, str) else "",
+                name=name,
+                arguments=arguments,
+            )
+        )
+    return parsed
+
+
 class LiteLLMClient:
     """Call any LiteLLM-supported provider and preserve measurable usage."""
 
@@ -80,17 +118,36 @@ class LiteLLMClient:
             completion_fn = completion
         self._completion = completion_fn
 
-    def complete(self, messages: list[Message]) -> LLMResult:
+    def complete(
+        self, messages: list[Message], *, tools: list[dict[str, object]] | None = None
+    ) -> LLMResult:
         kwargs: dict[str, object] = {
             "model": self.model,
-            "messages": [message.model_dump() for message in messages],
+            "messages": [message.model_dump(exclude_none=True) for message in messages],
             "max_tokens": DEFAULT_MAX_TOKENS,
         }
-        if self.reasoning_enabled:
-            # OpenRouter-only fields are merged from extra_body in LiteLLM 1.96.2.
+        if tools:
+            # OpenAI-shaped tools only. Do not send tool_choice="auto": some
+            # OpenRouter upstreams (Nvidia) parse that as a named function call
+            # and return 400 "missing field `function`".
+            kwargs["tools"] = tools
+        if self.reasoning_enabled and not tools:
+            # Reasoning extra_body plus tools has broken several OpenRouter
+            # providers; keep reasoning for plain completions only.
             kwargs["extra_body"] = {"reasoning": {"enabled": True}}
 
-        body = _mapping(self._completion(**kwargs))
+        try:
+            raw = self._completion(**kwargs)
+        except Exception as first:
+            if "extra_body" in kwargs:
+                kwargs.pop("extra_body", None)
+                try:
+                    raw = self._completion(**kwargs)
+                except Exception as exc:
+                    raise RuntimeError(f"LiteLLM provider request failed: {exc}") from exc
+            else:
+                raise RuntimeError(f"LiteLLM provider request failed: {first}") from first
+        body = _mapping(raw)
         if body.get("error") is not None:
             raise RuntimeError("LiteLLM response contained a provider generation error")
 
@@ -106,7 +163,12 @@ class LiteLLMClient:
             raise RuntimeError("LiteLLM response contained a provider generation error")
         message = _mapping(first_choice.get("message"))
         text = message.get("content")
+        if text is None:
+            text = ""
         if not isinstance(text, str):
+            raise ValueError("LiteLLM response did not contain a text choice")
+        tool_calls = _parse_tool_calls(message.get("tool_calls"))
+        if not text and not tool_calls:
             raise ValueError("LiteLLM response did not contain a text choice")
 
         usage = _mapping(body.get("usage"))
@@ -145,4 +207,5 @@ class LiteLLMClient:
                 cache_read_input_tokens=cache_read,
                 cache_creation_input_tokens=cache_creation,
             ),
+            tool_calls=tool_calls,
         )

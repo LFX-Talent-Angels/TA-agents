@@ -89,7 +89,38 @@ def test_structured_connect_answer_names_subject_and_neighbors() -> None:
     assert usage is None
 
 
-def test_natural_connect_answer_calls_the_llm() -> None:
+def test_natural_answer_falls_back_when_provider_fails() -> None:
+    subject = _node(1).model_copy(update={"pref_label": "software developer"})
+    skill = _node(2).model_copy(update={"kind": "Skill", "pref_label": "programming"})
+    result = AgentResult(
+        capability="connect",
+        suite="esco",
+        nodes=[subject, skill],
+        edges=[
+            EdgeRef(
+                type="HAS_SKILL",
+                suite="esco",
+                source_node_id=subject.id,
+                target_node_id=skill.id,
+            )
+        ],
+        confidence=0.95,
+    )
+
+    class BrokenClient:
+        provider = "litellm"
+        model = "broken"
+
+        def complete(self, messages: object, **_kwargs: object) -> object:
+            raise RuntimeError("upstream")
+
+    answer, stage = build_answer(result, llm_client=BrokenClient(), mode="natural")
+
+    assert "programming" in answer
+    assert stage is None
+
+
+def test_natural_connect_answer_calls_the_llm_ok() -> None:
     subject = _node(1).model_copy(update={"pref_label": "software developer"})
     skill = _node(2).model_copy(update={"kind": "Skill", "pref_label": "programming"})
     result = AgentResult(

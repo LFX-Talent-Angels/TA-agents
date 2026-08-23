@@ -8,6 +8,13 @@ is the original Gate A path. `LLM_PROVIDER=litellm` is the unified adapter
 """
 
 from talent_angels.llm.factory import get_llm_client
-from talent_angels.llm.protocol import LLMClient, LLMResult, LLMUsage, Message
+from talent_angels.llm.protocol import LLMClient, LLMResult, LLMUsage, Message, ToolInvocation
 
-__all__ = ["LLMClient", "LLMResult", "LLMUsage", "Message", "get_llm_client"]
+__all__ = [
+    "LLMClient",
+    "LLMResult",
+    "LLMUsage",
+    "Message",
+    "ToolInvocation",
+    "get_llm_client",
+]

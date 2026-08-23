@@ -13,6 +13,7 @@ dependencies = [
   "langgraph",
   "anthropic",
   "fastapi",
+  "uvicorn",
   "litellm",
   "python-dotenv",
   "pyyaml",

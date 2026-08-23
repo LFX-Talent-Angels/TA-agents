@@ -13,12 +13,24 @@ from talent_angels.llm import LLMClient, Message
 from talent_angels.runlog import StageUsage
 
 AMBIGUOUS_CHOICE_LIMIT = 3
+PATHFIND_UNIMPLEMENTED_WARNING = "capability_not_implemented:pathfind"
+PATHFIND_UNAVAILABLE = (
+    "Pathfind is not in this MVP, so I cannot compute a skill path or gap "
+    "between two occupations. Ask me to locate one occupation, or to list "
+    "the skills of one occupation."
+)
+
+
+def is_unimplemented_pathfind(result: AgentResult) -> bool:
+    return PATHFIND_UNIMPLEMENTED_WARNING in result.warnings
 
 
 def build_answer(
     result: AgentResult, *, llm_client: LLMClient, mode: str = "structured"
 ) -> tuple[str, StageUsage | None]:
     """Returns (answer text, answer-stage usage). Stage is None when no LLM call ran."""
+    if is_unimplemented_pathfind(result):
+        return PATHFIND_UNAVAILABLE, None
     if not result.nodes:
         warning = result.warnings[0] if result.warnings else "not_found"
         return f"No match found for capability '{result.capability}' ({warning}).", None

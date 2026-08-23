@@ -12,6 +12,7 @@ from talent_angels.assistant.intent import (
     CAPABILITY_LOCATE,
     CAPABILITY_PATHFIND,
     classify_capability,
+    extract_locate_subject,
 )
 from talent_angels.assistant.planning import (
     ExecutionPlan,
@@ -37,5 +38,6 @@ __all__ = [
     "build_plan",
     "build_plan_for_capability",
     "classify_capability",
+    "extract_locate_subject",
     "run_turn",
 ]

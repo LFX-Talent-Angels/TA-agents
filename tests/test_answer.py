@@ -36,6 +36,20 @@ def test_structured_answer_surfaces_ambiguous_choices() -> None:
     assert usage is None
 
 
+def test_structured_answer_refuses_unimplemented_pathfind() -> None:
+    result = AgentResult(
+        capability="pathfind",
+        suite="esco",
+        warnings=["capability_not_implemented:pathfind"],
+    )
+
+    answer, usage = build_answer(result, llm_client=StubLLMClient(), mode="structured")
+
+    assert "Pathfind is not in this MVP" in answer
+    assert "skills of one occupation" in answer
+    assert usage is None
+
+
 def test_structured_answer_keeps_unique_match_summary() -> None:
     result = AgentResult(
         capability="locate",

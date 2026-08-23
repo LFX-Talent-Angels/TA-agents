@@ -2,8 +2,14 @@
 
 from __future__ import annotations
 
-from talent_angels.assistant.agent_loop import parse_loop_turn, run_tool_loop
+from talent_angels.assistant.agent_loop import (
+    _compact_result,
+    parse_loop_turn,
+    run_tool_loop,
+)
+from talent_angels.assistant.answer import PATHFIND_UNAVAILABLE, PATHFIND_UNIMPLEMENTED_WARNING
 from talent_angels.assistant.graph import build_graph
+from talent_angels.contracts import AgentResult, EdgeRef, NodeRef
 from talent_angels.llm.protocol import LLMResult, LLMUsage, Message
 from tests.fakes.taxonomy import FakeCandidate, FakeEdge, FakeNode, FakeToolResult
 
@@ -305,3 +311,107 @@ def test_graph_uses_tool_loop_when_provider_is_not_stub() -> None:
     assert final_state["answer"] == "Located software developer."
     assert suite.search_calls == [("software developer", None)]
     assert [stage.stage for stage in final_state["llm_stages"]] == ["act", "answer"]
+
+
+def test_path_question_does_not_list_neighbors() -> None:
+    occupation = _occupation()
+    suite = FakeSuite(
+        FakeToolResult(
+            candidates=[FakeCandidate(node=occupation, confidence=0.95, method="exact_pref")],
+            nodes=[occupation],
+        )
+    )
+    client = ScriptedToolClient(
+        [
+            LLMResult(
+                text='{"tool":"search_nodes","text":"data analyst"}',
+                provider="litellm",
+                model="actual",
+                usage=LLMUsage(input_tokens=4, output_tokens=2),
+            )
+        ]
+    )
+
+    outcome = run_tool_loop(
+        question="What is the skill path from data analyst to data scientist?",
+        suite=suite,
+        suite_name="esco",
+        llm_client=client,
+    )
+
+    assert PATHFIND_UNIMPLEMENTED_WARNING in outcome.result.warnings
+    assert outcome.plan.capabilities == ("locate", "connect", "pathfind")
+    assert outcome.result.capability == "pathfind"
+    assert suite.search_calls == []
+    assert suite.neighbor_calls == []
+    assert client.calls == []
+    assert outcome.tool_calls == []
+    assert outcome.answer == PATHFIND_UNAVAILABLE
+
+
+def test_graph_path_question_does_not_fallback_to_connect() -> None:
+    occupation = _occupation()
+    suite = FakeSuite(
+        FakeToolResult(
+            candidates=[FakeCandidate(node=occupation, confidence=0.95, method="exact_pref")],
+            nodes=[occupation],
+        )
+    )
+    graph = build_graph(suite=suite, llm_client=ExplodingToolClient(), answer_mode="structured")
+
+    final_state = graph.invoke({"question": "skill path from data analyst to data scientist"})
+
+    assert final_state["capability"] == "pathfind"
+    assert PATHFIND_UNIMPLEMENTED_WARNING in final_state["result"].warnings
+    assert suite.search_calls == []
+    assert suite.neighbor_calls == []
+    assert final_state["answer"] == PATHFIND_UNAVAILABLE
+
+
+def test_compact_result_truncates_neighbors_but_keeps_counts() -> None:
+    center = NodeRef(
+        id="esco:occupation:1",
+        suite="esco",
+        source="esco",
+        source_id="1",
+        kind="Occupation",
+        pref_label="software developer",
+    )
+    skills = [
+        NodeRef(
+            id=f"esco:skill:{index}",
+            suite="esco",
+            source="esco",
+            source_id=str(index),
+            kind="Skill",
+            pref_label=f"skill {index}",
+        )
+        for index in range(20)
+    ]
+    edges = [
+        EdgeRef(
+            type="HAS_SKILL",
+            suite="esco",
+            source_node_id=center.id,
+            target_node_id=skill.id,
+            properties={"relation_type": "essential"},
+        )
+        for skill in skills
+    ]
+    result = AgentResult(
+        capability="connect",
+        suite="esco",
+        nodes=[center, *skills],
+        edges=edges,
+        confidence=0.95,
+    )
+
+    payload = _compact_result(result)
+
+    assert payload["truncated"] is True
+    assert payload["node_count"] == 21
+    assert payload["edge_count"] == 20
+    assert payload["omitted_nodes"] == 13
+    assert payload["omitted_edges"] == 12
+    assert len(payload["nodes"]) == 8
+    assert len(payload["edges"]) == 8

@@ -89,6 +89,8 @@ def _registry(*, reachable: bool = True) -> SuiteRegistry:
 def _local_runtime(monkeypatch: pytest.MonkeyPatch, tmp_path) -> None:
     monkeypatch.setenv("RUNLOG_PATH", str(tmp_path / "runlog.jsonl"))
     monkeypatch.setenv("LLM_PROVIDER", "none")
+    monkeypatch.setenv("LLM_MODEL", "stub")
+    monkeypatch.setenv("ANSWER_MODE", "structured")
 
 
 def test_cli_uses_injected_registry(capsys: pytest.CaptureFixture[str]) -> None:
@@ -113,6 +115,38 @@ def test_api_uses_injected_registry_and_adapter_health() -> None:
     assert response.status_code == 200
     assert response.json()["suite"] == "test"
     assert response.json()["result"]["nodes"][0]["pref_label"] == "accountant"
+
+
+def test_cli_pathfind_question_is_honest(
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    exit_code = main(
+        ["query", "What is the skill path from data analyst to data scientist?"],
+        registry=_registry(),
+    )
+
+    assert exit_code == 0
+    output = json.loads(capsys.readouterr().out)
+    assert output["capability"] == "pathfind"
+    assert output["plan"] == ["locate", "connect", "pathfind"]
+    assert "capability_not_implemented:pathfind" in output["warnings"]
+    assert "Pathfind is not in this MVP" in output["answer"]
+    assert output["tools"] == []
+
+
+def test_api_pathfind_question_is_honest() -> None:
+    with TestClient(create_app(registry=_registry())) as client:
+        response = client.post(
+            "/v1/query",
+            json={"question": "skill path from data analyst to data scientist"},
+        )
+
+    assert response.status_code == 200
+    body = response.json()
+    assert body["capability"] == "pathfind"
+    assert "capability_not_implemented:pathfind" in body["result"]["warnings"]
+    assert "Pathfind is not in this MVP" in body["answer"]
+    assert body["usage"]["tools"] == []
 
 
 def test_cli_connect_uses_the_same_assistant_flow(

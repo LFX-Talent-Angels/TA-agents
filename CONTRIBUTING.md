@@ -33,11 +33,24 @@ pytest -q --ignore=tests/integration
 Concrete ESCO and Neo4j checks live separately under `tests/integration/`:
 
 ```bash
-# From the workspace, install the sibling taxonomy package into this venv.
+# Official TA-taxonomies main (PR #3 contract + PR #4 loader) is enough for
+# the contract-compatibility test. Live Locate/Connect needs PR #5 tools.
 pip install -e ../TA-taxonomies
+
+# Until https://github.com/LFX-Talent-Angels/TA-taxonomies/pull/5 merges,
+# checkout that branch (or `feature/esco-tools`) before the editable install.
+# Official main does not ship EscoSuite.search_nodes / get_neighbors.
 
 # Configure Neo4j through the documented environment variables, then run:
 pytest -q tests/integration -rs
+```
+
+The CLI and API load a local `.env` automatically (shell exports still win).
+To exercise the same turn over HTTP / Swagger:
+
+```bash
+uvicorn talent_angels.api.app:app --reload
+# http://127.0.0.1:8000/docs
 ```
 
 When the taxonomy package or Neo4j is unavailable, the integration command

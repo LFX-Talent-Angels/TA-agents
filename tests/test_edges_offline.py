@@ -89,6 +89,7 @@ def _registry(*, reachable: bool = True) -> SuiteRegistry:
 def _local_runtime(monkeypatch: pytest.MonkeyPatch, tmp_path) -> None:
     monkeypatch.setenv("RUNLOG_PATH", str(tmp_path / "runlog.jsonl"))
     monkeypatch.setenv("LLM_PROVIDER", "none")
+    monkeypatch.setenv("LLM_MODEL", "stub")
     monkeypatch.setenv("ANSWER_MODE", "structured")
 
 

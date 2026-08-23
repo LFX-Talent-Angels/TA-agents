@@ -2,14 +2,16 @@
 
 from __future__ import annotations
 
-from ta_taxonomies.suites.esco.db import neo4j_driver
+from functools import lru_cache
+
+from talent_angels.suites import default_suite_registry
 
 
+@lru_cache(maxsize=1)
 def neo4j_reachable() -> bool:
     """Return whether the configured Neo4j instance accepts a connection."""
     try:
-        with neo4j_driver() as (driver, _database):
-            driver.verify_connectivity()
-        return True
+        with default_suite_registry().open() as runtime:
+            return runtime.is_reachable()
     except Exception:
         return False

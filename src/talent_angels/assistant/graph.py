@@ -26,16 +26,18 @@ def _interpret_intent(state: AssistantState) -> AssistantState:
     return {"capability": classify_capability(state["question"])}
 
 
-def _dispatch_locate(state: AssistantState, *, suite: SearchableSuite) -> AssistantState:
+def _dispatch_locate(
+    state: AssistantState, *, suite: SearchableSuite, suite_name: str
+) -> AssistantState:
     capability = state["capability"]
     if capability != CAPABILITY_LOCATE:
         result = AgentResult(
             capability=capability,
-            suite=ESCO_SUITE_NAME,
+            suite=suite_name,
             warnings=[f"capability_not_implemented:{capability}"],
         )
     else:
-        result = locate(suite, ESCO_SUITE_NAME, state["question"], kind=state.get("kind"))
+        result = locate(suite, suite_name, state["question"], kind=state.get("kind"))
     return {"result": result}
 
 
@@ -45,11 +47,18 @@ def _answer(state: AssistantState, *, llm_client: LLMClient, answer_mode: str) -
 
 
 def build_graph(
-    *, suite: SearchableSuite, llm_client: LLMClient, answer_mode: str = "structured"
+    *,
+    suite: SearchableSuite,
+    llm_client: LLMClient,
+    suite_name: str = ESCO_SUITE_NAME,
+    answer_mode: str = "structured",
 ) -> CompiledStateGraph:
     graph = StateGraph(AssistantState)
     graph.add_node("interpret_intent", _interpret_intent)
-    graph.add_node("dispatch_locate", lambda s: _dispatch_locate(s, suite=suite))
+    graph.add_node(
+        "dispatch_locate",
+        lambda s: _dispatch_locate(s, suite=suite, suite_name=suite_name),
+    )
     graph.add_node("answer", lambda s: _answer(s, llm_client=llm_client, answer_mode=answer_mode))
     graph.set_entry_point("interpret_intent")
     graph.add_edge("interpret_intent", "dispatch_locate")

@@ -41,6 +41,7 @@ class TurnOutcome:
 def run_turn(
     *,
     suite: SearchableSuite,
+    suite_name: str = ESCO_SUITE_NAME,
     llm_client: LLMClient,
     question: str,
     kind: str | None = None,
@@ -60,17 +61,22 @@ def run_turn(
     cache_hit = False
     if force_locate:
         capability = CAPABILITY_LOCATE
-        cached = cache.get(ESCO_SUITE_NAME, capability, question) if cache else None
+        cached = cache.get(suite_name, capability, question) if cache else None
         if cached is not None:
             result = cached
             cache_hit = True
         else:
-            result = locate(suite, ESCO_SUITE_NAME, question, kind=kind)
+            result = locate(suite, suite_name, question, kind=kind)
             if cache is not None:
-                cache.set(ESCO_SUITE_NAME, capability, question, result)
+                cache.set(suite_name, capability, question, result)
         answer, llm_usage = build_answer(result, llm_client=llm_client, mode=answer_mode)
     else:
-        graph = build_graph(suite=suite, llm_client=llm_client, answer_mode=answer_mode)
+        graph = build_graph(
+            suite=suite,
+            suite_name=suite_name,
+            llm_client=llm_client,
+            answer_mode=answer_mode,
+        )
         final_state = graph.invoke({"question": question, "kind": kind})
         capability = final_state["capability"]
         result = final_state["result"]

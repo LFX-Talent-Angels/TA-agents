@@ -2,12 +2,16 @@
 
 from __future__ import annotations
 
+import json
+
 import pytest
 
 from talent_angels.assistant import (  # noqa: E402
     CAPABILITY_LOCATE,
+    ResultCache,
     build_graph,
     classify_capability,
+    run_turn,
 )
 from talent_angels.llm.stub_client import StubLLMClient  # noqa: E402
 from tests.fakes.taxonomy import FakeCandidate, FakeNode, FakeToolResult  # noqa: E402
@@ -74,3 +78,62 @@ def test_graph_reports_unimplemented_capability_honestly() -> None:
     assert final_state["result"].nodes == []
     assert "capability_not_implemented:connect" in final_state["result"].warnings
     assert "no match found" in final_state["answer"].lower()
+
+
+def test_graph_propagates_selected_suite_name() -> None:
+    suite = FakeSuite(FakeToolResult(warnings=["not_found"]))
+    graph = build_graph(
+        suite=suite,
+        suite_name="onet",
+        llm_client=StubLLMClient(),
+        answer_mode="structured",
+    )
+
+    locate_state = graph.invoke({"question": "accountant"})
+    connect_state = graph.invoke({"question": "What skills does an accountant need?"})
+
+    assert locate_state["result"].suite == "onet"
+    assert connect_state["result"].suite == "onet"
+
+
+def test_turn_separates_cache_and_runlog_by_suite(
+    monkeypatch: pytest.MonkeyPatch, tmp_path
+) -> None:
+    runlog_path = tmp_path / "runlog.jsonl"
+    monkeypatch.setenv("RUNLOG_PATH", str(runlog_path))
+    monkeypatch.setenv("LLM_PROVIDER", "none")
+    suite = FakeSuite(FakeToolResult(warnings=["not_found"]))
+    cache = ResultCache()
+
+    onet_first = run_turn(
+        suite=suite,
+        suite_name="onet",
+        llm_client=StubLLMClient(),
+        question="accountant",
+        force_locate=True,
+        cache=cache,
+    )
+    esco_first = run_turn(
+        suite=suite,
+        suite_name="esco",
+        llm_client=StubLLMClient(),
+        question="accountant",
+        force_locate=True,
+        cache=cache,
+    )
+    onet_cached = run_turn(
+        suite=suite,
+        suite_name="onet",
+        llm_client=StubLLMClient(),
+        question="accountant",
+        force_locate=True,
+        cache=cache,
+    )
+
+    assert onet_first.result.suite == "onet"
+    assert esco_first.result.suite == "esco"
+    assert onet_first.record.efficiency.result_cache_hit is False
+    assert esco_first.record.efficiency.result_cache_hit is False
+    assert onet_cached.record.efficiency.result_cache_hit is True
+    records = [json.loads(line) for line in runlog_path.read_text().splitlines()]
+    assert [record["suite"] for record in records] == ["onet", "esco", "onet"]

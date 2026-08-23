@@ -19,7 +19,7 @@ from talent_angels.runlog.models import (
     StageUsage,
     ToolCall,
 )
-from talent_angels.runlog.writer import append_record, runlog_path
+from talent_angels.runlog.writer import append_record, read_records, runlog_path
 
 __all__ = [
     "CostBreakdown",
@@ -34,6 +34,7 @@ __all__ = [
     "estimate_llm_cost_usd",
     "estimate_turn_cost_usd",
     "load_rate_card",
+    "read_records",
     "runlog_path",
     "usage_from_stage",
 ]

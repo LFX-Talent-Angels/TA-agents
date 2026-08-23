@@ -33,13 +33,8 @@ pytest -q --ignore=tests/integration
 Concrete ESCO and Neo4j checks live separately under `tests/integration/`:
 
 ```bash
-# Official TA-taxonomies main (PR #3 contract + PR #4 loader) is enough for
-# the contract-compatibility test. Live Locate/Connect needs PR #5 tools.
+# Sibling package from official TA-taxonomies main.
 pip install -e ../TA-taxonomies
-
-# Until https://github.com/LFX-Talent-Angels/TA-taxonomies/pull/5 merges,
-# checkout that branch (or `feature/esco-tools`) before the editable install.
-# Official main does not ship EscoSuite.search_nodes / get_neighbors.
 
 # Configure Neo4j through the documented environment variables, then run:
 pytest -q tests/integration -rs

@@ -20,6 +20,11 @@ _SKILLS_FOR = re.compile(
     r"skills\s+for\s+(?:(?:an?|the)\s+)?(.+?)[?.!]*$",
     re.IGNORECASE,
 )
+_SKILLS_NEED_TO_BE = re.compile(
+    r"skills\s+(?:(?:do\s+)?i\s+|does\s+one\s+)?need\s+to\s+(?:become|be)\s+"
+    r"(?:(?:an?|the)\s+)?(.+?)[?.!]*$",
+    re.IGNORECASE,
+)
 _NEIGHBORS_OF = re.compile(
     r"neighbou?rs\s+of\s+(?:(?:an?|the)\s+)?(.+?)[?.!]*$",
     re.IGNORECASE,
@@ -36,7 +41,11 @@ def extract_connect_request(question: str) -> ConnectRequest:
     elif "optional skill" in lowered:
         relation_kind = "optional"
 
-    match = _SKILLS_DOES.search(cleaned) or _SKILLS_FOR.search(cleaned)
+    match = (
+        _SKILLS_DOES.search(cleaned)
+        or _SKILLS_FOR.search(cleaned)
+        or _SKILLS_NEED_TO_BE.search(cleaned)
+    )
     if match:
         return ConnectRequest(
             subject=match.group(1).strip(),

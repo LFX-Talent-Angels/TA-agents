@@ -14,6 +14,9 @@ from talent_angels.assistant import (  # noqa: E402
     extract_locate_subject,
     run_turn,
 )
+from talent_angels.assistant.agent_loop import LOOP_SYSTEM
+from talent_angels.assistant.llm_plan import PLAN_SYSTEM
+from talent_angels.llm.protocol import LLMResult, LLMUsage, Message
 from talent_angels.llm.stub_client import StubLLMClient  # noqa: E402
 from tests.fakes.taxonomy import (  # noqa: E402
     FakeCandidate,
@@ -21,6 +24,24 @@ from tests.fakes.taxonomy import (  # noqa: E402
     FakeNode,
     FakeToolResult,
 )
+
+
+class ScriptedPlanClient:
+    provider = "litellm"
+    model = "azure_ai/claude-sonnet-4-6"
+
+    def __init__(self, text: str) -> None:
+        self.text = text
+        self.calls: list[list[Message]] = []
+
+    def complete(self, messages: list[Message]) -> LLMResult:
+        self.calls.append(messages)
+        return LLMResult(
+            text=self.text,
+            provider=self.provider,
+            model=self.model,
+            usage=LLMUsage(input_tokens=8, output_tokens=4),
+        )
 
 
 class FakeSuite:
@@ -60,6 +81,7 @@ def _occupation_node() -> FakeNode:
         ("What is the skill gap from data analyst to data scientist?", "pathfind"),
         ("skill path from data analyst to data scientist", "pathfind"),
         ("path analyst → scientist", "pathfind"),
+        ("what skills I need to become a nurse", "connect"),
     ],
 )
 def test_classify_capability_heuristics(question: str, expected: str) -> None:
@@ -72,6 +94,16 @@ def test_classify_capability_heuristics(question: str, expected: str) -> None:
         ("Where is nurse in ESCO?", "nurse"),
         ("software developer", "software developer"),
         ("Find accountant", "accountant"),
+        (
+            "What essential skills does a nurse responsible for general care need?",
+            "nurse responsible for general care",
+        ),
+        ("what skills I need to become a nurse", "nurse"),
+        ("what skills I need to be a software developer", "software developer"),
+        ("skills I need to be a software developer", "software developer"),
+        ("skills I need to become a software developer", "software developer"),
+        ("I want to become a nurse", "nurse"),
+        ("I want to be a software developer", "software developer"),
     ],
 )
 def test_extract_locate_subject(question: str, expected: str) -> None:
@@ -177,6 +209,75 @@ def test_graph_does_not_connect_an_ambiguous_subject() -> None:
     assert suite.neighbor_calls == []
     assert [tool.name for tool in final_state["tool_calls"]] == ["search_nodes"]
     assert "please clarify" in final_state["answer"].lower()
+
+
+def test_graph_planner_owns_subject_before_search() -> None:
+    node = _occupation_node()
+    skill = FakeNode(
+        id="esco:skill:fixture-2",
+        kind="Skill",
+        label="computer programming",
+        source="esco",
+        source_id="http://data.europa.eu/esco/skill/fixture-2",
+        properties={},
+    )
+    suite = FakeSuite(
+        FakeToolResult(
+            candidates=[FakeCandidate(node=node, confidence=0.95, method="exact_pref")],
+            nodes=[node],
+            evidence=["esco:search:exact_pref:software developer"],
+        ),
+        FakeToolResult(
+            nodes=[node, skill],
+            edges=[
+                FakeEdge(
+                    type="HAS_SKILL",
+                    from_id=node.id,
+                    to_id=skill.id,
+                    properties={"relation_type": "essential"},
+                )
+            ],
+            evidence=[f"esco:neighbors:{node.id}"],
+        ),
+    )
+    client = ScriptedPlanClient(
+        '{"target":"connect","subject":"software developer","kind":"occupation",'
+        '"rel_types":["HAS_SKILL"]}'
+    )
+    graph = build_graph(suite=suite, llm_client=client, answer_mode="structured")
+
+    final_state = graph.invoke({"question": "what skills I need to be a software developer"})
+
+    assert final_state["capability"] == "connect"
+    assert suite.search_calls == [("software developer", "occupation")]
+    assert suite.neighbor_calls == [(node.id, ["HAS_SKILL"])]
+    assert PLAN_SYSTEM in client.calls[0][0].content
+    assert LOOP_SYSTEM not in client.calls[0][0].content
+
+
+def test_graph_planner_locate_does_not_fetch_neighbors() -> None:
+    node = FakeNode(
+        id="esco:occupation:firefighter",
+        kind="Occupation",
+        label="firefighter",
+        source="esco",
+        source_id="firefighter",
+        properties={},
+    )
+    suite = FakeSuite(
+        FakeToolResult(
+            candidates=[FakeCandidate(node=node, confidence=0.95, method="exact_pref")],
+            nodes=[node],
+        )
+    )
+    client = ScriptedPlanClient('{"target":"locate","subject":"firefighter","kind":"occupation"}')
+    graph = build_graph(suite=suite, llm_client=client, answer_mode="structured")
+
+    final_state = graph.invoke({"question": "what does a firefighter do"})
+
+    assert final_state["capability"] == "locate"
+    assert suite.search_calls == [("firefighter", "occupation")]
+    assert suite.neighbor_calls == []
 
 
 def test_graph_propagates_selected_suite_name() -> None:

@@ -158,6 +158,7 @@ def run_turn(
         result=ResultSummary(
             confidence=result.confidence,
             node_ids=[n.id for n in result.nodes],
+            node_labels=[n.pref_label for n in result.nodes],
             warnings=result.warnings,
         ),
     )

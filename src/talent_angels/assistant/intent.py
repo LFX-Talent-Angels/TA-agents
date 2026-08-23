@@ -8,6 +8,7 @@ Locate instead (ARCHITECTURE.md: never invent; warnings are how "no" is said).
 
 from __future__ import annotations
 
+import re
 from typing import Literal
 
 Capability = Literal["locate", "connect", "pathfind"]
@@ -28,22 +29,56 @@ _PATHFIND_KEYWORDS = (
     "→",
     "->",
 )
-_CONNECT_KEYWORDS = ("skills for", "skills does", "neighbors", "essential skill", "optional skill")
+_CONNECT_KEYWORDS = (
+    "skills for",
+    "skills does",
+    "skills i need",
+    "skills do i",
+    "need to become",
+    "become a",
+    "become an",
+    "neighbors",
+    "essential skill",
+    "optional skill",
+)
+
+_SUBJECT_PATTERNS = (
+    re.compile(r"^what essential skills does (?:a |an )?(.+?) need\b", re.I),
+    re.compile(r"^what skills does (?:a |an )?(.+?) need\b", re.I),
+    re.compile(
+        r"^what skills (?:(?:do )?i |does one )?need to (?:become|be) (?:a |an |the )?(.+)$",
+        re.I,
+    ),
+    re.compile(
+        r"skills (?:(?:do )?i |does one )?need to (?:become|be) (?:a |an |the )?(.+)$",
+        re.I,
+    ),
+    re.compile(
+        r"^(?:i want to |i'd like to |to )(?:become|be) (?:a |an |the )?(.+)$",
+        re.I,
+    ),
+)
 
 
 def extract_locate_subject(question: str) -> str:
-    """Strip common locate wrappers so lexical search sees the occupation/skill."""
+    """Strip common wrappers so lexical search sees the occupation/skill phrase."""
     text = question.strip()
+    if text.endswith("?"):
+        text = text[:-1].rstrip()
     lowered = text.lower()
+    if lowered.endswith(" in esco"):
+        text = text[: -len(" in esco")].rstrip()
+        lowered = text.lower()
+
+    for pattern in _SUBJECT_PATTERNS:
+        match = pattern.match(text)
+        if match:
+            return match.group(1).strip() or question.strip()
+
     for prefix in ("where is ", "where are ", "what is ", "what are ", "find ", "locate "):
         if lowered.startswith(prefix):
-            text = text[len(prefix) :]
-            lowered = text.lower()
+            text = text[len(prefix) :].strip()
             break
-    for suffix in (" in esco?", " in esco", "?"):
-        if lowered.endswith(suffix):
-            text = text[: -len(suffix)].rstrip()
-            lowered = text.lower()
     return text.strip() or question.strip()
 
 

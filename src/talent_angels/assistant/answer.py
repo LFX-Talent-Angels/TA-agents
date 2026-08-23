@@ -25,15 +25,18 @@ def is_unimplemented_pathfind(result: AgentResult) -> bool:
     return PATHFIND_UNIMPLEMENTED_WARNING in result.warnings
 
 
-def build_answer(
-    result: AgentResult, *, llm_client: LLMClient, mode: str = "structured"
-) -> tuple[str, StageUsage | None]:
-    """Returns (answer text, answer-stage usage). Stage is None when no LLM call ran."""
+def is_terminal_locate(result: AgentResult) -> bool:
+    """Search finished: ask the user or stop. Do not search again."""
+    return "ambiguous" in result.warnings or "not_found" in result.warnings
+
+
+def summarize_result(result: AgentResult) -> str:
+    """Deterministic user-facing text from a typed result (no LLM)."""
     if is_unimplemented_pathfind(result):
-        return PATHFIND_UNAVAILABLE, None
+        return PATHFIND_UNAVAILABLE
     if not result.nodes:
         warning = result.warnings[0] if result.warnings else "not_found"
-        return f"No match found for capability '{result.capability}' ({warning}).", None
+        return f"No match found for capability '{result.capability}' ({warning})."
 
     confidence_pct = f"{result.confidence:.0%}" if result.confidence is not None else "unknown"
     if "ambiguous" in result.warnings:
@@ -41,29 +44,46 @@ def build_answer(
         rendered = "; ".join(f"{node.pref_label} ({node.kind}, id={node.id})" for node in choices)
         remaining = len(result.nodes) - len(choices)
         remainder = f"; {remaining} more candidate(s)" if remaining else ""
-        summary = (
+        return (
             f"Ambiguous locate result — confidence {confidence_pct}. "
             f"Candidates: {rendered}{remainder}. Please clarify which candidate you mean."
         )
-    elif result.capability == "connect":
+    if result.capability == "connect":
         center = result.nodes[0]
         neighbors = result.nodes[1:]
-        rendered = "; ".join(node.pref_label for node in neighbors[:5])
-        remaining = len(neighbors) - min(len(neighbors), 5)
-        remainder = f"; {remaining} more" if remaining else ""
+        shown = neighbors[:5]
+        rendered = "; ".join(node.pref_label for node in shown)
+        extra = len(neighbors) - len(shown)
+        remainder = f"; {extra} more" if extra else ""
         summary = (
             f"{center.pref_label} — confidence {confidence_pct}; "
             f"{len(result.edges)} direct connection(s): {rendered}{remainder}"
         )
+        if extra:
+            summary += " The full list is in the result payload."
         if result.warnings:
             summary += f" [warnings: {', '.join(result.warnings)}]"
-    else:
-        top = result.nodes[0]
-        summary = f"{top.pref_label} ({top.kind}, id={top.id}) — confidence {confidence_pct}"
-        if len(result.nodes) > 1:
-            summary += f"; {len(result.nodes) - 1} other candidate(s)"
-        if result.warnings:
-            summary += f" [warnings: {', '.join(result.warnings)}]"
+        return summary
+
+    top = result.nodes[0]
+    summary = f"{top.pref_label} ({top.kind}, id={top.id}) — confidence {confidence_pct}"
+    if len(result.nodes) > 1:
+        summary += f"; {len(result.nodes) - 1} other candidate(s)"
+    if result.warnings:
+        summary += f" [warnings: {', '.join(result.warnings)}]"
+    return summary
+
+
+def build_answer(
+    result: AgentResult, *, llm_client: LLMClient, mode: str = "structured"
+) -> tuple[str, StageUsage | None]:
+    """Returns (answer text, answer-stage usage). Stage is None when no LLM call ran."""
+    summary = summarize_result(result)
+    if is_unimplemented_pathfind(result) or is_terminal_locate(result) or not result.nodes:
+        return summary, None
+    # Many neighbors: keep the counted summary. Do not let the model invent pagination.
+    if result.capability == "connect" and len(result.edges) > 5:
+        return summary, None
 
     if mode != "natural":
         return summary, None

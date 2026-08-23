@@ -278,7 +278,7 @@ def test_graph_falls_back_when_provider_rejects_tools() -> None:
     assert suite.neighbor_calls == [(occupation.id, ["HAS_SKILL"])]
 
 
-def test_graph_uses_tool_loop_when_provider_is_not_stub() -> None:
+def test_graph_uses_planner_when_provider_is_not_stub() -> None:
     occupation = _occupation()
     suite = FakeSuite(
         FakeToolResult(
@@ -290,27 +290,21 @@ def test_graph_uses_tool_loop_when_provider_is_not_stub() -> None:
     client = ScriptedToolClient(
         [
             LLMResult(
-                text='{"tool":"search_nodes","text":"software developer"}',
+                text='{"target":"locate","subject":"software developer","kind":"occupation"}',
                 provider="litellm",
                 model="actual",
                 usage=LLMUsage(input_tokens=5, output_tokens=2),
             ),
-            LLMResult(
-                text='{"final":"Located software developer."}',
-                provider="litellm",
-                model="actual",
-                usage=LLMUsage(input_tokens=6, output_tokens=3),
-            ),
         ]
     )
-    graph = build_graph(suite=suite, llm_client=client, answer_mode="natural")
+    graph = build_graph(suite=suite, llm_client=client, answer_mode="structured")
 
     final_state = graph.invoke({"question": "Where is software developer in ESCO?"})
 
     assert final_state["capability"] == "locate"
-    assert final_state["answer"] == "Located software developer."
-    assert suite.search_calls == [("software developer", None)]
-    assert [stage.stage for stage in final_state["llm_stages"]] == ["act", "answer"]
+    assert "software developer" in final_state["answer"]
+    assert suite.search_calls == [("software developer", "occupation")]
+    assert [stage.stage for stage in final_state["llm_stages"]] == ["intent"]
 
 
 def test_path_question_does_not_list_neighbors() -> None:
@@ -366,6 +360,131 @@ def test_graph_path_question_does_not_fallback_to_connect() -> None:
     assert suite.search_calls == []
     assert suite.neighbor_calls == []
     assert final_state["answer"] == PATHFIND_UNAVAILABLE
+
+
+def test_ambiguous_search_stops_without_another_lookup() -> None:
+    first = FakeNode(
+        id="esco:occupation:cook",
+        kind="Occupation",
+        label="diet cook",
+        source="esco",
+        source_id="cook",
+        properties={},
+    )
+    second = FakeNode(
+        id="esco:occupation:nanny",
+        kind="Occupation",
+        label="nanny",
+        source="esco",
+        source_id="nanny",
+        properties={},
+    )
+    suite = FakeSuite(
+        FakeToolResult(
+            candidates=[
+                FakeCandidate(node=first, confidence=0.7, method="contains"),
+                FakeCandidate(node=second, confidence=0.7, method="contains"),
+            ],
+            nodes=[first, second],
+            warnings=["ambiguous"],
+        )
+    )
+    client = ScriptedToolClient(
+        [
+            LLMResult(
+                text='{"tool":"search_nodes","text":"what skills I need to become a nurse"}',
+                provider="litellm",
+                model="actual",
+                usage=LLMUsage(input_tokens=4, output_tokens=2),
+            ),
+            LLMResult(
+                text='{"tool":"search_nodes","text":"nursing"}',
+                provider="litellm",
+                model="actual",
+                usage=LLMUsage(input_tokens=4, output_tokens=2),
+            ),
+        ]
+    )
+
+    outcome = run_tool_loop(
+        question="what skills I need to become a nurse",
+        suite=suite,
+        suite_name="esco",
+        llm_client=client,
+    )
+
+    assert suite.search_calls in ([("nurse", "occupation")], [("nurse", None)])
+    assert len(suite.search_calls) == 1
+    assert "ambiguous" in outcome.result.warnings
+    assert "diet cook" in outcome.answer and "clarify" in outcome.answer.lower()
+    assert outcome.answer.lower().count("diet cook") == 1
+    assert "Candidates:" in outcome.answer
+    assert client.calls  # first act ran
+    assert len(client.calls) == 1
+
+
+def test_unique_skills_question_connects_after_locate() -> None:
+    occupation = _occupation()
+    skill = FakeNode(
+        id="esco:skill:fixture-2",
+        kind="Skill",
+        label="computer programming",
+        source="esco",
+        source_id="http://data.europa.eu/esco/skill/fixture-2",
+        properties={},
+    )
+    suite = FakeSuite(
+        FakeToolResult(
+            candidates=[FakeCandidate(node=occupation, confidence=0.95, method="exact_pref")],
+            nodes=[occupation],
+            evidence=["esco:search:exact_pref:software developer"],
+        ),
+        FakeToolResult(
+            nodes=[occupation, skill],
+            edges=[
+                FakeEdge(
+                    type="HAS_SKILL",
+                    from_id=occupation.id,
+                    to_id=skill.id,
+                    properties={"relation_type": "essential"},
+                )
+            ],
+            evidence=[f"esco:neighbors:{occupation.id}"],
+        ),
+    )
+    client = ScriptedToolClient(
+        [
+            LLMResult(
+                text=(
+                    '{"tool":"search_nodes","text":"what skills I need to be a software developer"}'
+                ),
+                provider="litellm",
+                model="actual",
+                usage=LLMUsage(input_tokens=4, output_tokens=2),
+            ),
+            LLMResult(
+                text='{"final":"done"}',
+                provider="litellm",
+                model="actual",
+                usage=LLMUsage(input_tokens=4, output_tokens=2),
+            ),
+        ]
+    )
+
+    outcome = run_tool_loop(
+        question="what skills I need to be a software developer",
+        suite=suite,
+        suite_name="esco",
+        llm_client=client,
+    )
+
+    assert suite.search_calls in (
+        [("software developer", "occupation")],
+        [("software developer", None)],
+    )
+    assert outcome.result.capability == "connect"
+    assert suite.neighbor_calls == [(occupation.id, ["HAS_SKILL"])]
+    assert "computer programming" in outcome.answer
 
 
 def test_compact_result_truncates_neighbors_but_keeps_counts() -> None:

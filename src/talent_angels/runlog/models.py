@@ -54,6 +54,7 @@ class ToolCall(BaseModel):
     name: str
     ms: float
     ok: bool
+    args: dict[str, object] = Field(default_factory=dict)
 
 
 class GraphStats(BaseModel):
@@ -72,6 +73,7 @@ class CostBreakdown(BaseModel):
 class ResultSummary(BaseModel):
     confidence: float | None = None
     node_ids: list[str] = Field(default_factory=list)
+    node_labels: list[str] = Field(default_factory=list)
     warnings: list[str] = Field(default_factory=list)
 
 

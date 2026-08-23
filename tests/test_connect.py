@@ -56,6 +56,18 @@ def _center_ref() -> NodeRef:
         ),
         ("What skills does software developer need?", "software developer", ("HAS_SKILL",), None),
         ("Show skills for an accountant", "accountant", ("HAS_SKILL",), None),
+        (
+            "what skills I need to be a software developer",
+            "software developer",
+            ("HAS_SKILL",),
+            None,
+        ),
+        (
+            "skills I need to become a software developer",
+            "software developer",
+            ("HAS_SKILL",),
+            None,
+        ),
         ("Show neighbors of data scientist", "data scientist", (), None),
     ],
 )

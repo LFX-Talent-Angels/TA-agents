@@ -4,7 +4,7 @@ Headless assistant runtime for **Talent Angels**. One main assistant
 interprets a natural-language question, calls deterministic ESCO graph tools
 (Locate / Connect), and returns a cited JSON answer with tokens and cost.
 
-Pathfind (routes between two occupations) is **not** in this MVP: those
+Pathfind (routes between two occupations) is not implemented yet: those
 questions are refused honestly. Evaluate and multi-taxonomy merge come later.
 
 Sibling graph library: [`TA-taxonomies`](https://github.com/LFX-Talent-Angels/TA-taxonomies).
@@ -25,7 +25,6 @@ you  →  CLI or FastAPI (/docs)
 - CLI prints one JSON object (`answer`, `plan`, `tools`, `tokens`, `cost_usd`).
 - API is the same turn. Swagger: `http://127.0.0.1:8000/docs`.
 - `.env` is loaded automatically (cwd, then repo root). Shell exports win.
-
 ---
 
 ## Prerequisites
@@ -43,9 +42,9 @@ TA-workspace/
   TA-taxonomies/    ← graph loader + EscoSuite tools
 ```
 
-Until [TA-taxonomies PR #5](https://github.com/LFX-Talent-Angels/TA-taxonomies/pull/5)
-merges, live query tools live on branch `feature/esco-tools`. Official
-`main` has the contract and loader only.
+Install the sibling [`TA-taxonomies`](https://github.com/LFX-Talent-Angels/TA-taxonomies)
+package from official `main` (suite contract, ESCO loader, and `EscoSuite`
+query tools).
 
 ---
 
@@ -75,7 +74,7 @@ whatever is in this Neo4j. Do not run it against the demo database.
 ```bash
 cd ../TA-taxonomies
 git fetch origin
-git switch feature/esco-tools          # needed until PR #5 merges
+git switch main
 
 python3 -m venv .venv
 source .venv/bin/activate              # Windows: .venv\Scripts\activate
@@ -136,14 +135,14 @@ cd ../TA-agents
 python3 -m venv .venv
 source .venv/bin/activate
 pip install -e ".[dev]"
-pip install -e ../TA-taxonomies      # same tools branch as step 2
+pip install -e ../TA-taxonomies
 cp .env.example .env
 ```
 
 Edit `.env` (never commit it):
 
 ```dotenv
-# Agentic MVP — do not leave this as none for a live demo
+# Do not leave this as none for a live run
 LLM_PROVIDER=litellm
 LLM_MODEL=openrouter/poolside/laguna-s-2.1:free
 OPENROUTER_API_KEY=sk-or-...
@@ -216,9 +215,9 @@ pytest -q tests/integration -rs
 | Node count `61`, nurse `not_found` | Fixture graph. Load `--mode full` once. |
 | Full graph disappeared after tests | Taxonomies `pytest tests/suites/esco` wiped it. Reload full; do not run those tests here. |
 | `LLM_PROVIDER=none` / `tokens.calls: 0` | `.env` still has stub mode, or a shell export overrides the file. |
-| `Provider List:` banner | LiteLLM ad, not a crash. Current polish branch suppresses it. |
-| `ModuleNotFoundError: ta_taxonomies` | `pip install -e ../TA-taxonomies` on the tools branch. |
-| Official taxonomies `main` has no `EscoSuite` | Use `feature/esco-tools` until PR #5 merges. |
+| `Provider List:` banner | LiteLLM ad, not a crash. |
+| `ModuleNotFoundError: ta_taxonomies` | `pip install -e ../TA-taxonomies` from official `main`. |
+| `cannot import EscoSuite` | Taxonomies checkout is not official `main`. Fast-forward `main`. |
 
 ---
 

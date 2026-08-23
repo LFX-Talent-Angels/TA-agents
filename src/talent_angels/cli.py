@@ -17,7 +17,7 @@ from typing import Any
 from talent_angels.assistant import ResultCache, run_turn
 from talent_angels.assistant.intent import CAPABILITY_CONNECT
 from talent_angels.evals import LocateMetrics
-from talent_angels.llm import get_llm_client
+from talent_angels.llm.factory import get_answer_mode, get_llm_client
 from talent_angels.suites import SuiteRegistry, default_suite_registry
 
 GOLDEN_LOCATE_PATH = Path(__file__).resolve().parents[2] / "tests" / "evals" / "golden_locate.json"
@@ -64,6 +64,7 @@ def main(argv: Sequence[str] | None = None, *, registry: SuiteRegistry | None = 
             llm_client=llm_client,
             question=args.question,
             kind=args.kind,
+            answer_mode=get_answer_mode(),
             force_locate=(args.command == "locate"),
             force_capability=(CAPABILITY_CONNECT if args.command == "connect" else None),
         )
@@ -135,6 +136,7 @@ def _run_pass(
             llm_client=llm_client,
             question=case["question"],
             kind=case["kind"],
+            answer_mode="structured",
             force_locate=True,
             cache=cache,
         )

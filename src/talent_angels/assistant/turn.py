@@ -108,6 +108,7 @@ def run_turn(
         request_model=model,
         input_tokens=usage.input_tokens,
         output_tokens=usage.output_tokens,
+        reasoning_tokens=usage.reasoning_tokens,
         cache_read_input_tokens=usage.cache_read_input_tokens,
         cache_creation_input_tokens=usage.cache_creation_input_tokens,
         calls=1 if llm_usage is not None else 0,

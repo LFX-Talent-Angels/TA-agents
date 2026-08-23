@@ -13,6 +13,7 @@ dependencies = [
   "langgraph",
   "anthropic",
   "fastapi",
+  "litellm",
   "python-dotenv",
   "pyyaml",
   # "ta-taxonomies" — the suite-contract library (sibling repo), added once

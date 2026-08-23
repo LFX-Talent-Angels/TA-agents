@@ -14,7 +14,8 @@ from langgraph.graph import END, StateGraph
 from langgraph.graph.state import CompiledStateGraph
 
 from talent_angels.assistant.answer import build_answer
-from talent_angels.assistant.intent import CAPABILITY_LOCATE, classify_capability
+from talent_angels.assistant.intent import CAPABILITY_LOCATE
+from talent_angels.assistant.planning import build_plan
 from talent_angels.assistant.state import AssistantState
 from talent_angels.contracts import AgentResult
 from talent_angels.llm import LLMClient
@@ -22,14 +23,15 @@ from talent_angels.skills.locate import ESCO_SUITE_NAME, locate
 from talent_angels.skills.locate.resolve import SearchableSuite
 
 
-def _interpret_intent(state: AssistantState) -> AssistantState:
-    return {"capability": classify_capability(state["question"])}
+def _interpret_intent(state: AssistantState, *, suite_name: str) -> AssistantState:
+    plan = build_plan(state["question"], suites=(suite_name,))
+    return {"capability": plan.intent.target, "plan": plan}
 
 
 def _dispatch_locate(
     state: AssistantState, *, suite: SearchableSuite, suite_name: str
 ) -> AssistantState:
-    capability = state["capability"]
+    capability = state["plan"].intent.target
     if capability != CAPABILITY_LOCATE:
         result = AgentResult(
             capability=capability,
@@ -54,7 +56,10 @@ def build_graph(
     answer_mode: str = "structured",
 ) -> CompiledStateGraph:
     graph = StateGraph(AssistantState)
-    graph.add_node("interpret_intent", _interpret_intent)
+    graph.add_node(
+        "interpret_intent",
+        lambda s: _interpret_intent(s, suite_name=suite_name),
+    )
     graph.add_node(
         "dispatch_locate",
         lambda s: _dispatch_locate(s, suite=suite, suite_name=suite_name),

@@ -15,6 +15,7 @@ from pathlib import Path
 from typing import Any
 
 from talent_angels.assistant import ResultCache, run_turn
+from talent_angels.evals import LocateMetrics
 from talent_angels.llm import get_llm_client
 from talent_angels.suites import SuiteRegistry, default_suite_registry
 
@@ -116,8 +117,7 @@ def _run_pass(
     *,
     cache: ResultCache | None,
 ) -> dict:
-    hits = 0
-    scored = 0
+    metrics = LocateMetrics()
     total_cost = 0.0
     total_ms = 0.0
     for case in cases:
@@ -132,13 +132,14 @@ def _run_pass(
         )
         total_cost += outcome.record.cost_usd.total
         total_ms += outcome.record.graph.total_ms
-        if case["expected_top_id"] is not None:
-            scored += 1
-            if outcome.result.nodes and outcome.result.nodes[0].id == case["expected_top_id"]:
-                hits += 1
+        metrics.observe(
+            case.get("metric", "hit_at_1"),
+            case["expected_top_id"],
+            [node.id for node in outcome.result.nodes],
+        )
 
     return {
-        "hit_at_1_accuracy": (hits / scored) if scored else None,
+        **metrics.as_dict(),
         "total_cost_usd": total_cost,
         "total_graph_ms": total_ms,
         "mean_cost_usd_per_locate": total_cost / len(cases),

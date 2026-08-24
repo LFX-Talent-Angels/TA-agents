@@ -14,6 +14,7 @@ from talent_angels.assistant.turn import TurnOutcome
 from talent_angels.contracts import AgentResult, NodeRef
 from talent_angels.llm import LLMClient
 from talent_angels.session.budget import model_view
+from talent_angels.session.catalog import render_catalogue
 from talent_angels.session.commands import UnknownCommand, parse_command
 from talent_angels.session.copy import (
     ADVICE_REFUSE,
@@ -53,6 +54,7 @@ from talent_angels.session.store import (
     save_session,
     sessions_dir,
 )
+from talent_angels.session.switch import SwitchError, apply, current_choice, load_catalogue, resolve
 
 _NO_PENDING = "There's no numbered list to pick from. Type a job title first."
 _BAD_PICK = "That number isn't in the list. Reply with a number from the options."
@@ -70,6 +72,15 @@ class ChatReply:
     source_note: str | None = None  # e.g. "ESCO" only for map facts
     bound_label: str | None = None
     pending_count: int = 0
+    # Set by /model. The caller owns the client for the process lifetime, so a
+    # switch has to travel back out rather than be applied in here.
+    new_llm_client: LLMClient | None = None
+    # /login. The kernel has no console, and the key must not travel through
+    # the normal input path, so the prompt is the caller's job.
+    request_key: bool = False
+    # /model with no argument. The picker needs a terminal, which the kernel
+    # does not have, so the caller runs it and reports back.
+    request_model_pick: bool = False
 
 
 class TurnRunner(Protocol):
@@ -151,11 +162,17 @@ def _reply(
     *,
     quit: bool = False,
     source_note: str | None = None,
+    new_llm_client: LLMClient | None = None,
+    request_key: bool = False,
+    request_model_pick: bool = False,
 ) -> ChatReply:
     return ChatReply(
         text=text,
         quit=quit,
         source_note=source_note,
+        new_llm_client=new_llm_client,
+        request_key=request_key,
+        request_model_pick=request_model_pick,
         bound_label=state.binding.node.pref_label if state.binding is not None else None,
         pending_count=len(state.pending),
     )
@@ -203,7 +220,34 @@ def _handle_command(state: SessionState, text: str) -> ChatReply:
     if command.name == "clear":
         _copy_into(state, clear_conversation(state))
         return _finish(state, text, _CLEARED)
+    if command.name == "model":
+        if command.argument is None:
+            _record(state, "user", text)
+            return _reply(state, "", request_model_pick=True)
+        return _handle_model(state, text, command.argument)
+    if command.name == "login":
+        _record(state, "user", text)
+        return _reply(state, "", request_key=True)
     return _finish(state, text, UNKNOWN_COMMAND.format(token=text.split()[0]))
+
+
+def _handle_model(state: SessionState, text: str, argument: str | None) -> ChatReply:
+    """List free models, or switch to one. Never leaves the session clientless."""
+    catalogue, note = load_catalogue()
+    if argument is None:
+        body = render_catalogue(catalogue, current=current_choice().model)
+        return _finish(state, text, f"{note}\n\n{body}" if note else body)
+
+    try:
+        choice = resolve(argument, catalogue)
+        client = apply(choice)
+    except SwitchError as exc:
+        return _finish(state, text, f"Did not switch: {exc}")
+
+    _record(state, "user", text)
+    message = f"Now using {choice.label()}."
+    _record(state, "assistant", message)
+    return _reply(state, message, new_llm_client=client)
 
 
 def _last_map_query(state: SessionState) -> str:

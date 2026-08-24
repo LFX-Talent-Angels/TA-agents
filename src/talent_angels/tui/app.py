@@ -14,11 +14,8 @@ from talent_angels.env import load_local_dotenv
 from talent_angels.llm import LLMClient
 from talent_angels.llm.factory import get_llm_client
 from talent_angels.query_details import write_query_details
-<<<<<<< HEAD
 from talent_angels.runlog import append_record
-=======
 from talent_angels.session.catalog import render_catalogue
->>>>>>> fcda133 (feat(tui): pick a model and store a key from inside the session)
 from talent_angels.session.copy import WELCOME
 from talent_angels.session.credentials import (
     CredentialError,
@@ -172,37 +169,43 @@ def main(argv: Sequence[str] | None = None, *, registry: SuiteRegistry | None = 
                 return 0
             if not line.strip():
                 continue
-            # Every line that can reach the provider gets an indicator. Gating
-            # this on the route left chat and help lines calling the model with
-            # a frozen screen, which is the shape a crash has.
             kind = route_line(line).kind
-            label = "Looking that up…" if kind == "map" else "Thinking…"
             turn_outcomes: list[tuple[TurnOutcome, str]] = []
             turn_state = state.model_copy(deep=True)
-            try:
-                reply = run_with_status(
-                    console,
-                    label,
-                    partial(
-                        handle_line,
-                        turn_state,
-                        line,
-                        runner=make_runner(turn_outcomes),
-                        llm_client=llm_client,
-                    ),
+            if kind == "command":
+                # Commands can change session state, the active client, or the
+                # process environment. Keep those effects on this thread so an
+                # Esc cancellation cannot leave the UI and active client apart.
+                reply = handle_line(
+                    turn_state,
+                    line,
+                    runner=make_runner(turn_outcomes),
+                    llm_client=llm_client,
                 )
-            except Cancelled:
-                console.print(
-                    "[dim]Stopped waiting. The in-flight request may still finish and count "
-                    "toward usage.[/]"
-                )
-                continue
-<<<<<<< HEAD
+            else:
+                label = "Looking that up…" if kind == "map" else "Thinking…"
+                try:
+                    reply = run_with_status(
+                        console,
+                        label,
+                        partial(
+                            handle_line,
+                            turn_state,
+                            line,
+                            runner=make_runner(turn_outcomes),
+                            llm_client=llm_client,
+                        ),
+                    )
+                except Cancelled:
+                    console.print(
+                        "[dim]Stopped waiting. The in-flight request may still finish and count "
+                        "toward usage.[/]"
+                    )
+                    continue
             state = turn_state
             for outcome, question in turn_outcomes:
                 append_record(outcome.record)
                 write_query_details(outcome, question=question)
-=======
             if reply.new_llm_client is not None:
                 llm_client = reply.new_llm_client
             if reply.request_model_pick:
@@ -211,12 +214,25 @@ def main(argv: Sequence[str] | None = None, *, registry: SuiteRegistry | None = 
                 if picked is not None:
                     llm_client = picked
                     del _pick_model.client  # type: ignore[attr-defined]
+                render_status(
+                    console,
+                    suite=runtime.name,
+                    bound_label=state.binding.node.pref_label if state.binding else None,
+                    session_name=state.name or state.session_id,
+                    model_label=current_choice().label(),
+                )
                 continue
             if reply.request_key:
                 console.print(_collect_key(console))
                 llm_client = get_llm_client()
+                render_status(
+                    console,
+                    suite=runtime.name,
+                    bound_label=state.binding.node.pref_label if state.binding else None,
+                    session_name=state.name or state.session_id,
+                    model_label=current_choice().label(),
+                )
                 continue
->>>>>>> fcda133 (feat(tui): pick a model and store a key from inside the session)
             if reply.quit:
                 return 0
             render_assistant(console, reply)

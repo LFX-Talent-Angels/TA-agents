@@ -51,7 +51,10 @@ def resolve(argument: str, catalogue: list[FreeModel]) -> Choice:
         return Choice(provider="none", model="stub")
 
     if text.isdigit():
-        index = int(text)
+        try:
+            index = int(text)
+        except ValueError as exc:
+            raise SwitchError("pick an ASCII catalogue number or pass a model slug") from exc
         if not catalogue:
             raise SwitchError("the catalogue is unavailable; pass a model slug instead")
         if not 1 <= index <= len(catalogue):

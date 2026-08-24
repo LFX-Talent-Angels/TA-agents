@@ -14,7 +14,7 @@ from talent_angels.assistant.turn import TurnOutcome
 from talent_angels.contracts import AgentResult, NodeRef
 from talent_angels.llm import LLMClient
 from talent_angels.session.budget import model_view
-from talent_angels.session.catalog import render_catalogue
+from talent_angels.session.catalog import FreeModel
 from talent_angels.session.commands import UnknownCommand, parse_command
 from talent_angels.session.copy import (
     ADVICE_REFUSE,
@@ -54,7 +54,7 @@ from talent_angels.session.store import (
     save_session,
     sessions_dir,
 )
-from talent_angels.session.switch import SwitchError, apply, current_choice, load_catalogue, resolve
+from talent_angels.session.switch import SwitchError, apply, load_catalogue, resolve
 
 _NO_PENDING = "There's no numbered list to pick from. Type a job title first."
 _BAD_PICK = "That number isn't in the list. Reply with a number from the options."
@@ -226,17 +226,25 @@ def _handle_command(state: SessionState, text: str) -> ChatReply:
             return _reply(state, "", request_model_pick=True)
         return _handle_model(state, text, command.argument)
     if command.name == "login":
-        _record(state, "user", text)
+        if command.argument is not None:
+            return _finish(
+                state,
+                "/login",
+                "For security, do not paste a key after /login. Run /login, then paste it at the "
+                "hidden prompt.",
+            )
+        _record(state, "user", "/login")
         return _reply(state, "", request_key=True)
     return _finish(state, text, UNKNOWN_COMMAND.format(token=text.split()[0]))
 
 
-def _handle_model(state: SessionState, text: str, argument: str | None) -> ChatReply:
+def _handle_model(state: SessionState, text: str, argument: str) -> ChatReply:
     """List free models, or switch to one. Never leaves the session clientless."""
-    catalogue, note = load_catalogue()
-    if argument is None:
-        body = render_catalogue(catalogue, current=current_choice().model)
-        return _finish(state, text, f"{note}\n\n{body}" if note else body)
+    catalogue: list[FreeModel] = []
+    if argument.isascii() and argument.isdigit():
+        catalogue, note = load_catalogue()
+        if note:
+            return _finish(state, text, f"Did not switch: {note}")
 
     try:
         choice = resolve(argument, catalogue)

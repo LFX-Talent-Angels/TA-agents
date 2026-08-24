@@ -21,6 +21,8 @@ count short and the previous frame would smear down the screen.
 
 from __future__ import annotations
 
+import os
+import select as select_module
 import sys
 import termios
 import tty
@@ -37,6 +39,7 @@ _BACKSPACE = {"\x7f", "\b"}
 _CANCEL = {"\x1b", "\x03"}  # Esc, Ctrl-C
 _UP = "\x1b[A"
 _DOWN = "\x1b[B"
+_ESCAPE_WAIT_SECONDS = 0.2
 
 
 @dataclass(frozen=True)
@@ -80,15 +83,24 @@ def is_interactive() -> bool:
 
 def _read_key() -> str:
     """One keypress, decoding the three-byte arrow sequences."""
-    first = sys.stdin.read(1)
-    if first != "\x1b":
-        return first
-    # Esc alone (cancel) versus Esc [ A (an arrow): the rest only arrives for
-    # the latter, so a short read here means the user pressed Escape.
-    second = sys.stdin.read(1)
-    if second != "[":
+    descriptor = sys.stdin.fileno()
+    first = os.read(descriptor, 1)
+    if first != b"\x1b":
+        return first.decode(errors="replace")
+    # Esc alone (cancel) versus Esc [ A (an arrow): wait briefly for the rest
+    # of an escape sequence, but never block a bare Escape. Read through the
+    # descriptor rather than TextIOWrapper: its internal buffer can hide `[A`
+    # and `[B` from select after the leading Escape was already consumed.
+    ready, _, _ = select_module.select([descriptor], [], [], _ESCAPE_WAIT_SECONDS)
+    if not ready:
         return "\x1b"
-    return "\x1b[" + sys.stdin.read(1)
+    second = os.read(descriptor, 1)
+    if second != b"[":
+        return "\x1b"
+    ready, _, _ = select_module.select([descriptor], [], [], _ESCAPE_WAIT_SECONDS)
+    if not ready:
+        return "\x1b"
+    return "\x1b[" + os.read(descriptor, 1).decode(errors="replace")
 
 
 def _render(console: Console, options: list[Option], query: str, cursor: int, title: str) -> int:
@@ -176,5 +188,7 @@ def select(
             cursor = 0
     finally:
         termios.tcsetattr(sys.stdin, termios.TCSADRAIN, settings)
+        if lines:
+            sys.stdout.write(f"\x1b[{lines}A\x1b[J")
         sys.stdout.write("\r")
         sys.stdout.flush()

@@ -2,6 +2,11 @@
 
 from __future__ import annotations
 
+import types
+
+import pytest
+
+import talent_angels.tui.picker_ui as picker_ui
 from talent_angels.tui.picker_ui import Option, filter_options, subsequence_match
 
 MODELS = [
@@ -49,3 +54,30 @@ def test_empty_query_keeps_every_option() -> None:
 
 def test_no_match_returns_nothing_rather_than_everything() -> None:
     assert _keys("zzzz") == []
+
+
+def test_bare_escape_does_not_read_a_second_byte(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(picker_ui.sys, "stdin", types.SimpleNamespace(fileno=lambda: 7))
+    monkeypatch.setattr(
+        picker_ui,
+        "select_module",
+        types.SimpleNamespace(select=lambda *_: ([], [], [])),
+        raising=False,
+    )
+    monkeypatch.setattr(picker_ui.os, "read", lambda *_: b"\x1b", raising=False)
+
+    assert picker_ui._read_key() == "\x1b"
+
+
+def test_down_arrow_reads_the_full_escape_sequence(monkeypatch: pytest.MonkeyPatch) -> None:
+    chunks = iter([b"\x1b", b"[", b"B"])
+    monkeypatch.setattr(picker_ui.sys, "stdin", types.SimpleNamespace(fileno=lambda: 7))
+    monkeypatch.setattr(
+        picker_ui,
+        "select_module",
+        types.SimpleNamespace(select=lambda *_: ([7], [], [])),
+        raising=False,
+    )
+    monkeypatch.setattr(picker_ui.os, "read", lambda *_: next(chunks), raising=False)
+
+    assert picker_ui._read_key() == "\x1b[B"

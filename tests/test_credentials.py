@@ -7,6 +7,7 @@ from pathlib import Path
 
 import pytest
 
+import talent_angels.session.credentials as credentials
 from talent_angels.session.credentials import (
     ENV_NAME,
     CredentialError,
@@ -25,12 +26,15 @@ def test_obvious_mispastes_are_caught_without_a_network_call() -> None:
     assert looks_like_openrouter_key("") is False
 
 
-def test_store_replaces_a_previous_value_rather_than_appending(tmp_path: Path) -> None:
+def test_store_replaces_a_previous_value_rather_than_appending(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
     """A second /login must not leave two keys in the file, where the loser
     silently wins or loses depending on the reader."""
     env = tmp_path / ".env"
     env.write_text(f"NEO4J_URI=bolt://localhost:7687\n{ENV_NAME}=sk-or-v1-old\n", encoding="utf-8")
 
+    monkeypatch.delenv(ENV_NAME, raising=False)
     store(KEY, root=tmp_path)
 
     lines = env.read_text(encoding="utf-8").splitlines()
@@ -38,12 +42,36 @@ def test_store_replaces_a_previous_value_rather_than_appending(tmp_path: Path) -
     assert "NEO4J_URI=bolt://localhost:7687" in lines
 
 
-def test_store_creates_the_file_and_locks_it_to_the_owner(tmp_path: Path) -> None:
+def test_store_creates_the_file_and_locks_it_to_the_owner(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.delenv(ENV_NAME, raising=False)
     path = store(KEY, root=tmp_path)
 
     assert path.exists()
     mode = stat.S_IMODE(path.stat().st_mode)
     assert mode == 0o600, f"credential file is group/world readable: {mode:o}"
+
+
+def test_store_keeps_the_previous_file_when_secure_replace_fails(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    env = tmp_path / ".env"
+    previous = f"{ENV_NAME}=sk-or-v1-old\n"
+    env.write_text(previous, encoding="utf-8")
+    env.chmod(0o600)
+
+    def fail_replace(source: str, destination: Path) -> None:
+        raise OSError("replace failed")
+
+    monkeypatch.setattr(credentials.os, "replace", fail_replace)
+    monkeypatch.delenv(ENV_NAME, raising=False)
+
+    with pytest.raises(CredentialError, match="could not write"):
+        store(KEY, root=tmp_path)
+
+    assert env.read_text(encoding="utf-8") == previous
+    assert have_key() is False
 
 
 def test_store_exports_to_the_running_process(

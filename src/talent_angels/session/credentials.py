@@ -20,6 +20,7 @@ from __future__ import annotations
 import json
 import os
 import stat
+import tempfile
 import urllib.error
 import urllib.request
 from pathlib import Path
@@ -78,11 +79,21 @@ def store(key: str, *, root: Path | None = None) -> Path:
     lines = path.read_text(encoding="utf-8").splitlines() if path.exists() else []
     kept = [line for line in lines if not line.startswith(f"{ENV_NAME}=")]
     kept.append(f"{ENV_NAME}={key}")
+    temporary: str | None = None
     try:
-        path.write_text("\n".join(kept) + "\n", encoding="utf-8")
-        path.chmod(_FILE_MODE)
+        descriptor, temporary = tempfile.mkstemp(prefix=f".{path.name}.", dir=path.parent)
+        with os.fdopen(descriptor, "w", encoding="utf-8") as handle:
+            os.fchmod(handle.fileno(), _FILE_MODE)
+            handle.write("\n".join(kept) + "\n")
+            handle.flush()
+            os.fsync(handle.fileno())
+        os.replace(temporary, path)
+        temporary = None
     except OSError as exc:
         raise CredentialError(f"could not write {path} ({exc})") from exc
+    finally:
+        if temporary is not None:
+            Path(temporary).unlink(missing_ok=True)
 
     # The running process needs it too, or the switch only works next launch.
     os.environ[ENV_NAME] = key

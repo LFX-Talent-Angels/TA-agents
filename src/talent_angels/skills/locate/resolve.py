@@ -42,6 +42,12 @@ class SearchCandidate(Protocol):
     @property
     def confidence(self) -> float: ...
 
+    # The match rule the confidence stands for (exact_pref, contains, ...).
+    # Locate folds it away into a single turn-level confidence; the MCP edge
+    # hands it to the client, which has no other way to read the number.
+    @property
+    def method(self) -> str: ...
+
 
 class SearchResult(Protocol):
     @property

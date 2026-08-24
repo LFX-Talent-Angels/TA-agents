@@ -14,6 +14,9 @@ dependencies = [
   "anthropic",
   "fastapi",
   "uvicorn",
+  # MCP stdio edge. Pinned to the major: 2.0 renamed FastMCP -> MCPServer,
+  # so a different major breaks `talent_angels.mcp` at import time.
+  "mcp>=2,<3",
   "litellm",
   "python-dotenv",
   "pyyaml",
@@ -24,6 +27,7 @@ dependencies = [
 
 [project.scripts]
 ta-agent = "talent_angels.tui.app:main"
+ta-mcp = "talent_angels.mcp.server:main"
 
 [project.optional-dependencies]
 dev = [

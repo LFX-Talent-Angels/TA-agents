@@ -36,7 +36,7 @@ MAX_TOOL_ROUNDS = 4
 MAX_COMPACT_NODES = 8
 MAX_COMPACT_EDGES = 8
 
-LOOP_SYSTEM = """You are the Talent Angels main assistant.
+LOOP_SYSTEM = """You are the LFX Talent Angels main assistant.
 Return ONLY a JSON object each turn. Do not invent node IDs or skills.
 
 Call a graph tool:

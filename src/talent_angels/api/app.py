@@ -29,7 +29,7 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
 
 
 def create_app(*, registry: SuiteRegistry | None = None) -> FastAPI:
-    app = FastAPI(title="Talent Angels — TA-agents", version="0.1.0", lifespan=lifespan)
+    app = FastAPI(title="LFX Talent Angels — TA-agents", version="0.1.0", lifespan=lifespan)
     app.state.registry = registry or default_suite_registry()
 
     @app.get("/v1/health", response_model=HealthResponse)

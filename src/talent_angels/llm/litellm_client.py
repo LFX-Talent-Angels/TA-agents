@@ -6,6 +6,8 @@ import contextlib
 import io
 import json
 import os
+import sys
+import threading
 from collections.abc import Callable, Iterator, Mapping
 from typing import Any
 
@@ -32,11 +34,46 @@ def ensure_local_model_cost_map() -> None:
 ensure_local_model_cost_map()
 
 
+class _MuteThread(io.TextIOBase):
+    """A stdout stand-in that drops writes from one thread and forwards the rest.
+
+    LiteLLM prints a provider banner during a completion, and the obvious cure
+    — `redirect_stdout` around the call — swaps a process-global. Any other
+    thread writing during that window lands in the discarded buffer, so a
+    terminal spinner drawn while the request is in flight paints nowhere and
+    reads as a freeze until the call returns.
+
+    Muting by thread keeps the banner hidden without taking the terminal away
+    from everything else in the process.
+    """
+
+    def __init__(self, target: object, muted_thread: int) -> None:
+        self._target = target
+        self._muted = muted_thread
+
+    def write(self, text: str) -> int:
+        if threading.get_ident() == self._muted:
+            return len(text)
+        return int(self._target.write(text))  # type: ignore[attr-defined]
+
+    def flush(self) -> None:
+        if threading.get_ident() != self._muted:
+            self._target.flush()  # type: ignore[attr-defined]
+
+    def __getattr__(self, name: str) -> object:
+        return getattr(self._target, name)
+
+
 @contextlib.contextmanager
 def _quiet_stdio() -> Iterator[None]:
-    """Hide LiteLLM's import/completion banners (they look like crashes)."""
-    with contextlib.redirect_stdout(io.StringIO()), contextlib.redirect_stderr(io.StringIO()):
+    """Hide LiteLLM's banners without hiding anyone else's output."""
+    here = threading.get_ident()
+    out, err = sys.stdout, sys.stderr
+    sys.stdout, sys.stderr = _MuteThread(out, here), _MuteThread(err, here)
+    try:
         yield
+    finally:
+        sys.stdout, sys.stderr = out, err
 
 
 def _silence_litellm_runtime() -> None:

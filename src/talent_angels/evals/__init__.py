@@ -1,4 +1,4 @@
-"""Reusable measurement helpers for Talent Angels evaluations."""
+"""Reusable measurement helpers for LFX Talent Angels evaluations."""
 
 from talent_angels.evals.locate import LocateMetrics
 from talent_angels.evals.quality import (

@@ -1,12 +1,12 @@
 """User-facing copy for the interactive ta-agent TUI.
 
-Talent Angels voice — no taxonomy product names in identity lines.
+LFX Talent Angels voice — no taxonomy product names in identity lines.
 """
 
 GREETING = "Hey. I'm here.\n\nTry a job title, or ask what I can do."
 
 WELCOME = (
-    "Talent Angels — map jobs and skills from the bound taxonomy suite.\n\n"
+    "LFX Talent Angels — map jobs and skills from the bound taxonomy suite.\n\n"
     "Type a job title to locate it, or /help for commands."
 )
 
@@ -21,7 +21,9 @@ COMMANDS_BLOCK = (
     "- `/save [name]` — save this session\n"
     "- `/resume [name]` — resume a saved session (default: last)\n"
     "- `/clear` — clear transcript and binding\n"
-    "- `/quit` or `/exit` — leave"
+    "- `/quit` or `/exit` — leave\n"
+    "\n"
+    "Press `esc` while a question is running to stop waiting for it."
 )
 
 HELP_TEXT = (

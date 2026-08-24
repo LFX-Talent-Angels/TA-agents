@@ -5,6 +5,7 @@ from __future__ import annotations
 import os
 import sys
 from collections.abc import Sequence
+from functools import partial
 
 from rich.console import Console
 
@@ -18,6 +19,7 @@ from talent_angels.session.router import route_line
 from talent_angels.session.store import new_session, sessions_dir
 from talent_angels.suites import SuiteRegistry, default_suite_registry
 from talent_angels.tui.render import render_assistant, render_status, render_welcome
+from talent_angels.tui.working import Cancelled, run_with_status
 
 
 def _read_line(console: Console) -> str:
@@ -74,11 +76,20 @@ def main(argv: Sequence[str] | None = None, *, registry: SuiteRegistry | None = 
                 return 0
             if not line.strip():
                 continue
-            if route_line(line).kind == "map":
-                with console.status("[cyan]Looking that up…[/]"):
-                    reply = handle_line(state, line, runner=runner, llm_client=llm_client)
-            else:
-                reply = handle_line(state, line, runner=runner, llm_client=llm_client)
+            # Every line that can reach the provider gets an indicator. Gating
+            # this on the route left chat and help lines calling the model with
+            # a frozen screen, which is the shape a crash has.
+            kind = route_line(line).kind
+            label = "Looking that up…" if kind == "map" else "Thinking…"
+            try:
+                reply = run_with_status(
+                    console,
+                    label,
+                    partial(handle_line, state, line, runner=runner, llm_client=llm_client),
+                )
+            except Cancelled:
+                console.print("[dim]Cancelled. The provider call is abandoned, not billed back.[/]")
+                continue
             if reply.quit:
                 return 0
             render_assistant(console, reply)

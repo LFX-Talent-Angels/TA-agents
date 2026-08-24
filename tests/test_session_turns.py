@@ -204,6 +204,57 @@ def test_numeric_pick_does_not_call_search_nodes(tmp_path: Path) -> None:
     assert "timestamp" in event
 
 
+def test_login_argument_is_refused_without_recording_the_secret() -> None:
+    from talent_angels.session.kernel import handle_line
+
+    secret = "sk-or-v1-" + "a" * 40
+    state = new_session()
+
+    reply = handle_line(state, f"/login {secret}", runner=_boom)
+
+    assert reply.request_key is False
+    assert secret not in reply.text
+    assert all(secret not in line.text for line in state.transcript)
+    assert state.transcript[0].text == "/login"
+
+
+def test_model_none_does_not_fetch_the_catalogue(monkeypatch: pytest.MonkeyPatch) -> None:
+    import talent_angels.session.kernel as kernel
+
+    def catalogue_must_not_be_called() -> tuple[list[object], str | None]:
+        raise AssertionError("stub switching must not need the network catalogue")
+
+    monkeypatch.setattr(kernel, "load_catalogue", catalogue_must_not_be_called)
+    state = new_session()
+
+    reply = kernel.handle_line(state, "/model none", runner=_boom)
+
+    assert reply.new_llm_client is not None
+    assert reply.new_llm_client.provider == "none"
+
+
+def test_explicit_model_slug_does_not_fetch_the_catalogue(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    import talent_angels.session.kernel as kernel
+
+    def catalogue_must_not_be_called() -> tuple[list[object], str | None]:
+        raise AssertionError("explicit model switching must not need the network catalogue")
+
+    selected: list[object] = []
+    monkeypatch.setattr(kernel, "load_catalogue", catalogue_must_not_be_called)
+    monkeypatch.setattr(
+        kernel,
+        "apply",
+        lambda choice: selected.append(choice) or StubLLMClient(),
+    )
+
+    reply = kernel.handle_line(new_session(), "/model google/gemma-4-31b-it:free", runner=_boom)
+
+    assert reply.new_llm_client is not None
+    assert len(selected) == 1
+
+
 def test_hi_does_not_open_the_suite() -> None:
     from talent_angels.session.kernel import handle_line
 

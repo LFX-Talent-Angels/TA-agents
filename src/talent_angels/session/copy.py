@@ -18,6 +18,8 @@ HELP_INTRO = (
 COMMANDS_BLOCK = (
     "**Commands**\n"
     "- `/help` — this list\n"
+    "- `/model` — pick a model; type to filter, arrows to move\n"
+    "- `/login` — store an OpenRouter key (input hidden)\n"
     "- `/save [name]` — save this session\n"
     "- `/resume [name]` — resume a saved session (default: last)\n"
     "- `/clear` — clear transcript and binding\n"

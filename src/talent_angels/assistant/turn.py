@@ -77,6 +77,7 @@ def run_turn(
     force_capability: Capability | None = None,
     cache: ResultCache | None = None,
     bound_node: NodeRef | None = None,
+    persist: bool = True,
 ) -> TurnOutcome:
     """Run one turn and append its run-log record.
 
@@ -165,7 +166,8 @@ def run_turn(
             warnings=result.warnings,
         ),
     )
-    append_record(record)
+    if persist:
+        append_record(record)
 
     return TurnOutcome(
         capability=capability,

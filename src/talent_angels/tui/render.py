@@ -129,7 +129,7 @@ def render_welcome(console: Console, welcome: str) -> None:
     console.print(
         Panel(
             Markdown(welcome),
-            title="[bold cyan]Talent Angels[/bold cyan]",
+            title="[bold cyan]LFX Talent Angels[/bold cyan]",
             border_style="cyan",
             padding=(1, 2),
         )
@@ -155,11 +155,23 @@ def render_status(
     suite: str,
     bound_label: str | None,
     session_name: str | None,
+    model_label: str | None = None,
 ) -> None:
     bits = [
         Text("suite ", style="dim"),
         Text(suite, style="cyan"),
     ]
+    # Which model answered is part of reading the answer: the same question
+    # phrased by two models reads differently, and one of them may be the
+    # zero-token stub. Switching is now a keystroke, so the status line has to
+    # say where that keystroke left the session.
+    if model_label:
+        bits.extend(
+            [
+                Text("  ·  model ", style="dim"),
+                Text(model_label, style="magenta"),
+            ]
+        )
     if bound_label:
         bits.extend(
             [

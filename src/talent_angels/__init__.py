@@ -1,4 +1,4 @@
-"""Talent Angels — the assistant runtime over skill/task/occupation taxonomies.
+"""LFX Talent Angels — the assistant runtime over skill/task/occupation taxonomies.
 
 One main assistant (LangGraph loop) owns the user's goal and dispatches four
 map-work capabilities implemented as skills + tools (see ARCHITECTURE.md and

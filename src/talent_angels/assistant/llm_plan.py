@@ -22,7 +22,7 @@ from talent_angels.runlog import StageUsage
 from talent_angels.skills.connect.models import ConnectRequest
 from talent_angels.skills.locate import ESCO_SUITE_NAME
 
-PLAN_SYSTEM = """You are the Talent Angels planner. Return ONLY a JSON object.
+PLAN_SYSTEM = """You are the LFX Talent Angels planner. Return ONLY a JSON object.
 
 Keys:
 - target: locate | connect | pathfind

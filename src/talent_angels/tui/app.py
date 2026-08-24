@@ -9,10 +9,11 @@ from functools import partial
 
 from rich.console import Console
 
-from talent_angels.assistant import run_turn
+from talent_angels.assistant import TurnOutcome, run_turn
 from talent_angels.env import load_local_dotenv
 from talent_angels.llm.factory import get_llm_client
 from talent_angels.query_details import write_query_details
+from talent_angels.runlog import append_record
 from talent_angels.session.copy import WELCOME
 from talent_angels.session.kernel import handle_line
 from talent_angels.session.router import route_line
@@ -46,19 +47,23 @@ def main(argv: Sequence[str] | None = None, *, registry: SuiteRegistry | None = 
         state = new_session()
         os.environ["RUNLOG_PATH"] = str(sessions_dir() / state.session_id / "runlog.jsonl")
 
-        def runner(question, *, bound_node=None, force_capability=None):
-            # Structured facts from the assistant; the TUI phrases them (see session.phrase).
-            outcome = run_turn(
-                suite=runtime.suite,
-                suite_name=runtime.name,
-                llm_client=llm_client,
-                question=question,
-                answer_mode="structured",
-                bound_node=bound_node,
-                force_capability=force_capability,
-            )
-            write_query_details(outcome, question=question)
-            return outcome
+        def make_runner(outcomes: list[tuple[TurnOutcome, str]]):
+            def runner(question, *, bound_node=None, force_capability=None):
+                # Structured facts from the assistant; the TUI phrases them (see session.phrase).
+                outcome = run_turn(
+                    suite=runtime.suite,
+                    suite_name=runtime.name,
+                    llm_client=llm_client,
+                    question=question,
+                    answer_mode="structured",
+                    bound_node=bound_node,
+                    force_capability=force_capability,
+                    persist=False,
+                )
+                outcomes.append((outcome, question))
+                return outcome
+
+            return runner
 
         render_welcome(console, WELCOME)
         render_status(
@@ -81,15 +86,30 @@ def main(argv: Sequence[str] | None = None, *, registry: SuiteRegistry | None = 
             # a frozen screen, which is the shape a crash has.
             kind = route_line(line).kind
             label = "Looking that up…" if kind == "map" else "Thinking…"
+            turn_outcomes: list[tuple[TurnOutcome, str]] = []
+            turn_state = state.model_copy(deep=True)
             try:
                 reply = run_with_status(
                     console,
                     label,
-                    partial(handle_line, state, line, runner=runner, llm_client=llm_client),
+                    partial(
+                        handle_line,
+                        turn_state,
+                        line,
+                        runner=make_runner(turn_outcomes),
+                        llm_client=llm_client,
+                    ),
                 )
             except Cancelled:
-                console.print("[dim]Cancelled. The provider call is abandoned, not billed back.[/]")
+                console.print(
+                    "[dim]Stopped waiting. The in-flight request may still finish and count "
+                    "toward usage.[/]"
+                )
                 continue
+            state = turn_state
+            for outcome, question in turn_outcomes:
+                append_record(outcome.record)
+                write_query_details(outcome, question=question)
             if reply.quit:
                 return 0
             render_assistant(console, reply)

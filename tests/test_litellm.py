@@ -5,6 +5,7 @@ from __future__ import annotations
 import os
 import subprocess
 import sys
+import threading
 from pathlib import Path
 from typing import Any
 
@@ -14,11 +15,52 @@ from talent_angels.llm import Message
 from talent_angels.llm.litellm_client import (
     LOCAL_MODEL_COST_MAP_ENV,
     LiteLLMClient,
+    _MuteThread,
     ensure_local_model_cost_map,
 )
 from talent_angels.runlog import estimate_llm_cost_usd
 
 MODEL = "openrouter/nvidia/nemotron-3-ultra-550b-a55b:free"
+
+
+def test_mute_thread_preserves_terminal_shape_for_other_threads() -> None:
+    class Terminal:
+        encoding = "utf-8"
+
+        def __init__(self) -> None:
+            self.text = ""
+
+        def write(self, text: str) -> int:
+            self.text += text
+            return len(text)
+
+        def flush(self) -> None:
+            return None
+
+        def isatty(self) -> bool:
+            return True
+
+        def fileno(self) -> int:
+            return 1
+
+    target = Terminal()
+    muted = _MuteThread(target, threading.get_ident())
+    muted.write("hidden")
+    assert target.text == ""
+    assert muted.isatty() is True
+    assert muted.fileno() == 1
+    assert muted.encoding == "utf-8"
+
+    other_result: list[int] = []
+
+    def write_from_other_thread() -> None:
+        other_result.append(muted.write("visible"))
+
+    thread = threading.Thread(target=write_from_other_thread)
+    thread.start()
+    thread.join()
+    assert other_result == [7]
+    assert target.text == "visible"
 
 
 def test_litellm_maps_request_text_and_exclusive_usage_buckets() -> None:

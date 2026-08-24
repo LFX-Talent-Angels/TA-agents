@@ -39,6 +39,7 @@ SHOW_ELAPSED_AFTER_SECONDS = 2.0
 OFFER_CANCEL_AFTER_SECONDS = 3.0
 _POLL_SECONDS = 0.1
 _CANCEL_KEYS = {"\x1b", "\x03"}  # Esc, Ctrl-C
+_WORK_LOCK = threading.Lock()
 
 
 class Cancelled(Exception):
@@ -69,7 +70,10 @@ def run_with_status(console: Console, label: str, work: Callable[[], T]) -> T:
 
     def run() -> None:
         try:
-            box["value"] = work()
+            # Provider calls cannot be interrupted safely; serialize them so
+            # abandoned work cannot overlap another provider's stdio wrapper.
+            with _WORK_LOCK:
+                box["value"] = work()
         except BaseException as exc:  # re-raised on this thread below
             box["error"] = exc
 

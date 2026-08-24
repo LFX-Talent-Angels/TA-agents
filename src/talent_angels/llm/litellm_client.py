@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import contextlib
-import io
 import json
 import os
 import sys
@@ -34,7 +33,7 @@ def ensure_local_model_cost_map() -> None:
 ensure_local_model_cost_map()
 
 
-class _MuteThread(io.TextIOBase):
+class _MuteThread:
     """A stdout stand-in that drops writes from one thread and forwards the rest.
 
     LiteLLM prints a provider banner during a completion, and the obvious cure
@@ -62,6 +61,16 @@ class _MuteThread(io.TextIOBase):
 
     def __getattr__(self, name: str) -> object:
         return getattr(self._target, name)
+
+    def isatty(self) -> bool:
+        return bool(self._target.isatty())  # type: ignore[attr-defined]
+
+    def fileno(self) -> int:
+        return int(self._target.fileno())  # type: ignore[attr-defined]
+
+    @property
+    def encoding(self) -> str | None:
+        return self._target.encoding  # type: ignore[attr-defined,no-any-return]
 
 
 @contextlib.contextmanager

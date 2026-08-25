@@ -94,7 +94,14 @@ That is what the crosswalk is for. Not more data: answerable hard questions.
 
 ## Crossing suites
 
-The `ta-taxonomy` tools navigate the ESCO side. For the rest, Cypher.
+All four suites are reachable through the tools: pass `suite` to
+`search_nodes` and `get_neighbors`. It defaults to `esco`. O*NET neighbours
+carry `importance`, `level`, `importance_n` and `importance_lower_ci` on the
+edge, so the numbers arrive without writing a query.
+
+**Crossing between suites still needs Cypher.** The tools navigate inside one
+suite at a time; `CORRESPONDS_TO` and the SOC code join are not exposed as
+tools yet.
 
 ESCO to O*NET weights:
 

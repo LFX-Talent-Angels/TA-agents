@@ -141,6 +141,11 @@ def _open_runtime(
         return None, requested, [f"suite_unavailable:{exc.reason}"]
 
 
+def _operation_warning(exc: Exception) -> list[str]:
+    """Keep a suite-call failure typed without leaking its details to the client."""
+    return [f"suite_unavailable:{type(exc).__name__}"]
+
+
 SuiteArg = Annotated[
     str | None,
     Field(
@@ -204,7 +209,15 @@ rather than picking one), `not_found`, `empty_query`, or `unknown_kind:<kind>`."
         runtime, name, warnings = _open_runtime(session, suite)
         if runtime is None:
             return SearchPayload(suite=name, query=text, kind=kind, warnings=warnings)
-        result = runtime.suite.search_nodes(text, kind=kind)
+        try:
+            result = runtime.suite.search_nodes(text, kind=kind)
+        except Exception as exc:
+            return SearchPayload(
+                suite=runtime.name,
+                query=text,
+                kind=kind,
+                warnings=_operation_warning(exc),
+            )
         return search_payload(result, suite=runtime.name, query=text, kind=kind)
 
     @server.tool(
@@ -252,7 +265,14 @@ do not retry it against another one), `no_neighbors`, or
         runtime, name, warnings = _open_runtime(session, suite)
         if runtime is None:
             return NeighborsPayload(suite=name, center_id=node_id, warnings=warnings)
-        result = runtime.suite.get_neighbors(node_id, rel_types=rel_types)
+        try:
+            result = runtime.suite.get_neighbors(node_id, rel_types=rel_types)
+        except Exception as exc:
+            return NeighborsPayload(
+                suite=runtime.name,
+                center_id=node_id,
+                warnings=_operation_warning(exc),
+            )
         return neighbors_payload(result, suite=runtime.name, center_id=node_id)
 
     @server.tool(
@@ -312,9 +332,17 @@ route within the cap — a real answer, not a failure), `invalid_max_depth`, or
                 to_id=to_id,
                 warnings=[f"capability_unavailable:enumerate_paths:{runtime.name}"],
             )
-        result = runtime.suite.enumerate_paths(
-            from_id, to_id, max_depth=max_depth, max_paths=max_paths
-        )
+        try:
+            result = runtime.suite.enumerate_paths(
+                from_id, to_id, max_depth=max_depth, max_paths=max_paths
+            )
+        except Exception as exc:
+            return PathsPayload(
+                suite=runtime.name,
+                from_id=from_id,
+                to_id=to_id,
+                warnings=_operation_warning(exc),
+            )
         return paths_payload(result, suite=runtime.name, from_id=from_id, to_id=to_id)
 
     @server.tool(
@@ -365,7 +393,14 @@ the answer — do not substitute a ranking of your own and present it as ESCO's.
                 policy=policy,
                 warnings=[f"capability_unavailable:score_paths:{runtime.name}"],
             )
-        result = runtime.suite.score_paths([suite_path_arg(path) for path in paths], policy)
+        try:
+            result = runtime.suite.score_paths([suite_path_arg(path) for path in paths], policy)
+        except Exception as exc:
+            return ScoredPathsPayload(
+                suite=runtime.name,
+                policy=policy,
+                warnings=_operation_warning(exc),
+            )
         return scored_paths_payload(result, suite=runtime.name, policy=policy)
 
     return server

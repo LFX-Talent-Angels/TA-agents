@@ -63,6 +63,7 @@ async def _drive() -> dict[str, Any]:
             )
             await call("unknown_suite", "search_nodes", {"text": "x", "suite": "onet"})
             await call("suite_down", "search_nodes", {"text": "x", "suite": "down"})
+            await call("suite_broken", "search_nodes", {"text": "x", "suite": "broken"})
             await call(
                 "no_pathfind",
                 "enumerate_paths",
@@ -168,6 +169,7 @@ def test_scored_paths_pass_the_suite_refusal_through(served: dict[str, Any]) -> 
         ("neighbors_missing", "node_not_found"),
         ("unknown_suite", "unknown_suite:onet"),
         ("suite_down", "suite_unavailable:ConnectionRefusedError"),
+        ("suite_broken", "suite_unavailable:RuntimeError"),
         ("no_pathfind", "capability_unavailable:enumerate_paths:locate_only"),
         ("invalid_depth", "invalid_max_depth"),
     ],
@@ -187,3 +189,7 @@ def test_an_unavailable_suite_never_leaks_the_driver_message(
 ) -> None:
     # Driver errors quote the connection URI, and this text lands in a chat log.
     assert served["suite_down"]["warnings"] == ["suite_unavailable:ConnectionRefusedError"]
+
+
+def test_a_suite_call_failure_never_leaks_its_error_message(served: dict[str, Any]) -> None:
+    assert served["suite_broken"]["warnings"] == ["suite_unavailable:RuntimeError"]

@@ -120,6 +120,15 @@ class LocateOnlySuite:
         return FakeToolResult(warnings=["node_not_found"])
 
 
+class FailingSuite(FakeSuite):
+    """A suite that opens but fails while servicing a tool call."""
+
+    name = "broken"
+
+    def search_nodes(self, text: str, kind: str | None = None) -> FakeToolResult:
+        raise RuntimeError("database details must not reach the MCP client")
+
+
 def suite_factory(name: str, suite: object, *, reachable: bool = True):
     @contextmanager
     def open_runtime():
@@ -144,6 +153,7 @@ def fake_registry() -> SuiteRegistry:
         {
             SUITE_NAME: suite_factory(SUITE_NAME, FakeSuite()),
             "locate_only": suite_factory("locate_only", LocateOnlySuite()),
+            "broken": suite_factory("broken", FailingSuite()),
             "down": unopenable_factory(ConnectionRefusedError("neo4j is not running")),
         },
         default=SUITE_NAME,

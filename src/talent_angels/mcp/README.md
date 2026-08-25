@@ -48,21 +48,17 @@ Use the absolute path to the console script in this repo's virtualenv.
   "mcpServers": {
     "ta-taxonomy": {
       "command": "/absolute/path/to/TA-agents/.venv/bin/ta-mcp",
-      "args": [],
-      "env": {
-        "NEO4J_URI": "bolt://localhost:7687",
-        "NEO4J_USER": "neo4j",
-        "NEO4J_PASSWORD": "<your local password>"
-      }
+      "args": []
     }
   }
 }
 ```
 
-Put that in `.mcp.json` at the repo root to share it with the project, or in
-`~/.claude.json` under the project entry to keep it to yourself. Drop the
-`env` block if the repo-root `.env` already carries those values — the server
-loads it, exactly as the CLI does.
+Keep credentials in the gitignored repo-root `.env` or the calling process
+environment; the server loads them exactly as the CLI does. `.mcp.json` is
+gitignored too, so it is safe for a per-user local command configuration, but
+do not put passwords in it. To share a setup, share this password-free example
+and let each developer configure their own credentials.
 
 Equivalent one-liner:
 

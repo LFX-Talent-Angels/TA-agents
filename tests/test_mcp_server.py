@@ -56,6 +56,11 @@ async def _drive() -> dict[str, Any]:
             await call("neighbors", "get_neighbors", {"node_id": DEV.id})
             await call("neighbors_missing", "get_neighbors", {"node_id": "fake:occupation:nope"})
             await call("paths", "enumerate_paths", {"from_id": DEV.id, "to_id": PYTHON.id})
+            await call(
+                "invalid_depth",
+                "enumerate_paths",
+                {"from_id": DEV.id, "to_id": PYTHON.id, "max_depth": 0},
+            )
             await call("unknown_suite", "search_nodes", {"text": "x", "suite": "onet"})
             await call("suite_down", "search_nodes", {"text": "x", "suite": "down"})
             await call(
@@ -164,6 +169,7 @@ def test_scored_paths_pass_the_suite_refusal_through(served: dict[str, Any]) -> 
         ("unknown_suite", "unknown_suite:onet"),
         ("suite_down", "suite_unavailable:ConnectionRefusedError"),
         ("no_pathfind", "capability_unavailable:enumerate_paths:locate_only"),
+        ("invalid_depth", "invalid_max_depth"),
     ],
 )
 def test_every_failure_is_a_machine_readable_warning(

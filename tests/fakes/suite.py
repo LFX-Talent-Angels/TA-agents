@@ -84,6 +84,10 @@ class FakeSuite:
         max_depth: int = 4,
         max_paths: int = 20,
     ) -> FakeToolResult:
+        if max_depth < 1:
+            return FakeToolResult(warnings=["invalid_max_depth"])
+        if max_paths < 1:
+            return FakeToolResult(warnings=["invalid_max_paths"])
         if {from_id, to_id} != {DEV.id, PYTHON.id}:
             return FakeToolResult(warnings=["endpoint_not_found"])
         return FakeToolResult(

@@ -284,20 +284,18 @@ route within the cap — a real answer, not a failure), `invalid_max_depth`, or
         max_depth: Annotated[
             int,
             Field(
-                ge=1,
                 description=(
                     "Maximum hops per route. ESCO allows up to 6; a larger value comes "
-                    "back as `invalid_max_depth`."
+                    "back as `invalid_max_depth`; values below 1 do too."
                 ),
             ),
         ] = 4,
         max_paths: Annotated[
             int,
             Field(
-                ge=1,
                 description=(
                     "Maximum routes returned. ESCO allows up to 100; a larger value comes "
-                    "back as `invalid_max_paths`."
+                    "back as `invalid_max_paths`; values below 1 do too."
                 ),
             ),
         ] = 20,

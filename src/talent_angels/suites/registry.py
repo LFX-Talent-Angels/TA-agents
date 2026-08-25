@@ -69,6 +69,45 @@ def _open_default_esco() -> Iterator[SuiteRuntime]:
         yield runtime
 
 
+@contextmanager
+def _open_default_onet() -> Iterator[SuiteRuntime]:
+    from talent_angels.suites.onet import open_onet_runtime
+
+    with open_onet_runtime() as runtime:
+        yield runtime
+
+
+@contextmanager
+def _open_default_bls() -> Iterator[SuiteRuntime]:
+    from talent_angels.suites.bls import open_bls_runtime
+
+    with open_bls_runtime() as runtime:
+        yield runtime
+
+
+@contextmanager
+def _open_default_sfia() -> Iterator[SuiteRuntime]:
+    from talent_angels.suites.sfia import open_sfia_runtime
+
+    with open_sfia_runtime() as runtime:
+        yield runtime
+
+
 def default_suite_registry() -> SuiteRegistry:
-    """Build the MVP registry; constructing it performs no database work."""
-    return SuiteRegistry({"esco": _open_default_esco}, default="esco")
+    """Build the registry; constructing it performs no database work.
+
+    Every factory imports its adapter lazily, so a suite that is absent from
+    the graph, or whose ta-taxonomies module is not installed, costs nothing
+    until something asks for it by name. ESCO stays the default because it is
+    the only suite that carries occupation-specific skills, which is where an
+    unqualified question should land.
+    """
+    return SuiteRegistry(
+        {
+            "esco": _open_default_esco,
+            "onet": _open_default_onet,
+            "bls": _open_default_bls,
+            "sfia": _open_default_sfia,
+        },
+        default="esco",
+    )

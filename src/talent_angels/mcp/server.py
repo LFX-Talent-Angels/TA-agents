@@ -62,9 +62,25 @@ SERVER_VERSION = "0.1.0"
 ToolContext = Context[SuiteSession, Any]
 
 SERVER_INSTRUCTIONS = """\
-Read-only access to the Talent Angels taxonomy graphs (ESCO today; O*NET,
-SFIA and BLS later) through the suite contract: search_nodes, get_neighbors,
-enumerate_paths, score_paths.
+Read-only access to the Talent Angels taxonomy graphs through the suite
+contract: search_nodes, get_neighbors, enumerate_paths, score_paths.
+
+Four suites are registered. Each answers a different question, and none of
+them answers another's. Pass `suite` to choose; it defaults to `esco`.
+
+  esco   which occupations and skills exist, and whether a skill is essential
+         or optional for an occupation. The only suite with occupation-specific
+         skills, which is why an unqualified question lands here.
+  onet   how much a generic skill matters for an occupation, surveyed, with
+         sample sizes and confidence bounds. Every occupation is rated on the
+         same small element set, so two distant occupations are comparable
+         here even when they share nothing in ESCO.
+  bls    employment, ten-year projections and wages, US only.
+  sfia   how senior an IT skill is, levels 1 to 7. Structure only: the level
+         names and descriptions are not redistributable.
+
+A suite that is not loaded in the graph you are pointed at answers with
+warnings rather than an error. Check rather than assume.
 
 Two rules govern everything these tools return.
 

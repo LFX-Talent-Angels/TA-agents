@@ -122,7 +122,8 @@ src/talent_angels/
 │   ├── locate/    connect/    pathfind/    evaluate/
 ├── contracts/     # AgentResult + typed refs (Pydantic v2)
 ├── runlog/        # structured per-turn record
-└── api/           # FastAPI edge (thin; no reasoning here)
+├── api/           # FastAPI edge (thin; no reasoning here)
+└── mcp/           # MCP stdio edge — the suite contract, for a foreign client
 tests/             # pytest; golden evals in tests/evals/
 ```
 

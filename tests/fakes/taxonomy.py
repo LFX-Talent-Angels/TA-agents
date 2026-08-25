@@ -35,5 +35,28 @@ class FakeToolResult:
     candidates: list[FakeCandidate] = field(default_factory=list)
     nodes: list[FakeNode] = field(default_factory=list)
     edges: list[FakeEdge] = field(default_factory=list)
+    paths: list[FakePath] = field(default_factory=list)
+    scored_paths: list[FakeScoredPath] = field(default_factory=list)
+    pruning: FakePruning | None = None
     evidence: list[str] = field(default_factory=list)
     warnings: list[str] = field(default_factory=list)
+
+
+@dataclass
+class FakePath:
+    node_ids: list[str]
+    edges: list[FakeEdge] = field(default_factory=list)
+
+
+@dataclass
+class FakePruning:
+    considered: int
+    returned: int
+    pruned: int
+
+
+@dataclass
+class FakeScoredPath:
+    path: FakePath
+    score: float
+    policy: object

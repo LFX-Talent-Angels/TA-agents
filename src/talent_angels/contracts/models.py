@@ -27,6 +27,7 @@ class NodeRef(BaseModel):
     kind: str  # Occupation | Skill | ISCOGroup | SkillGroup | ...
     pref_label: str
     alt_labels: list[str] = Field(default_factory=list)
+    description: str | None = None  # official suite text when the tool returned it
 
 
 class EdgeRef(BaseModel):

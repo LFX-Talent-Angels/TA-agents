@@ -8,14 +8,16 @@ from talent_angels.session.models import PendingChoice
 PICKER_LIMIT = 10
 
 
-def choices_from_result(result: AgentResult) -> list[PendingChoice]:
-    """Number 1..N in result.nodes order; cap at PICKER_LIMIT; never shuffle."""
+def choices_from_result(
+    result: AgentResult, *, limit: int = PICKER_LIMIT
+) -> list[PendingChoice]:
+    """Number 1..N in result.nodes order; cap at ``limit``; never shuffle."""
     groups = {
         edge.source_node_id: str(edge.properties.get("group_label") or "")
         for edge in result.edges
         if edge.type == "CLASSIFIED_UNDER"
     }
-    nodes = result.nodes[:PICKER_LIMIT]
+    nodes = result.nodes[:limit]
     return [
         PendingChoice(number=i, node=node, group_label=groups.get(node.id, ""))
         for i, node in enumerate(nodes, start=1)

@@ -68,9 +68,13 @@ def test_bound_followup_connects_without_search(monkeypatch, tmp_path) -> None:
     [
         ("essential skills", ("HAS_SKILL",), "essential"),
         ("what are the essential skills?", ("HAS_SKILL",), "essential"),
+        ("list only essential skills", ("HAS_SKILL",), "essential"),
+        ("list essential skills", ("HAS_SKILL",), "essential"),
+        ("show me only essential skills", ("HAS_SKILL",), "essential"),
         ("list the skills", ("HAS_SKILL",), None),
         ("optional skills", ("HAS_SKILL",), "optional"),
         ("what do I actually need?", ("HAS_SKILL",), "essential"),
+        ("what skills do I actually need?", ("HAS_SKILL",), "essential"),
         ("neighbors", (), None),
         ("neighbors of that", (), None),
         ("how to become one", ("HAS_SKILL",), "essential"),

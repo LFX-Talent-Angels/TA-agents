@@ -4,7 +4,7 @@ from talent_angels.contracts import AgentResult, EdgeRef, NodeRef
 from talent_angels.session.budget import model_view
 from talent_angels.session.commands import UnknownCommand, parse_command
 from talent_angels.session.copy import ADVICE_REFUSE, GREETING, WELCOME
-from talent_angels.session.followup import parse_skill_mention, skill_from_connect
+from talent_angels.session.followup import is_expand_list, parse_skill_mention, skill_from_connect
 from talent_angels.session.models import LastBinding, TranscriptLine
 from talent_angels.session.picker import bind_pick, choices_from_result, render_picker
 from talent_angels.session.router import route_line
@@ -91,7 +91,23 @@ def test_router_classifies_non_map_lines() -> None:
     assert route_line("the first one").kind == "pick" and route_line("the first one").pick == 1
     assert route_line("developer").kind == "map"
     assert route_line("what are the essential skills?").kind == "map"
+    assert route_line("list all jobs").kind == "catalogue"
+    assert route_line("list all occupations").kind == "catalogue"
+    assert route_line("show all occupations").kind == "catalogue"
     assert route_line("/help").kind == "command"
+
+
+def test_expand_list_does_not_steal_catalogue_asks() -> None:
+    assert is_expand_list("list them all")
+    assert is_expand_list("yes list them all")
+    assert is_expand_list("list all skills")
+    assert is_expand_list("show me the rest")
+    assert not is_expand_list("list all jobs")
+    assert not is_expand_list("list all occupations")
+    assert not is_expand_list("show all occupations")
+    assert not is_expand_list("list all the jobs")
+    assert is_expand_list("show full list")
+    assert is_expand_list("can you list all matches for developer?")
 
 
 def test_welcome_is_not_a_taxonomy_mascot() -> None:

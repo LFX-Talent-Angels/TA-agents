@@ -18,6 +18,7 @@ from talent_angels.session.catalog import FreeModel
 from talent_angels.session.commands import UnknownCommand, parse_command
 from talent_angels.session.copy import (
     ADVICE_REFUSE,
+    CATALOGUE_REFUSE,
     COMMANDS_BLOCK,
     GREETING,
     HELP_INTRO,
@@ -28,6 +29,7 @@ from talent_angels.session.copy import (
 )
 from talent_angels.session.followup import (
     can_expand_connect,
+    can_expand_locate,
     is_bare_yes,
     is_expand_list,
     parse_skill_mention,
@@ -133,6 +135,18 @@ def handle_line(
             user_text=text,
             fallback=ADVICE_REFUSE,
             hint="Refuse personal advice. Offer to locate a title or list skills of a bound job.",
+        )
+        return _finish(state, text, said)
+    if routed.kind == "catalogue":
+        said = phrase_chat(
+            llm_client,
+            user_text=text,
+            fallback=CATALOGUE_REFUSE,
+            hint=(
+                "User asked to list every job or occupation. Refuse a full dump. "
+                "Offer to pin one title. Do not invent a catalogue."
+                + _bound_title_hint(state)
+            ),
         )
         return _finish(state, text, said)
     if routed.kind == "pick":
@@ -420,15 +434,9 @@ def _from_outcome(
         )
         text = render_picker(question, pending, omitted=omitted, intro=intro)
     elif is_unimplemented_pathfind(result):
-        text = phrase_chat(
-            llm_client,
-            user_text=question,
-            fallback=outcome.answer,
-            hint=(
-                "Pathfind is not built. Refuse a route. "
-                "Do not invent a curriculum or dump neighbors."
-            ),
-        )
+        # Do not let the phrasing model invent a gap, curriculum, or skills.
+        # The graph did not walk; the typed warning is the answer.
+        text = outcome.answer
     elif "not_found" in result.warnings:
         text = phrase_chat(
             llm_client,
@@ -472,9 +480,19 @@ def _from_outcome(
 
 
 def _handle_expand(state: SessionState, text: str, *, runner: TurnRunner) -> ChatReply:
-    """Replay the last Connect payload as a full list. Do not search the line."""
+    """Replay the last Connect list, or widen the last occupation picker."""
     _record(state, "user", text)
     result = state.last_result
+    if can_expand_locate(result):
+        assert result is not None
+        pending = choices_from_result(result, limit=len(result.nodes))
+        omitted = max(0, len(result.nodes) - len(pending))
+        state.pending = pending
+        query = _last_map_query(state) or text
+        message = render_picker(query, pending, omitted=omitted)
+        _record(state, "assistant", message)
+        source = result.suite.upper() if result.suite else None
+        return _reply(state, message, source_note=source)
     if not can_expand_connect(result) and state.binding is not None:
         outcome = runner(
             "list the skills",
@@ -511,7 +529,7 @@ def _handle_map(
     if bound is not None and followup_connect_request(text, bound) is not None:
         outcome = runner(text, bound_node=bound, force_capability=CAPABILITY_CONNECT)
     else:
-        outcome = runner(text)
+        outcome = runner(text, bound_node=bound)
     reply = _from_outcome(state, outcome, question=text, llm_client=llm_client)
     _record(state, "assistant", reply.text)
     return reply

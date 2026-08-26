@@ -105,6 +105,17 @@ def test_phrase_map_keeps_allowed_bold_title() -> None:
     assert "the person is" not in text.lower()
 
 
+def test_locate_card_includes_official_description() -> None:
+    node = _occ()
+    node = node.model_copy(
+        update={"description": "Designs and implements software applications and systems."}
+    )
+    result = AgentResult(capability="locate", suite="esco", nodes=[node], confidence=0.95)
+    card = locate_card(result)
+    assert "software developer" in card
+    assert "Designs and implements software" in card
+
+
 def test_connect_card_counts_omitted_skills() -> None:
     skills = [
         NodeRef(

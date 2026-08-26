@@ -439,6 +439,38 @@ def test_pathfind_uses_unavailable_copy_without_neighbors() -> None:
     assert "computer programming" not in reply.text
 
 
+def test_pathfind_refuse_ignores_phrasing_model() -> None:
+    from talent_angels.assistant.answer import PATHFIND_UNAVAILABLE
+    from talent_angels.llm.protocol import LLMResult, LLMUsage
+    from talent_angels.session.kernel import handle_line
+
+    class Inventing:
+        provider = "litellm"
+
+        def complete(self, messages: object, **_kwargs: object) -> LLMResult:
+            return LLMResult(
+                text=(
+                    "Skill gaps typically involve machine learning, Python, and R. "
+                    "That's a great direction!"
+                ),
+                provider=self.provider,
+                model="test",
+                usage=LLMUsage(),
+            )
+
+    suite = RecordingFakeSuite(unique_nodes=[_occ(1, "data analyst")])
+    reply = handle_line(
+        new_session(),
+        "skill path from data analyst to data scientist",
+        runner=_runner_for(suite),
+        llm_client=Inventing(),
+    )
+    assert reply.text == PATHFIND_UNAVAILABLE
+    assert "Python" not in reply.text
+    assert "machine learning" not in reply.text
+    assert suite.neighbor_ids == []
+
+
 def test_unique_locate_appends_next_step_when_bound() -> None:
     from talent_angels.session.kernel import handle_line
 
@@ -650,6 +682,40 @@ def test_how_to_become_one_uses_bound_occupation_without_new_search() -> None:
     assert state.binding.node.pref_label == "accountant"
     assert "accountant" in reply.text.lower() or "computer programming" in reply.text.lower()
     assert reply.source_note == "TEST"
+
+
+def test_show_full_list_widens_occupation_picker() -> None:
+    from talent_angels.session.kernel import handle_line
+
+    nodes = [_occ(i, f"developer {i}") for i in range(1, 13)]
+    suite = RecordingFakeSuite(ambiguous_nodes=nodes)
+    state = new_session()
+    runner = _runner_for(suite)
+    listed = handle_line(state, "developer", runner=runner)
+    assert listed.pending_count == 10
+    assert "Showing 10 of 12" in listed.text
+    widened = handle_line(state, "show full list", runner=_boom)
+    assert "developer 12" in widened.text
+    assert widened.pending_count == 12
+    assert "skill list stored" not in widened.text.casefold()
+    picked = handle_line(state, "12", runner=_boom)
+    assert picked.bound_label == "developer 12"
+
+
+def test_list_all_jobs_refuses_instead_of_dumping_skills() -> None:
+    from talent_angels.session.kernel import handle_line
+
+    suite = RecordingFakeSuite(unique_nodes=[_occ(1, "software developer")])
+    state = new_session()
+    runner = _runner_for(suite)
+    handle_line(state, "software developer", runner=runner)
+    handle_line(state, "essential skills", runner=runner)
+    searches_before = list(suite.searches)
+    reply = handle_line(state, "list all jobs", runner=_boom)
+    assert suite.searches == searches_before
+    lowered = reply.text.casefold()
+    assert "skill 1" not in lowered
+    assert "name a job" in lowered or "every occupation" in lowered
 
 
 def test_expand_and_skill_n_work_while_occupation_pending_remains() -> None:

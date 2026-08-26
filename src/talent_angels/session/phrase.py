@@ -19,7 +19,8 @@ Keep replies to 2–4 short sentences unless listing facts you were given."""
 
 _MAP_SYSTEM = """You are LFX Talent Angels. Phrase the FACT CARD for a terminal user.
 Rules:
-- Cite only titles and skills written in the card. Do not invent any.
+- Cite only titles, skills, and description written in the card. Do not invent any.
+- If the user asks who/what this occupation is, answer from the description on the card.
 - These are map titles, not a guess about a person. Never say "the person is".
 - Do not brand yourself as a single taxonomy. You may mention the suite once.
 - Never write the product name. The interface renders it; a model that types
@@ -101,12 +102,15 @@ def locate_card(result: AgentResult) -> str:
         return f"warnings: {', '.join(result.warnings) or 'not_found'}"
     top = result.nodes[0]
     conf = f"{result.confidence:.0%}" if result.confidence is not None else "unknown"
-    return (
-        f"unique occupation title: {top.pref_label}\n"
-        f"kind: {top.kind}\n"
-        f"confidence: {conf}\n"
-        "next: user may ask for essential or optional skills"
-    )
+    lines = [
+        f"unique occupation title: {top.pref_label}",
+        f"kind: {top.kind}",
+        f"confidence: {conf}",
+    ]
+    if top.description:
+        lines.append(f"description: {top.description}")
+    lines.append("next: user may ask for essential or optional skills")
+    return "\n".join(lines)
 
 
 def connect_card(result: AgentResult, *, shown: int = 5) -> str:
@@ -118,9 +122,15 @@ def connect_card(result: AgentResult, *, shown: int = 5) -> str:
     lines = [
         f"occupation: {center.pref_label}",
         f"connections: {len(result.edges)}",
-        "shown skills: " + "; ".join(skills) if skills else "shown skills: none",
-        "tag each skill essential or optional when known",
     ]
+    if center.description:
+        lines.append(f"description: {center.description}")
+    lines.extend(
+        [
+            "shown skills: " + "; ".join(skills) if skills else "shown skills: none",
+            "tag each skill essential or optional when known",
+        ]
+    )
     if extra:
         lines.append(f"{extra} more skills live in query details, not in this reply")
     lines.append("this is the map, not a study plan")

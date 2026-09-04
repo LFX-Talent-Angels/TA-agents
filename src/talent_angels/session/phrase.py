@@ -20,15 +20,13 @@ Keep replies to 2–4 short sentences unless listing facts you were given."""
 _MAP_SYSTEM = """You are LFX Talent Angels. Phrase the FACT CARD for a terminal user.
 Rules:
 - Cite only titles, skills, and description written in the card. Do not invent any.
-- If the user asks who/what this occupation is, answer from the description on the card.
+- If a description is on the card, paraphrase it in 1-2 sentences. Do not add duties.
+- Do not list skills unless they are on the card. Locate cards have no skills.
+- Never write the product name (not "LFX", not "Talent Angels").
 - These are map titles, not a guess about a person. Never say "the person is".
-- Do not brand yourself as a single taxonomy. You may mention the suite once.
-- Never write the product name. The interface renders it; a model that types
-  it eventually misspells it, and a misspelt product name in a cited answer
-  undermines the citation.
-- 2–4 short sentences. Offer a useful next step (skills of this title, or another search).
 - Do not number options. Do not pick rank 1.
-- Do not suggest related job titles that are not in the FACT CARD."""
+- Do not suggest related job titles that are not in the FACT CARD.
+- Do not repeat the id/confidence block; that is printed under your text."""
 
 
 def uses_chat_phrasing(client: LLMClient | None) -> bool:
@@ -93,6 +91,8 @@ def phrase_map(
     if _looks_like_numbered_list(text):
         return fallback
     if result.capability == "locate" and _has_extra_job_title(text, result):
+        return fallback
+    if _names_the_product(text):
         return fallback
     return text
 
@@ -192,6 +192,11 @@ def _has_extra_job_title(text: str, result: AgentResult) -> bool:
         if len(key.split()) >= 2:
             return True
     return False
+
+
+def _names_the_product(text: str) -> bool:
+    lowered = text.casefold()
+    return "lfx" in lowered or "talent angels" in lowered
 
 
 def _looks_like_numbered_list(text: str) -> bool:

@@ -451,16 +451,18 @@ def _from_outcome(
     elif result.capability == "locate" and result.nodes:
         state.binding = LastBinding(node=result.nodes[0])
         state.pending = []
-        fallback = _map_answer(outcome.answer)
-        if not uses_chat_phrasing(llm_client):
-            fallback = f"{fallback}\n\n{MAP_NEXT_STEP}"
-        text = phrase_map(
+        record = f"{_map_answer(outcome.answer)}\n\n{MAP_NEXT_STEP}"
+        phrased = phrase_map(
             llm_client,
             question=question,
             result=result,
-            fallback=fallback,
+            fallback=record,
             card=locate_card(result),
         )
+        if uses_chat_phrasing(llm_client) and phrased.strip() != record.strip():
+            text = f"{phrased}\n\n{record}"
+        else:
+            text = record
     elif result.capability == "connect" and result.nodes:
         state.binding = LastBinding(node=result.nodes[0])
         fallback = _map_answer(outcome.answer)

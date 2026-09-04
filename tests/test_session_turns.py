@@ -482,6 +482,35 @@ def test_unique_locate_appends_next_step_when_bound() -> None:
     )
 
 
+def test_unique_locate_keeps_record_under_phrasing() -> None:
+    from talent_angels.llm.protocol import LLMResult, LLMUsage
+    from talent_angels.session.kernel import handle_line
+
+    class Voice:
+        provider = "litellm"
+
+        def complete(self, messages: object, **_kwargs: object) -> LLMResult:
+            return LLMResult(
+                text="Nurse responsible for general care implements nursing care.",
+                provider=self.provider,
+                model="test",
+                usage=LLMUsage(),
+            )
+
+    suite = RecordingFakeSuite(unique_nodes=[_occ(9, "nurse")])
+    reply = handle_line(
+        new_session(),
+        "nurse",
+        runner=_runner_for(suite),
+        llm_client=Voice(),
+    )
+    assert "implements nursing care" in reply.text
+    assert "confidence" in reply.text.casefold()
+    assert "You can ask for essential skills, optional skills, or pick another number." in (
+        reply.text
+    )
+
+
 def test_connect_truncation_points_at_query_details() -> None:
     from talent_angels.session.kernel import handle_line
 

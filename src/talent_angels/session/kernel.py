@@ -144,8 +144,7 @@ def handle_line(
             fallback=CATALOGUE_REFUSE,
             hint=(
                 "User asked to list every job or occupation. Refuse a full dump. "
-                "Offer to pin one title. Do not invent a catalogue."
-                + _bound_title_hint(state)
+                "Offer to pin one title. Do not invent a catalogue." + _bound_title_hint(state)
             ),
         )
         return _finish(state, text, said)

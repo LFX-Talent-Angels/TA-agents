@@ -1,6 +1,6 @@
 {
   "suite": "esco",
-  "note": "Expected values captured from a live run against the ESCO fixture (TA-taxonomies fixture.json) — see NOTES.md. Re-capture if the fixture changes.",
+  "note": "Expected values captured from a live run against the ESCO fixture (TA-taxonomies fixture.json) — see NOTES.md. Re-capture if the fixture changes. expected_warnings are the required set; full-graph Locate may also emit truncated / match_count_capped (asserted as allowed extras in test_golden_locate).",
   "cases": [
     {
       "question": "software developer",

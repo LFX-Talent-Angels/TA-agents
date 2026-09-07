@@ -15,15 +15,18 @@ from talent_angels.assistant.intent import (
 )
 from talent_angels.assistant.state import AssistantState
 from talent_angels.assistant.turn import TurnOutcome, run_turn
+from talent_angels.memory import MemoryClient, get_memory_client
 
 __all__ = [
     "CAPABILITY_CONNECT",
     "CAPABILITY_LOCATE",
     "CAPABILITY_PATHFIND",
     "AssistantState",
+    "MemoryClient",
     "ResultCache",
     "TurnOutcome",
     "build_graph",
     "classify_capability",
+    "get_memory_client",
     "run_turn",
 ]

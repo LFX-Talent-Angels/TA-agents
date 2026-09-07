@@ -12,6 +12,8 @@ class QueryRequest(BaseModel):
     question: str
     suite: str = "esco"
     kind: str | None = None
+    # Omit to opt out of memory entirely: no retrieval, nothing stored.
+    user_id: str | None = None
 
 
 class UsageInfo(BaseModel):

@@ -46,7 +46,12 @@ def _dispatch_locate(state: AssistantState, *, suite: SearchableSuite) -> Assist
 
 
 def _answer(state: AssistantState, *, llm_client: LLMClient, answer_mode: str) -> AssistantState:
-    answer, llm_usage = build_answer(state["result"], llm_client=llm_client, mode=answer_mode)
+    answer, llm_usage = build_answer(
+        state["result"],
+        llm_client=llm_client,
+        mode=answer_mode,
+        user_memories=state.get("user_memories") or [],
+    )
     return {"answer": answer, "llm_usage": llm_usage}
 
 

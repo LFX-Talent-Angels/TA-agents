@@ -13,6 +13,7 @@ def test_runtime_packages_import() -> None:
     # These have no dependency on the (unpublished) TA-taxonomies suite
     # library and must always import cleanly.
     import talent_angels.contracts  # noqa: F401
+    import talent_angels.memory  # noqa: F401
     import talent_angels.runlog  # noqa: F401
     import talent_angels.skills.connect  # noqa: F401
     import talent_angels.skills.evaluate  # noqa: F401

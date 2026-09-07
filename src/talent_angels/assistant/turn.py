@@ -17,6 +17,7 @@ from talent_angels.assistant.graph import SearchableSuite, build_graph
 from talent_angels.assistant.intent import CAPABILITY_LOCATE
 from talent_angels.contracts import AgentResult
 from talent_angels.llm import LLMClient, LLMUsage
+from talent_angels.memory import MemoryClient, UserMemory
 from talent_angels.runlog import (
     EfficiencyInfo,
     GenAIUsage,
@@ -47,6 +48,8 @@ def run_turn(
     answer_mode: str = "structured",
     force_locate: bool = False,
     cache: ResultCache | None = None,
+    user_id: str | None = None,
+    memory_client: MemoryClient | None = None,
 ) -> TurnOutcome:
     """Run one turn and append its run-log record.
 
@@ -55,9 +58,18 @@ def run_turn(
     capability cost measurement (MVP plan Sec 2.3). `cache`, when given, is
     only consulted on the `force_locate` path — the efficiency A/B experiment
     (MVP plan Sec 2.7) targets Locate specifically.
+
+    User memory is opt-in: it engages only when *both* `user_id` and
+    `memory_client` are supplied, so existing callers keep their exact
+    behaviour. Memories inform how the answer is phrased; they never become
+    taxonomy evidence (ARCHITECTURE.md rule #2).
     """
     start = time.perf_counter()
     cache_hit = False
+    remember = user_id is not None and memory_client is not None
+    user_memories: list[UserMemory] = (
+        memory_client.search(question, user_id=user_id) if remember else []
+    )
     if force_locate:
         capability = CAPABILITY_LOCATE
         cached = cache.get(ESCO_SUITE_NAME, capability, question) if cache else None
@@ -68,15 +80,35 @@ def run_turn(
             result = locate(suite, ESCO_SUITE_NAME, question, kind=kind)
             if cache is not None:
                 cache.set(ESCO_SUITE_NAME, capability, question, result)
-        answer, llm_usage = build_answer(result, llm_client=llm_client, mode=answer_mode)
+        answer, llm_usage = build_answer(
+            result, llm_client=llm_client, mode=answer_mode, user_memories=user_memories
+        )
     else:
         graph = build_graph(suite=suite, llm_client=llm_client, answer_mode=answer_mode)
-        final_state = graph.invoke({"question": question, "kind": kind})
+        final_state = graph.invoke(
+            {
+                "question": question,
+                "kind": kind,
+                "user_id": user_id,
+                "user_memories": user_memories,
+            }
+        )
         capability = final_state["capability"]
         result = final_state["result"]
         answer = final_state["answer"]
         llm_usage = final_state.get("llm_usage")
     elapsed_ms = (time.perf_counter() - start) * 1000
+
+    # Persist after answering so a memory-store failure cannot corrupt the
+    # reply; the turn is already complete and logged below regardless.
+    if remember:
+        memory_client.add(
+            [
+                {"role": "user", "content": question},
+                {"role": "assistant", "content": answer},
+            ],
+            user_id=user_id,
+        )
 
     usage = llm_usage or LLMUsage()
     model = os.environ.get("LLM_MODEL", "").strip() or "stub"

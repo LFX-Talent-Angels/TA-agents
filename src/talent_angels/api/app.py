@@ -14,7 +14,7 @@ from ta_taxonomies.suites.esco.db import neo4j_driver
 from ta_taxonomies.suites.esco.tools import EscoSuite
 
 from talent_angels.api.schemas import HealthResponse, QueryRequest, QueryResponse, UsageInfo
-from talent_angels.assistant import run_turn
+from talent_angels.assistant import get_memory_client, run_turn
 from talent_angels.llm import get_llm_client
 
 
@@ -25,6 +25,7 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     app.state.driver = driver
     app.state.suite = EscoSuite(driver, database=database)
     app.state.llm_client = get_llm_client()
+    app.state.memory_client = get_memory_client()
     app.state.answer_mode = os.environ.get("ANSWER_MODE", "structured").strip() or "structured"
     try:
         yield
@@ -63,6 +64,8 @@ def _handle(app: FastAPI, payload: QueryRequest, *, force_locate: bool) -> Query
         kind=payload.kind,
         answer_mode=app.state.answer_mode,
         force_locate=force_locate,
+        user_id=payload.user_id,
+        memory_client=app.state.memory_client,
     )
     record = outcome.record
     return QueryResponse(

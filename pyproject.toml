@@ -25,6 +25,11 @@ dev = [
   "ruff>=0.6",
   "mypy>=1.10",
 ]
+# Optional: real user memory. MEMORY_PROVIDER=none needs nothing extra, so CI
+# and offline demos never install this.
+mem0 = [
+  "mem0ai>=0.1",
+]
 
 [project.urls]
 Homepage = "https://github.com/LFX-Talent-Angels"

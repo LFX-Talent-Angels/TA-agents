@@ -17,7 +17,7 @@ from typing import Any
 from ta_taxonomies.suites.esco.db import neo4j_driver
 from ta_taxonomies.suites.esco.tools import EscoSuite
 
-from talent_angels.assistant import ResultCache, run_turn
+from talent_angels.assistant import ResultCache, get_memory_client, run_turn
 from talent_angels.llm import get_llm_client
 
 GOLDEN_LOCATE_PATH = Path(__file__).resolve().parents[2] / "tests" / "evals" / "golden_locate.json"
@@ -27,13 +27,17 @@ def _build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(prog="talent-angels")
     sub = parser.add_subparsers(dest="command", required=True)
 
+    memory_help = "Recall/store user memory under this id (omit to disable memory)."
+
     query_parser = sub.add_parser("query", help="Ask the assistant (heuristic intent routing).")
     query_parser.add_argument("question")
     query_parser.add_argument("--kind", default=None)
+    query_parser.add_argument("--user-id", dest="user_id", default=None, help=memory_help)
 
     locate_parser = sub.add_parser("locate", help="Run Locate directly (bypasses intent routing).")
     locate_parser.add_argument("question")
     locate_parser.add_argument("--kind", default=None)
+    locate_parser.add_argument("--user-id", dest="user_id", default=None, help=memory_help)
 
     sub.add_parser(
         "bench",
@@ -58,6 +62,8 @@ def main(argv: Sequence[str] | None = None) -> int:
             question=args.question,
             kind=args.kind,
             force_locate=(args.command == "locate"),
+            user_id=args.user_id,
+            memory_client=get_memory_client() if args.user_id else None,
         )
 
     print(

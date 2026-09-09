@@ -43,8 +43,9 @@ TA-workspace/
 ```
 
 Install the sibling [`TA-taxonomies`](https://github.com/LFX-Talent-Angels/TA-taxonomies)
-package from official `main` (suite contract, ESCO loader, and `EscoSuite`
-query tools).
+package from official **`dev`** for day-to-day integration (suite contract,
+ESCO loader, indexed Locate tools). Use `main` only when you intentionally
+want the last promoted publish cut.
 
 ---
 
@@ -74,7 +75,7 @@ whatever is in this Neo4j. Do not run it against the demo database.
 ```bash
 cd ../TA-taxonomies
 git fetch origin
-git switch main
+git switch dev
 
 python3 -m venv .venv
 source .venv/bin/activate              # Windows: .venv\Scripts\activate
@@ -87,6 +88,18 @@ ls "$ESCO_DATA_DIR/occupations_en.xlsx"
 
 # This replaces the graph (loader default is wipe). Run it ONCE.
 python -m ta_taxonomies.suites.esco.load --mode full
+```
+
+Already have a full graph from an older taxonomies tip? Do **not** reload
+fixture. Apply schema only so the Locate full-text index exists:
+
+```bash
+python - <<'PY'
+from ta_taxonomies.suites.esco.db import neo4j_driver
+from ta_taxonomies.suites.esco.schema import apply_schema
+with neo4j_driver() as (driver, database):
+    apply_schema(driver, database)
+PY
 ```
 
 Download the English DATABASE package from
@@ -216,8 +229,9 @@ pytest -q tests/integration -rs
 | Full graph disappeared after tests | Taxonomies `pytest tests/suites/esco` wiped it. Reload full; do not run those tests here. |
 | `LLM_PROVIDER=none` / `tokens.calls: 0` | `.env` still has stub mode, or a shell export overrides the file. |
 | `Provider List:` banner | LiteLLM ad, not a crash. |
-| `ModuleNotFoundError: ta_taxonomies` | `pip install -e ../TA-taxonomies` from official `main`. |
-| `cannot import EscoSuite` | Taxonomies checkout is not official `main`. Fast-forward `main`. |
+| `ModuleNotFoundError: ta_taxonomies` | `pip install -e ../TA-taxonomies` from official `dev`. |
+| `cannot import EscoSuite` | Taxonomies checkout is behind org `dev`. `git fetch origin && git switch dev && git pull`. |
+| `fulltext_index_missing` / slow alias search | Graph predates indexed Locate. Run `apply_schema()` (no wipe) — see §2. |
 
 ---
 

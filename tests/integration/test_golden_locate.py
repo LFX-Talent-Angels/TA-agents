@@ -39,7 +39,15 @@ def test_golden_locate_case(case: dict) -> None:
     with default_suite_registry().open() as runtime:
         outcome = locate(runtime.suite, runtime.name, case["question"], kind=case["kind"])
 
-    assert outcome.warnings == case["expected_warnings"]
+    # Required warnings must be present. Newer TA-taxonomies may also emit
+    # additive machine warnings such as ``truncated`` when SEARCH_LIMIT cuts
+    # a large match set (full ESCO); fixture runs often will not.
+    actual_warnings = set(outcome.warnings)
+    assert set(case["expected_warnings"]).issubset(actual_warnings)
+    assert actual_warnings - set(case["expected_warnings"]) <= {
+        "truncated",
+        "match_count_capped",
+    }
     assert outcome.confidence == case["expected_confidence"]
     if case["expected_top_id"] is None:
         assert outcome.nodes == []

@@ -8,14 +8,14 @@ from __future__ import annotations
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
 
-from fastapi import FastAPI
+from fastapi import FastAPI, HTTPException
 
 from talent_angels.api.schemas import HealthResponse, QueryRequest, QueryResponse, UsageInfo
 from talent_angels.assistant import run_turn
 from talent_angels.assistant.intent import CAPABILITY_CONNECT, Capability
 from talent_angels.env import load_local_dotenv
 from talent_angels.llm.factory import get_answer_mode, get_llm_client
-from talent_angels.suites import SuiteRegistry, default_suite_registry
+from talent_angels.suites import SuiteRegistry, UnknownSuiteError, default_suite_registry
 
 
 @asynccontextmanager
@@ -59,16 +59,22 @@ def _handle(
     force_locate: bool = False,
     force_capability: Capability | None = None,
 ) -> QueryResponse:
-    outcome = run_turn(
-        suite=app.state.runtime.suite,
-        suite_name=app.state.runtime.name,
-        llm_client=app.state.llm_client,
-        question=payload.question,
-        kind=payload.kind,
-        answer_mode=app.state.answer_mode,
-        force_locate=force_locate,
-        force_capability=force_capability,
-    )
+    try:
+        opened = app.state.registry.open(payload.suite)
+    except UnknownSuiteError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+
+    with opened as runtime:
+        outcome = run_turn(
+            suite=runtime.suite,
+            suite_name=runtime.name,
+            llm_client=app.state.llm_client,
+            question=payload.question,
+            kind=payload.kind,
+            answer_mode=app.state.answer_mode,
+            force_locate=force_locate,
+            force_capability=force_capability,
+        )
     record = outcome.record
     return QueryResponse(
         run_id=record.run_id,

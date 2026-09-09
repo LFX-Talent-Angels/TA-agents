@@ -10,7 +10,7 @@ from talent_angels.runlog import CostBreakdown, GenAIUsage, GraphStats, ToolCall
 
 class QueryRequest(BaseModel):
     question: str
-    suite: str = "esco"
+    suite: str | None = None
     kind: str | None = None
 
 

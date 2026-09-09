@@ -1,0 +1,46 @@
+{
+  "suite": "onet",
+  "note": "Expected values from O*NET 31.0 (full or ICT fixture that includes 15-1252.00). Additive truncated / match_count_capped warnings are allowed.",
+  "cases": [
+    {
+      "question": "Software Developers",
+      "kind": "occupation",
+      "expected_top_id": "onet:occupation:15-1252.00",
+      "expected_confidence": 0.95,
+      "expected_method": "exact_pref",
+      "expected_warnings": []
+    },
+    {
+      "question": "Software Engineer",
+      "kind": "occupation",
+      "expected_top_id": "onet:occupation:15-1252.00",
+      "expected_confidence": 0.9,
+      "expected_method": "exact_alt",
+      "expected_warnings": []
+    },
+    {
+      "question": "Computer Programmers",
+      "kind": "occupation",
+      "expected_top_id": "onet:occupation:15-1251.00",
+      "expected_confidence": 0.95,
+      "expected_method": "exact_pref",
+      "expected_warnings": []
+    },
+    {
+      "question": "Registered Nurses",
+      "kind": "occupation",
+      "expected_top_id": "onet:occupation:29-1141.00",
+      "expected_confidence": 0.95,
+      "expected_method": "exact_pref",
+      "expected_warnings": []
+    },
+    {
+      "question": "zzznofuchoccupation999",
+      "kind": "occupation",
+      "expected_top_id": null,
+      "expected_confidence": 0.0,
+      "expected_method": null,
+      "expected_warnings": ["not_found"]
+    }
+  ]
+}

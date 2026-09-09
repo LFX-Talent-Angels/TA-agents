@@ -45,16 +45,27 @@ def _build_parser() -> argparse.ArgumentParser:
     query_parser = sub.add_parser("query", help="Ask the assistant (heuristic intent routing).")
     query_parser.add_argument("question")
     query_parser.add_argument("--kind", default=None)
+    query_parser.add_argument(
+        "--suite",
+        default=None,
+        help="Taxonomy suite: esco (default) or onet. Not a merge.",
+    )
 
     locate_parser = sub.add_parser("locate", help="Run Locate directly (bypasses intent routing).")
     locate_parser.add_argument("question")
     locate_parser.add_argument("--kind", default=None)
+    locate_parser.add_argument(
+        "--suite", default=None, help="Taxonomy suite: esco (default) or onet."
+    )
 
     connect_parser = sub.add_parser(
         "connect", help="Run Locate → Connect directly (bypasses intent routing)."
     )
     connect_parser.add_argument("question")
     connect_parser.add_argument("--kind", default=None)
+    connect_parser.add_argument(
+        "--suite", default=None, help="Taxonomy suite: esco (default) or onet."
+    )
 
     sub.add_parser(
         "bench",
@@ -99,7 +110,8 @@ def main(argv: Sequence[str] | None = None, *, registry: SuiteRegistry | None = 
     if args.command == "quality":
         return _run_quality(args, selected_registry)
 
-    with selected_registry.open() as runtime:
+    suite_name = args.suite if args.command in {"query", "locate", "connect"} else None
+    with selected_registry.open(suite_name) as runtime:
         llm_client = get_llm_client()
         outcome = run_turn(
             suite=runtime.suite,

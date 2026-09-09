@@ -69,6 +69,22 @@ def _open_default_esco() -> Iterator[SuiteRuntime]:
         yield runtime
 
 
+@contextmanager
+def _open_default_onet() -> Iterator[SuiteRuntime]:
+    """Load the optional concrete adapter only when O*NET is opened."""
+    from talent_angels.suites.onet import open_onet_runtime
+
+    with open_onet_runtime() as runtime:
+        yield runtime
+
+
 def default_suite_registry() -> SuiteRegistry:
-    """Build the MVP registry; constructing it performs no database work."""
-    return SuiteRegistry({"esco": _open_default_esco}, default="esco")
+    """Build the registry; constructing it performs no database work.
+
+    Default remains ESCO. O*NET is selected with ``open("onet")`` (CLI/API
+    ``--suite onet`` / ``{"suite": "onet"}``). Suites stay separate graphs.
+    """
+    return SuiteRegistry(
+        {"esco": _open_default_esco, "onet": _open_default_onet},
+        default="esco",
+    )

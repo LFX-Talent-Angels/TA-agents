@@ -18,7 +18,7 @@ def test_suite_registry_imports_first_in_a_fresh_process() -> None:
             sys.executable,
             "-c",
             "from talent_angels.suites import default_suite_registry; "
-            "assert default_suite_registry().available == ('esco',)",
+            "assert default_suite_registry().available == ('esco', 'onet')",
         ],
         check=False,
         capture_output=True,

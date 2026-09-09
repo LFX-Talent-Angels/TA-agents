@@ -101,6 +101,38 @@ def test_cli_module_entrypoint_calls_main() -> None:
     assert "sys.exit(main())" in source
 
 
+def test_cli_opens_named_suite(capsys: pytest.CaptureFixture[str]) -> None:
+    events: list[str] = []
+
+    def factory(name: str):
+        @contextmanager
+        def open_runtime():
+            events.append(name)
+            yield SuiteRuntime(name=name, suite=FakeSuite(), health_check=lambda: True)
+
+        return open_runtime
+
+    registry = SuiteRegistry(
+        {"esco": factory("esco"), "onet": factory("onet")},
+        default="esco",
+    )
+    exit_code = main(["locate", "Software Engineer", "--suite", "onet"], registry=registry)
+
+    assert exit_code == 0
+    assert events == ["onet"]
+    output = json.loads(capsys.readouterr().out)
+    assert output["suite"] == "onet"
+
+
+def test_api_unknown_suite_is_404() -> None:
+    with TestClient(create_app(registry=_registry())) as client:
+        response = client.post(
+            "/v1/query",
+            json={"question": "developer", "suite": "sfia"},
+        )
+    assert response.status_code == 404
+
+
 def test_cli_uses_injected_registry(capsys: pytest.CaptureFixture[str]) -> None:
     exit_code = main(["locate", "accountant"], registry=_registry())
 

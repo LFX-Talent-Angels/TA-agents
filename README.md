@@ -184,6 +184,10 @@ python -m talent_angels.cli query "Where is nurse in ESCO?"
 python -m talent_angels.cli query "What essential skills does a software developer need?"
 python -m talent_angels.cli query "developer"
 python -m talent_angels.cli query "What is the skill path from data analyst to data scientist?"
+
+# O*NET is a second suite on the same Neo4j, not a merge. Default remains ESCO.
+python -m talent_angels.cli query --suite onet "Where is Software Engineer?"
+python -m talent_angels.cli connect --suite onet "What skills does a software developer need?"
 ```
 
 Expect JSON with `plan`, `answer`, `tools`, `tokens`, `cost_usd`.
@@ -202,7 +206,8 @@ uvicorn talent_angels.api.app:app --reload
 ```
 
 Open http://127.0.0.1:8000/docs and `POST /v1/query` with
-`{"question": "What essential skills does a software developer need?"}`.
+`{"question": "What essential skills does a software developer need?"}`
+or `{"question": "Software Engineer", "suite": "onet", "kind": "occupation"}`.
 
 ---
 

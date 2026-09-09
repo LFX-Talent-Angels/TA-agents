@@ -33,10 +33,19 @@ def is_bare_yes(text: str) -> bool:
     return bool(_BARE_YES.match(text.strip()))
 
 
+_CATALOGUE_OBJECT = re.compile(
+    r"\b(jobs?|occupations?|roles?|titles?|careers?)\b",
+    re.IGNORECASE,
+)
+
+
 def is_expand_list(text: str) -> bool:
     """True when the user wants the rest of the last Connect list."""
     stripped = text.strip()
     if is_bare_yes(stripped):
+        return False
+    # "list all jobs" is a catalogue ask, not "expand the last skill list".
+    if _CATALOGUE_OBJECT.search(stripped) and not re.search(r"\bskills?\b", stripped, re.I):
         return False
     return bool(_EXPAND.search(stripped))
 
@@ -80,6 +89,13 @@ def can_expand_connect(result: AgentResult | None) -> bool:
     if result is None or result.capability != "connect":
         return False
     return len(result.nodes) > 1
+
+
+def can_expand_locate(result: AgentResult | None) -> bool:
+    """True when the last turn was an ambiguous occupation picker we can widen."""
+    if result is None or result.capability != "locate":
+        return False
+    return "ambiguous" in result.warnings and bool(result.nodes)
 
 
 def render_connect_list(result: AgentResult, *, cap: int = CONNECT_LIST_CAP) -> str:

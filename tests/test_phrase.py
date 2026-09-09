@@ -105,6 +105,33 @@ def test_phrase_map_keeps_allowed_bold_title() -> None:
     assert "the person is" not in text.lower()
 
 
+def test_phrase_map_drops_product_name() -> None:
+    result = AgentResult(capability="locate", suite="esco", nodes=[_occ()], confidence=0.95)
+    client = _Scripted("High-confidence match in the LFX Talent Angels suite.")
+    text = phrase_map(
+        client,
+        question="software developer",
+        result=result,
+        fallback="software developer found on the ESCO graph. Ask for essential skills.",
+        card=locate_card(result),
+    )
+    assert "lfx" not in text.casefold()
+    assert "talent angels" not in text.casefold()
+    assert "essential skills" in text.casefold()
+
+
+def test_locate_card_includes_official_description() -> None:
+    node = _occ()
+    node = node.model_copy(
+        update={"description": "Designs and implements software applications and systems."}
+    )
+    result = AgentResult(capability="locate", suite="esco", nodes=[node], confidence=0.95)
+    card = locate_card(result)
+    assert "software developer" in card
+    assert "Designs and implements software" in card
+    assert "not listed yet" not in card
+
+
 def test_connect_card_counts_omitted_skills() -> None:
     skills = [
         NodeRef(

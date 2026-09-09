@@ -141,7 +141,28 @@ def followup_connect_request(question: str, bound: NodeRef) -> ConnectRequest | 
     try:
         request = extract_connect_request(question)
     except UnsupportedConnectQuery:
-        return None
+        return _bound_skills_followup(normalized, bound)
     if request.subject.casefold() != bound.pref_label.casefold():
         return None
     return request
+
+
+def _bound_skills_followup(normalized: str, bound: NodeRef) -> ConnectRequest | None:
+    """Map a skills question with no extracted subject onto the bound occupation."""
+    if re.search(r"\bessential\s+skills?\b", normalized) or (
+        re.search(r"\bskills?\b", normalized) and re.search(r"\bneed\b", normalized)
+    ):
+        return ConnectRequest(
+            subject=bound.pref_label,
+            rel_types=("HAS_SKILL",),
+            relation_kind="essential",
+        )
+    if re.search(r"\boptional\s+skills?\b", normalized):
+        return ConnectRequest(
+            subject=bound.pref_label,
+            rel_types=("HAS_SKILL",),
+            relation_kind="optional",
+        )
+    if re.search(r"\bskills\b", normalized):
+        return ConnectRequest(subject=bound.pref_label, rel_types=("HAS_SKILL",))
+    return None

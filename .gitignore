@@ -9,6 +9,8 @@ dist/
 .pytest_cache/
 .mypy_cache/
 .ruff_cache/
+# uv writes this when someone runs `uv run` / `uv lock`; this repo is not on uv.
+uv.lock
 
 # Secrets
 .env

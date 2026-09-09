@@ -6,7 +6,7 @@ import re
 from dataclasses import dataclass
 from typing import Literal
 
-LineKind = Literal["command", "greet", "help_plain", "advice", "pick", "map"]
+LineKind = Literal["command", "greet", "help_plain", "advice", "catalogue", "pick", "map"]
 
 _GREET_RE = re.compile(
     r"^\s*(hi|hello|hey|thanks|thank you|"
@@ -35,6 +35,13 @@ _ADVICE_PHRASES = (
     "should i",
     "is this a good career",
     "what should i do with my life",
+)
+
+_CATALOGUE_RE = re.compile(
+    r"^\s*(?:please\s+)?(?:list|show|give(?:\s+me)?|what\s+are)\s+"
+    r"(?:me\s+)?(?:all|every|the\s+full\s+list\s+of)\s+"
+    r"(?:the\s+)?(?:jobs?|occupations?|roles?|titles?|careers?)\b",
+    re.IGNORECASE,
 )
 
 
@@ -74,5 +81,8 @@ def route_line(text: str) -> RoutedLine:
     lowered = stripped.lower()
     if _is_advice(lowered):
         return RoutedLine(kind="advice", text=stripped)
+
+    if _CATALOGUE_RE.search(stripped):
+        return RoutedLine(kind="catalogue", text=stripped)
 
     return RoutedLine(kind="map", text=stripped)

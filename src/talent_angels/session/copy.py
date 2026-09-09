@@ -39,6 +39,11 @@ ADVICE_REFUSE = (
     "try naming a role, or ask what skills it needs."
 )
 
+CATALOGUE_REFUSE = (
+    "I don't list every occupation on the map. "
+    "Name a job title and I'll pin it, then we can see the skills tied to it."
+)
+
 UNKNOWN_COMMAND = "{token} isn't a command. /help lists the ones I know."
 
 LOCATE_MISS = "No node for that phrase with today's search. That's a miss, not a maybe."

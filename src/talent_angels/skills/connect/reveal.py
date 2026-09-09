@@ -65,6 +65,8 @@ class ConnectableSuite(Protocol):
 
 def _node_ref(node: TaxonomyNode, suite: str) -> NodeRef:
     alt_labels = cast(Sequence[str], node.properties.get("alt_labels") or ())
+    raw_description = node.properties.get("description")
+    description = raw_description.strip() if isinstance(raw_description, str) else None
     return NodeRef(
         id=node.id,
         suite=suite,
@@ -73,6 +75,7 @@ def _node_ref(node: TaxonomyNode, suite: str) -> NodeRef:
         kind=node.kind,
         pref_label=node.label,
         alt_labels=list(alt_labels),
+        description=description or None,
     )
 
 

@@ -81,8 +81,9 @@ def _open_default_onet() -> Iterator[SuiteRuntime]:
 def default_suite_registry() -> SuiteRegistry:
     """Build the registry; constructing it performs no database work.
 
-    Default remains ESCO. O*NET is selected with ``open("onet")`` (CLI/API
-    ``--suite onet`` / ``{"suite": "onet"}``). Suites stay separate graphs.
+    Every attached suite is available to the assistant. ``open(name)`` is the
+    debug override (CLI ``--suite`` / API ``suite``). Omit the override to
+    search all attached taxonomies. Suites stay separate graphs.
     """
     return SuiteRegistry(
         {"esco": _open_default_esco, "onet": _open_default_onet},

@@ -101,6 +101,32 @@ def test_cli_module_entrypoint_calls_main() -> None:
     assert "sys.exit(main())" in source
 
 
+def test_cli_query_searches_all_attached_suites(capsys: pytest.CaptureFixture[str]) -> None:
+    events: list[str] = []
+
+    def factory(name: str):
+        @contextmanager
+        def open_runtime():
+            events.append(name)
+            yield SuiteRuntime(name=name, suite=FakeSuite(), health_check=lambda: True)
+
+        return open_runtime
+
+    registry = SuiteRegistry(
+        {"esco": factory("esco"), "onet": factory("onet")},
+        default="esco",
+    )
+    exit_code = main(["locate", "accountant"], registry=registry)
+
+    assert exit_code == 0
+    assert set(events) == {"esco", "onet"}
+    output = json.loads(capsys.readouterr().out)
+    assert output["suites"] == ["esco", "onet"]
+    assert "ESCO · " in output["answer"]
+    assert "O*NET · " in output["answer"]
+    assert output["node_count"] == 2
+
+
 def test_cli_opens_named_suite(capsys: pytest.CaptureFixture[str]) -> None:
     events: list[str] = []
 
@@ -122,6 +148,33 @@ def test_cli_opens_named_suite(capsys: pytest.CaptureFixture[str]) -> None:
     assert events == ["onet"]
     output = json.loads(capsys.readouterr().out)
     assert output["suite"] == "onet"
+
+
+def test_api_query_searches_all_attached_suites() -> None:
+    events: list[str] = []
+
+    def factory(name: str):
+        @contextmanager
+        def open_runtime():
+            events.append(name)
+            yield SuiteRuntime(name=name, suite=FakeSuite(), health_check=lambda: True)
+
+        return open_runtime
+
+    registry = SuiteRegistry(
+        {"esco": factory("esco"), "onet": factory("onet")},
+        default="esco",
+    )
+    with TestClient(create_app(registry=registry)) as client:
+        response = client.post("/v1/query", json={"question": "accountant"})
+
+    assert response.status_code == 200
+    assert set(events) == {"esco", "onet"}
+    body = response.json()
+    assert body["suites"] == ["esco", "onet"]
+    assert [item["suite"] for item in body["results"]] == ["esco", "onet"]
+    assert "ESCO · " in body["answer"]
+    assert "O*NET · " in body["answer"]
 
 
 def test_api_unknown_suite_is_404() -> None:

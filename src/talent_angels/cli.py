@@ -33,7 +33,7 @@ from talent_angels.evals.quality import (
 from talent_angels.llm.factory import get_answer_mode, get_llm_client
 from talent_angels.query_details import write_query_details
 from talent_angels.runlog.report import render_recent_report
-from talent_angels.suites import SuiteRegistry, default_suite_registry
+from talent_angels.suites import SuiteRegistry, UnknownSuiteError, default_suite_registry
 
 GOLDEN_LOCATE_PATH = Path(__file__).resolve().parents[2] / "tests" / "evals" / "golden_locate.json"
 
@@ -45,27 +45,24 @@ def _build_parser() -> argparse.ArgumentParser:
     query_parser = sub.add_parser("query", help="Ask the assistant (heuristic intent routing).")
     query_parser.add_argument("question")
     query_parser.add_argument("--kind", default=None)
+    suite_help = "Force one attached taxonomy (debug). Omit to search all attached taxonomies."
     query_parser.add_argument(
         "--suite",
         default=None,
-        help="Taxonomy suite: esco (default) or onet. Not a merge.",
+        help=suite_help,
     )
 
     locate_parser = sub.add_parser("locate", help="Run Locate directly (bypasses intent routing).")
     locate_parser.add_argument("question")
     locate_parser.add_argument("--kind", default=None)
-    locate_parser.add_argument(
-        "--suite", default=None, help="Taxonomy suite: esco (default) or onet."
-    )
+    locate_parser.add_argument("--suite", default=None, help=suite_help)
 
     connect_parser = sub.add_parser(
         "connect", help="Run Locate → Connect directly (bypasses intent routing)."
     )
     connect_parser.add_argument("question")
     connect_parser.add_argument("--kind", default=None)
-    connect_parser.add_argument(
-        "--suite", default=None, help="Taxonomy suite: esco (default) or onet."
-    )
+    connect_parser.add_argument("--suite", default=None, help=suite_help)
 
     sub.add_parser(
         "bench",
@@ -110,12 +107,11 @@ def main(argv: Sequence[str] | None = None, *, registry: SuiteRegistry | None = 
     if args.command == "quality":
         return _run_quality(args, selected_registry)
 
-    suite_name = args.suite if args.command in {"query", "locate", "connect"} else None
-    with selected_registry.open(suite_name) as runtime:
-        llm_client = get_llm_client()
+    llm_client = get_llm_client()
+    try:
         outcome = run_turn(
-            suite=runtime.suite,
-            suite_name=runtime.name,
+            registry=selected_registry,
+            suite_override=args.suite,
             llm_client=llm_client,
             question=args.question,
             kind=args.kind,
@@ -123,9 +119,13 @@ def main(argv: Sequence[str] | None = None, *, registry: SuiteRegistry | None = 
             force_locate=(args.command == "locate"),
             force_capability=(CAPABILITY_CONNECT if args.command == "connect" else None),
         )
+    except UnknownSuiteError as exc:
+        print(str(exc), file=sys.stderr)
+        return 2
 
     record = outcome.record
     details_path = write_query_details(outcome, question=args.question)
+    suites = [item.suite for item in outcome.results]
     print(
         json.dumps(
             {
@@ -133,10 +133,11 @@ def main(argv: Sequence[str] | None = None, *, registry: SuiteRegistry | None = 
                 "run_id": record.run_id,
                 "capability": outcome.capability,
                 "suite": outcome.result.suite,
+                "suites": suites,
                 "plan": record.plan,
                 "confidence": outcome.result.confidence,
-                "warnings": outcome.result.warnings,
-                "node_count": len(outcome.result.nodes),
+                "warnings": list(record.result.warnings),
+                "node_count": sum(len(item.nodes) for item in outcome.results),
                 "details": str(details_path),
                 "tools": [tool.model_dump() for tool in record.tools],
                 "tokens": {

@@ -75,4 +75,4 @@ def test_golden_locate_onet_metrics() -> None:
     result = metrics.as_dict()
     assert result["hit_at_1_accuracy"] == 1.0
     # not_found cases are excluded from hit@1 (same as ESCO golden metrics).
-    assert result["hit_at_1_questions"] == 4
+    assert result["hit_at_1_questions"] == 10

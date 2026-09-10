@@ -25,7 +25,9 @@ class QueryResponse(BaseModel):
     run_id: str
     capability: str
     suite: str
+    suites: list[str] = []
     result: AgentResult
+    results: list[AgentResult] = []
     answer: str
     usage: UsageInfo
 

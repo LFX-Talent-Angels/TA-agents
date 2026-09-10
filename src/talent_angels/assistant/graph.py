@@ -41,7 +41,7 @@ def _interpret_intent(
 ) -> AssistantState:
     interpreted = interpret_question(
         state["question"],
-        suite_name=suite_name,
+        suites=(suite_name,),
         llm_client=llm_client,
         forced_capability=forced_capability,
     )
@@ -57,7 +57,8 @@ def _interpret_intent(
     }
 
 
-def _dispatch_plan(state: AssistantState, *, suite: SuiteTools, suite_name: str) -> AssistantState:
+def dispatch_plan(state: AssistantState, *, suite: SuiteTools, suite_name: str) -> AssistantState:
+    """Run the planned capability against one opened suite."""
     capability = state["plan"].intent.target
     measured = MeasuredSuite(suite)
     draft = state.get("plan_draft")
@@ -77,7 +78,7 @@ def _dispatch_plan(state: AssistantState, *, suite: SuiteTools, suite_name: str)
 
     if capability == CAPABILITY_CONNECT:
         bound = state.get("bound_node")
-        if isinstance(bound, NodeRef):
+        if isinstance(bound, NodeRef) and bound.suite == suite_name:
             followup = followup_connect_request(state["question"], bound)
             if followup is not None:
                 result = connect(
@@ -179,7 +180,7 @@ def build_graph(
     )
     graph.add_node(
         "dispatch_plan",
-        lambda s: _dispatch_plan(s, suite=suite, suite_name=suite_name),
+        lambda s: dispatch_plan(s, suite=suite, suite_name=suite_name),
     )
     graph.add_node("answer", lambda s: _answer(s, llm_client=llm_client, answer_mode=answer_mode))
     graph.set_entry_point("interpret_intent")

@@ -1,11 +1,12 @@
 # TA-agents
 
 Headless assistant runtime for **Talent Angels**. One main assistant
-interprets a natural-language question, calls deterministic ESCO graph tools
-(Locate / Connect), and returns a cited JSON answer with tokens and cost.
+interprets a natural-language question, searches **every attached taxonomy**
+(ESCO and O*NET today), and returns a cited JSON answer with tokens and cost.
 
-Pathfind (routes between two occupations) is not implemented yet: those
-questions are refused honestly. Evaluate and multi-taxonomy merge come later.
+`--suite` / API `suite` forces one taxonomy for debugging. Pathfind (routes
+between two occupations) is not implemented yet: those questions are refused
+honestly. Evaluate and cross-suite identity (crosswalks) come later.
 
 Sibling graph library: [`TA-taxonomies`](https://github.com/LFX-Talent-Angels/TA-taxonomies).
 Workspace policy: [`TA-workspace`](https://github.com/LFX-Talent-Angels/TA-workspace).

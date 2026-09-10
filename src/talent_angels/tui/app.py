@@ -129,120 +129,121 @@ def main(argv: Sequence[str] | None = None, *, registry: SuiteRegistry | None = 
     selected = registry or default_suite_registry()
     console = Console()
 
-    with selected.open() as runtime:
-        llm_client = _start_client(console)
-        state = new_session()
-        os.environ["RUNLOG_PATH"] = str(sessions_dir() / state.session_id / "runlog.jsonl")
+    llm_client = _start_client(console)
+    state = new_session()
+    os.environ["RUNLOG_PATH"] = str(sessions_dir() / state.session_id / "runlog.jsonl")
+    attached = " · ".join(
+        "O*NET" if name == "onet" else name.upper() for name in selected.available
+    )
 
-        def make_runner(outcomes: list[tuple[TurnOutcome, str]]):
-            def runner(question, *, bound_node=None, force_capability=None):
-                # Structured facts from the assistant; the TUI phrases them (see session.phrase).
-                outcome = run_turn(
-                    suite=runtime.suite,
-                    suite_name=runtime.name,
-                    llm_client=llm_client,
-                    question=question,
-                    answer_mode="structured",
-                    bound_node=bound_node,
-                    force_capability=force_capability,
-                    persist=False,
-                )
-                outcomes.append((outcome, question))
-                return outcome
+    def make_runner(outcomes: list[tuple[TurnOutcome, str]]):
+        def runner(question, *, bound_node=None, force_capability=None):
+            # Structured facts from the assistant; the TUI phrases them (see session.phrase).
+            outcome = run_turn(
+                registry=selected,
+                llm_client=llm_client,
+                question=question,
+                answer_mode="structured",
+                bound_node=bound_node,
+                force_capability=force_capability,
+                persist=False,
+            )
+            outcomes.append((outcome, question))
+            return outcome
 
-            return runner
+        return runner
 
-        render_welcome(console, WELCOME)
-        render_status(
-            console,
-            suite=runtime.name,
-            bound_label=None,
-            session_name=state.session_id,
-            model_label=current_choice().label(),
-        )
+    render_welcome(console, WELCOME)
+    render_status(
+        console,
+        suite=attached,
+        bound_label=None,
+        session_name=state.session_id,
+        model_label=current_choice().label(),
+    )
 
-        while True:
+    while True:
+        try:
+            line = _read_line(console)
+        except (EOFError, KeyboardInterrupt):
+            console.print()
+            return 0
+        if not line.strip():
+            continue
+        kind = route_line(line).kind
+        turn_outcomes: list[tuple[TurnOutcome, str]] = []
+        turn_state = state.model_copy(deep=True)
+        if kind == "command":
+            # Commands can change session state, the active client, or the
+            # process environment. Keep those effects on this thread so an
+            # Esc cancellation cannot leave the UI and active client apart.
+            reply = handle_line(
+                turn_state,
+                line,
+                runner=make_runner(turn_outcomes),
+                llm_client=llm_client,
+            )
+        else:
+            label = "Looking that up…" if kind == "map" else "Thinking…"
             try:
-                line = _read_line(console)
-            except (EOFError, KeyboardInterrupt):
-                console.print()
-                return 0
-            if not line.strip():
-                continue
-            kind = route_line(line).kind
-            turn_outcomes: list[tuple[TurnOutcome, str]] = []
-            turn_state = state.model_copy(deep=True)
-            if kind == "command":
-                # Commands can change session state, the active client, or the
-                # process environment. Keep those effects on this thread so an
-                # Esc cancellation cannot leave the UI and active client apart.
-                reply = handle_line(
-                    turn_state,
-                    line,
-                    runner=make_runner(turn_outcomes),
-                    llm_client=llm_client,
-                )
-            else:
-                label = "Looking that up…" if kind == "map" else "Thinking…"
-                try:
-                    reply = run_with_status(
-                        console,
-                        label,
-                        partial(
-                            handle_line,
-                            turn_state,
-                            line,
-                            runner=make_runner(turn_outcomes),
-                            llm_client=llm_client,
-                        ),
-                    )
-                except Cancelled:
-                    console.print(
-                        "[dim]Stopped waiting. The in-flight request may still finish and count "
-                        "toward usage.[/]"
-                    )
-                    continue
-            state = turn_state
-            for outcome, question in turn_outcomes:
-                append_record(outcome.record)
-                write_query_details(outcome, question=question)
-            if reply.new_llm_client is not None:
-                llm_client = reply.new_llm_client
-            if reply.request_model_pick:
-                console.print(_pick_model(console))
-                picked = getattr(_pick_model, "client", None)
-                if picked is not None:
-                    llm_client = picked
-                    del _pick_model.client  # type: ignore[attr-defined]
-                render_status(
+                reply = run_with_status(
                     console,
-                    suite=runtime.name,
-                    bound_label=state.binding.node.pref_label if state.binding else None,
-                    session_name=state.name or state.session_id,
-                    model_label=current_choice().label(),
+                    label,
+                    partial(
+                        handle_line,
+                        turn_state,
+                        line,
+                        runner=make_runner(turn_outcomes),
+                        llm_client=llm_client,
+                    ),
+                )
+            except Cancelled:
+                console.print(
+                    "[dim]Stopped waiting. The in-flight request may still finish and count "
+                    "toward usage.[/]"
                 )
                 continue
-            if reply.request_key:
-                console.print(_collect_key(console))
-                llm_client = get_llm_client()
-                render_status(
-                    console,
-                    suite=runtime.name,
-                    bound_label=state.binding.node.pref_label if state.binding else None,
-                    session_name=state.name or state.session_id,
-                    model_label=current_choice().label(),
-                )
-                continue
-            if reply.quit:
-                return 0
-            render_assistant(console, reply)
+        state = turn_state
+        for outcome, question in turn_outcomes:
+            append_record(outcome.record)
+            write_query_details(outcome, question=question)
+        if reply.new_llm_client is not None:
+            llm_client = reply.new_llm_client
+        if reply.request_model_pick:
+            console.print(_pick_model(console))
+            picked = getattr(_pick_model, "client", None)
+            if picked is not None:
+                llm_client = picked
+                del _pick_model.client  # type: ignore[attr-defined]
             render_status(
                 console,
-                suite=runtime.name,
-                bound_label=reply.bound_label,
+                suite=attached,
+                bound_label=state.binding.node.pref_label if state.binding else None,
                 session_name=state.name or state.session_id,
                 model_label=current_choice().label(),
             )
+            continue
+        if reply.request_key:
+            console.print(_collect_key(console))
+            llm_client = get_llm_client()
+            render_status(
+                console,
+                suite=attached,
+                bound_label=state.binding.node.pref_label if state.binding else None,
+                session_name=state.name or state.session_id,
+                model_label=current_choice().label(),
+            )
+            continue
+        if reply.quit:
+            return 0
+        render_assistant(console, reply)
+        render_status(
+            console,
+            suite=attached,
+            bound_label=reply.bound_label,
+            session_name=state.name or state.session_id,
+            model_label=current_choice().label(),
+        )
 
 
 if __name__ == "__main__":

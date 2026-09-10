@@ -35,6 +35,54 @@
       "expected_warnings": []
     },
     {
+      "question": "Software Quality Assurance Analysts and Testers",
+      "kind": "occupation",
+      "expected_top_id": "onet:occupation:15-1253.00",
+      "expected_confidence": 0.95,
+      "expected_method": "exact_pref",
+      "expected_warnings": []
+    },
+    {
+      "question": "Computer Programmer",
+      "kind": "occupation",
+      "expected_top_id": "onet:occupation:15-1251.00",
+      "expected_confidence": 0.9,
+      "expected_method": "exact_alt",
+      "expected_warnings": []
+    },
+    {
+      "question": "Application Developer",
+      "kind": "occupation",
+      "expected_top_id": "onet:occupation:15-1252.00",
+      "expected_confidence": 0.9,
+      "expected_method": "exact_alt",
+      "expected_warnings": []
+    },
+    {
+      "question": "Applications Analyst",
+      "kind": "occupation",
+      "expected_top_id": "onet:occupation:15-1253.00",
+      "expected_confidence": 0.9,
+      "expected_method": "exact_alt",
+      "expected_warnings": []
+    },
+    {
+      "question": "Application Integrator",
+      "kind": "occupation",
+      "expected_top_id": "onet:occupation:15-1253.00",
+      "expected_confidence": 0.9,
+      "expected_method": "exact_alt",
+      "expected_warnings": []
+    },
+    {
+      "question": "Cardiac Nurse Specialist",
+      "kind": "occupation",
+      "expected_top_id": "onet:occupation:29-1141.00",
+      "expected_confidence": 0.9,
+      "expected_method": "exact_alt",
+      "expected_warnings": []
+    },
+    {
       "question": "zzznofuchoccupation999",
       "kind": "occupation",
       "expected_top_id": null,

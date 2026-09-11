@@ -54,7 +54,11 @@ def _hit_phrase(result: AgentResult) -> str | None:
     if result.capability == "connect" and len(result.nodes) > 1:
         extra = f", {len(result.nodes) - 1} listed skills"
     if result.capability == "pathfind":
-        extra = ", a route on that map"
+        extra = (
+            ", no route found"
+            if "no_path" in result.warnings
+            else ", a route on that map"
+        )
     return f"{top.pref_label} ({heading}{extra})"
 
 

@@ -131,7 +131,7 @@ def _runner_for(suite: RecordingFakeSuite):
 
     registry = SuiteRegistry({"test": factory}, default="test")
 
-    def runner(question: str, *, bound_node=None, force_capability=None):
+    def runner(question: str, *, bound_node=None, bound_nodes=None, force_capability=None):
         with registry.open() as runtime:
             return run_turn(
                 suite=runtime.suite,
@@ -140,6 +140,7 @@ def _runner_for(suite: RecordingFakeSuite):
                 question=question,
                 answer_mode="structured",
                 bound_node=bound_node,
+                bound_nodes=bound_nodes,
                 force_capability=force_capability,
             )
 
@@ -1079,4 +1080,65 @@ def test_tui_shows_onet_picker_next_to_esco_card() -> None:
     assert reply.source_note == "ESCO · O*NET"
     assert state.binding is not None
     assert state.binding.node.suite == "esco"
+    assert state.bindings["esco"].id == "esco:occupation:dev"
+    assert "onet" not in state.bindings
     assert reply.pending_count == 2
+
+
+def test_tui_pick_keeps_the_other_suite_binding() -> None:
+    from talent_angels.assistant.planning import build_plan_for_capability
+    from talent_angels.assistant.turn import TurnOutcome
+    from talent_angels.contracts import AgentResult, NodeRef
+    from talent_angels.runlog import RunLogRecord
+    from talent_angels.session.kernel import handle_line
+
+    esco_node = NodeRef(
+        id="esco:occupation:dev",
+        suite="esco",
+        source="esco",
+        source_id="esco-dev",
+        kind="Occupation",
+        pref_label="software developer",
+    )
+    onet_a = NodeRef(
+        id="onet:occupation:15-1252.00",
+        suite="onet",
+        source="onet",
+        source_id="15-1252.00",
+        kind="Occupation",
+        pref_label="Software Developers",
+    )
+    onet_b = NodeRef(
+        id="onet:occupation:15-1254.00",
+        suite="onet",
+        source="onet",
+        source_id="15-1254.00",
+        kind="Occupation",
+        pref_label="Web Developers",
+    )
+    esco = AgentResult(capability="locate", suite="esco", nodes=[esco_node], confidence=0.95)
+    onet = AgentResult(
+        capability="locate",
+        suite="onet",
+        nodes=[onet_a, onet_b],
+        warnings=["ambiguous"],
+        confidence=0.7,
+    )
+
+    def runner(question: str, **_kwargs: object) -> TurnOutcome:
+        return TurnOutcome(
+            capability="locate",
+            plan=build_plan_for_capability("locate", suites=("esco", "onet")),
+            result=esco,
+            results=(esco, onet),
+            answer="ignored",
+            record=RunLogRecord(suite="esco,onet", plan=["locate"], question=question),
+        )
+
+    state = new_session()
+    handle_line(state, "software engineer", runner=runner)
+    picked = handle_line(state, "1", runner=_boom)
+    assert state.bindings["esco"].id == esco_node.id
+    assert state.bindings["onet"].id == onet_a.id
+    assert "ESCO" in (picked.bound_label or "")
+    assert "O*NET" in (picked.bound_label or "")

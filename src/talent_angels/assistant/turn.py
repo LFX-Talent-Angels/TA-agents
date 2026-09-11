@@ -74,6 +74,20 @@ class TurnOutcome:
             self.results = (self.result,)
 
 
+def _bound_for_suite(
+    suite_name: str,
+    bound_node: NodeRef | None,
+    bound_nodes: dict[str, NodeRef] | None,
+) -> NodeRef | None:
+    if bound_nodes:
+        return bound_nodes.get(suite_name)
+    if bound_node is not None and bound_node.suite == suite_name:
+        return bound_node
+    if bound_node is not None and not bound_nodes:
+        return bound_node
+    return None
+
+
 def _locate_one(
     suite: SuiteTools,
     suite_name: str,
@@ -214,6 +228,7 @@ def run_turn(
     force_capability: Capability | None = None,
     cache: ResultCache | None = None,
     bound_node: NodeRef | None = None,
+    bound_nodes: dict[str, NodeRef] | None = None,
     persist: bool = True,
 ) -> TurnOutcome:
     """Run one turn and append its run-log record.
@@ -247,7 +262,7 @@ def run_turn(
             suite_name=suite_name,
             question=question,
             kind=kind,
-            bound_node=bound_node,
+            bound_node=_bound_for_suite(suite_name, bound_node, bound_nodes),
             llm_client=llm_client,
             answer_mode=answer_mode,
             force_capability=force_capability,
@@ -309,6 +324,10 @@ def run_turn(
     }
 
     for name in selected:
+        per_state = {
+            **seed_state,
+            "bound_node": _bound_for_suite(name, bound_node, bound_nodes),
+        }
         try:
             with registry.open(name) as runtime:
                 if force_locate:
@@ -320,7 +339,7 @@ def run_turn(
                     tools.extend(one_tools)
                     continue
                 dispatched = dispatch_plan(
-                    seed_state,  # type: ignore[arg-type]
+                    per_state,  # type: ignore[arg-type]
                     suite=runtime.suite,
                     suite_name=name,
                 )

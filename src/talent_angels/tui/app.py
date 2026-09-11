@@ -137,7 +137,7 @@ def main(argv: Sequence[str] | None = None, *, registry: SuiteRegistry | None = 
     )
 
     def make_runner(outcomes: list[tuple[TurnOutcome, str]]):
-        def runner(question, *, bound_node=None, force_capability=None):
+        def runner(question, *, bound_node=None, bound_nodes=None, force_capability=None):
             # Structured facts from the assistant; the TUI phrases them (see session.phrase).
             outcome = run_turn(
                 registry=selected,
@@ -145,6 +145,7 @@ def main(argv: Sequence[str] | None = None, *, registry: SuiteRegistry | None = 
                 question=question,
                 answer_mode="structured",
                 bound_node=bound_node,
+                bound_nodes=bound_nodes,
                 force_capability=force_capability,
                 persist=False,
             )

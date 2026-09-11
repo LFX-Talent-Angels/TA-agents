@@ -92,6 +92,7 @@ class TurnRunner(Protocol):
         question: str,
         *,
         bound_node: NodeRef | None = None,
+        bound_nodes: dict[str, NodeRef] | None = None,
         force_capability: str | None = None,
     ) -> TurnOutcome: ...
 
@@ -170,6 +171,23 @@ def _record(state: SessionState, role: Literal["user", "assistant", "system"], t
     state.transcript.append(TranscriptLine(role=role, text=text, ts=_now()))
 
 
+def _set_bind(state: SessionState, node: NodeRef) -> None:
+    state.bindings[node.suite] = node
+    state.binding = LastBinding(node=node)
+
+
+def _bound_status(state: SessionState) -> str | None:
+    if len(state.bindings) > 1:
+        return " · ".join(
+            f"{suite_heading(suite)} {node.pref_label}" for suite, node in state.bindings.items()
+        )
+    if state.binding is not None:
+        return state.binding.node.pref_label
+    if state.bindings:
+        return next(iter(state.bindings.values())).pref_label
+    return None
+
+
 def _reply(
     state: SessionState,
     text: str,
@@ -187,7 +205,7 @@ def _reply(
         new_llm_client=new_llm_client,
         request_key=request_key,
         request_model_pick=request_model_pick,
-        bound_label=state.binding.node.pref_label if state.binding is not None else None,
+        bound_label=_bound_status(state),
         pending_count=len(state.pending),
     )
 
@@ -325,7 +343,7 @@ def _handle_pick(
                 )
             _record(state, "assistant", _BAD_PICK)
             return _reply(state, _BAD_PICK)
-        state.binding = LastBinding(node=node)
+        _set_bind(state, node)
         _write_picker_event(
             state,
             query=_last_map_query(state),
@@ -441,8 +459,6 @@ def _render_unique_block(
 ) -> str:
     fallback = _map_answer(summarize_result(result))
     if result.capability == "connect" and result.nodes:
-        if not uses_chat_phrasing(llm_client):
-            fallback = f"{fallback}\n\n{MAP_NEXT_STEP}"
         body = phrase_map(
             llm_client,
             question=question,
@@ -484,6 +500,7 @@ def _from_single_outcome(
         omitted = max(0, len(result.nodes) - len(pending))
         state.pending = pending
         state.binding = None
+        state.bindings.clear()
         intro = phrase_chat(
             llm_client,
             user_text=question,
@@ -508,7 +525,7 @@ def _from_single_outcome(
             mode="miss",
         )
     elif result.capability == "locate" and result.nodes:
-        state.binding = LastBinding(node=result.nodes[0])
+        _set_bind(state, result.nodes[0])
         state.pending = []
         record = f"{_map_answer(outcome.answer)}\n\n{MAP_NEXT_STEP}"
         phrased = phrase_map(
@@ -523,7 +540,7 @@ def _from_single_outcome(
         else:
             text = record
     elif result.capability == "connect" and result.nodes:
-        state.binding = LastBinding(node=result.nodes[0])
+        _set_bind(state, result.nodes[0])
         fallback = _map_answer(outcome.answer)
         if not uses_chat_phrasing(llm_client):
             fallback = f"{fallback}\n\n{MAP_NEXT_STEP}"
@@ -608,6 +625,7 @@ def _from_outcome(
             continue
         all_miss = False
         any_hit = True
+        _set_bind(state, result.nodes[0])
         if unique_bind is None:
             unique_bind = result.nodes[0]
         blocks.append(
@@ -616,9 +634,9 @@ def _from_outcome(
 
     if pending_all:
         state.pending = pending_all
-        state.binding = LastBinding(node=unique_bind) if unique_bind is not None else None
+        if not state.bindings:
+            state.binding = None
     elif unique_bind is not None:
-        state.binding = LastBinding(node=unique_bind)
         if any(
             item.capability == "locate" and "ambiguous" not in item.warnings and item.nodes
             for item in results
@@ -638,6 +656,8 @@ def _from_outcome(
         )
     else:
         text = "\n\n---\n\n".join(blocks)
+        if unique_bind is not None and not pending_all and MAP_NEXT_STEP not in text:
+            text = f"{text}\n\n{MAP_NEXT_STEP}"
 
     return _reply(state, text, source_note=_source_note_for(results))
 
@@ -689,10 +709,17 @@ def _handle_map(
 ) -> ChatReply:
     _record(state, "user", text)
     bound = state.binding.node if state.binding is not None else None
-    if bound is not None and followup_connect_request(text, bound) is not None:
-        outcome = runner(text, bound_node=bound, force_capability=CAPABILITY_CONNECT)
+    sample = next(iter(state.bindings.values()), bound)
+    bound_nodes = dict(state.bindings) if state.bindings else None
+    if sample is not None and followup_connect_request(text, sample) is not None:
+        outcome = runner(
+            text,
+            bound_node=bound,
+            bound_nodes=bound_nodes,
+            force_capability=CAPABILITY_CONNECT,
+        )
     else:
-        outcome = runner(text, bound_node=bound)
+        outcome = runner(text, bound_node=bound, bound_nodes=bound_nodes)
     reply = _from_outcome(state, outcome, question=text, llm_client=llm_client)
     _record(state, "assistant", reply.text)
     return reply

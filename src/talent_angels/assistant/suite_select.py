@@ -10,6 +10,7 @@ from __future__ import annotations
 
 from collections.abc import Sequence
 
+from talent_angels.assistant.merge import suite_heading
 from talent_angels.suites.registry import UnknownSuiteError
 
 # Aliases a user might type. Keys are registry names.
@@ -23,6 +24,18 @@ SUITE_ALIASES: dict[str, tuple[str, ...]] = {
 
 def _aliases(name: str) -> tuple[str, ...]:
     return SUITE_ALIASES.get(name, (name,))
+
+
+def resolve_show_token(token: str, available: Sequence[str]) -> str | None:
+    """Map 'all' / 'O*NET' / 'sfia' to a registry name. Unknown → None."""
+    text = token.casefold().strip()
+    if text == "all":
+        return "all"
+    for name in available:
+        labels = (name, suite_heading(name), *_aliases(name))
+        if text in {item.casefold() for item in labels}:
+            return name
+    return None
 
 
 def named_suites(question: str, available: Sequence[str]) -> tuple[str, ...]:

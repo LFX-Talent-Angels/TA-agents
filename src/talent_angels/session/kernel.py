@@ -11,6 +11,8 @@ from talent_angels.assistant.answer import is_unimplemented_pathfind, summarize_
 from talent_angels.assistant.connect_request import followup_connect_request
 from talent_angels.assistant.intent import CAPABILITY_CONNECT
 from talent_angels.assistant.merge import suite_heading
+from talent_angels.assistant.suite_select import resolve_show_token
+from talent_angels.assistant.synthesize import synthesize
 from talent_angels.assistant.turn import TurnOutcome
 from talent_angels.contracts import AgentResult, NodeRef
 from talent_angels.llm import LLMClient
@@ -154,6 +156,8 @@ def handle_line(
         return _handle_pick(state, text, routed.pick or 0, runner=runner, llm_client=llm_client)
     if is_expand_list(text) or (is_bare_yes(text) and can_expand_connect(state.last_result)):
         return _handle_expand(state, text, runner=runner)
+    if routed.kind == "show_suite":
+        return _handle_show(state, text, routed.show_token or "")
     mention = parse_skill_mention(text)
     stored = state.last_result
     if mention is None and stored is not None and can_expand_connect(stored):
@@ -557,6 +561,54 @@ def _from_single_outcome(
     return _reply(state, text, source_note=source)
 
 
+def _stacked_cards(
+    results: tuple[AgentResult, ...],
+    *,
+    question: str,
+    llm_client: LLMClient | None,
+) -> str:
+    blocks: list[str] = []
+    for result in results:
+        heading = suite_heading(result.suite) if result.suite else "Map"
+        if result.nodes and "ambiguous" not in result.warnings:
+            blocks.append(
+                _render_unique_block(
+                    result, question=question, llm_client=llm_client, heading=heading
+                )
+            )
+        else:
+            blocks.append(f"## {heading}\n\n{_map_answer(summarize_result(result))}")
+    return "\n\n---\n\n".join(blocks)
+
+
+def _handle_show(state: SessionState, text: str, token: str) -> ChatReply:
+    _record(state, "user", text)
+    known = tuple(dict.fromkeys([*[item.suite for item in state.last_results], *state.bindings]))
+    if not known:
+        message = "I don't have a map card stored yet. Name a job title first."
+        _record(state, "assistant", message)
+        return _reply(state, message)
+    resolved = resolve_show_token(token, known)
+    if resolved is None:
+        attached = ", ".join(suite_heading(name) for name in known)
+        message = f"I don't have a source called {token!r}. Attached: {attached}."
+        _record(state, "assistant", message)
+        return _reply(state, message)
+    if resolved == "all":
+        message = _stacked_cards(tuple(state.last_results), question=token, llm_client=None)
+        _record(state, "assistant", message)
+        return _reply(state, message, source_note=_source_note_for(tuple(state.last_results)))
+    match = next((item for item in state.last_results if item.suite == resolved), None)
+    if match is None:
+        message = f"No stored card for {suite_heading(resolved)}."
+        _record(state, "assistant", message)
+        return _reply(state, message)
+    heading = suite_heading(resolved)
+    message = _render_unique_block(match, question=token, llm_client=None, heading=heading)
+    _record(state, "assistant", message)
+    return _reply(state, message, source_note=heading)
+
+
 def _from_outcome(
     state: SessionState,
     outcome: TurnOutcome,
@@ -565,6 +617,7 @@ def _from_outcome(
     llm_client: LLMClient | None,
 ) -> ChatReply:
     results = _turn_results(outcome)
+    state.last_results = list(results)
     if len(results) <= 1:
         return _from_single_outcome(
             state,
@@ -628,9 +681,6 @@ def _from_outcome(
         _set_bind(state, result.nodes[0])
         if unique_bind is None:
             unique_bind = result.nodes[0]
-        blocks.append(
-            _render_unique_block(result, question=question, llm_client=llm_client, heading=heading)
-        )
 
     if pending_all:
         state.pending = pending_all
@@ -654,9 +704,17 @@ def _from_outcome(
             ),
             mode="miss",
         )
+    elif pending_all:
+        # Unique maps in the synthesis; pickers stay numbered so a reply binds.
+        text = synthesize(results, question=question, llm_client=llm_client)
+        picker_blocks = [
+            block for block in blocks if "I won't pick" in block or "Which one" in block
+        ]
+        if picker_blocks:
+            text = text + "\n\n" + "\n\n---\n\n".join(picker_blocks)
     else:
-        text = "\n\n---\n\n".join(blocks)
-        if unique_bind is not None and not pending_all and MAP_NEXT_STEP not in text:
+        text = synthesize(results, question=question, llm_client=llm_client)
+        if unique_bind is not None and MAP_NEXT_STEP not in text:
             text = f"{text}\n\n{MAP_NEXT_STEP}"
 
     return _reply(state, text, source_note=_source_note_for(results))

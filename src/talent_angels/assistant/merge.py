@@ -9,7 +9,6 @@ from __future__ import annotations
 
 from collections.abc import Sequence
 
-from talent_angels.assistant.answer import summarize_result
 from talent_angels.contracts import AgentResult
 
 _HEADINGS = {
@@ -30,13 +29,7 @@ def merge_answers(
     *,
     extra_warnings: Sequence[str] = (),
 ) -> str:
-    """One labeled block per suite, separated by a blank line."""
-    if not results:
-        if extra_warnings:
-            return "No attached taxonomy was reachable. [" + ", ".join(extra_warnings) + "]"
-        return "No attached taxonomy was reachable."
+    """One user-facing answer citing every attached suite."""
+    from talent_angels.assistant.synthesize import synthesize_structured
 
-    blocks = [f"{suite_heading(result.suite)} · {summarize_result(result)}" for result in results]
-    if extra_warnings:
-        blocks.append("[" + ", ".join(extra_warnings) + "]")
-    return "\n\n".join(blocks)
+    return synthesize_structured(results, extra_warnings=extra_warnings)

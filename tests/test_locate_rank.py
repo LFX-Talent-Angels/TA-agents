@@ -86,6 +86,25 @@ def test_exact_alt_top_hit_is_unique_enough() -> None:
     assert ranked.confidence == 0.90
 
 
+def test_singular_query_matches_plural_pref_as_unique() -> None:
+    winner = _occ("Software Developers", 1)
+    noise = _occ("Blockchain Engineers", 2)
+    result = AgentResult(
+        capability="locate",
+        suite="onet",
+        nodes=[noise, winner],
+        confidence=0.7,
+    )
+
+    class Quiet:
+        def get_neighbors(self, *_a, **_k) -> FakeToolResult:
+            return FakeToolResult()
+
+    ranked = group_and_sort_locate(Quiet(), result, "software developer", suite_name="onet")
+    assert [node.id for node in ranked.nodes] == [winner.id]
+    assert "ambiguous" not in ranked.warnings
+
+
 def test_two_exact_pref_hits_stay_ambiguous() -> None:
     a = _occ("developer", 1)
     b = _occ("developer", 2)

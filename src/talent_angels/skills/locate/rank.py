@@ -7,6 +7,18 @@ from talent_angels.skills.connect.reveal import ConnectableSuite
 from talent_angels.skills.locate.resolve import _node_ref
 
 
+def _near_pref_label(query: str, node: NodeRef) -> bool:
+    q = query.casefold().strip()
+    pref = node.pref_label.casefold().strip()
+    if pref == q:
+        return True
+    if pref.endswith("s") and pref[:-1] == q:
+        return True
+    if q.endswith("s") and q[:-1] == pref:
+        return True
+    return False
+
+
 def lexical_rank(query: str, node: NodeRef) -> tuple[int, int, str]:
     """Lower is better: exact pref, pref token, pref substring, exact alt, alt substring."""
     q = query.casefold().strip()
@@ -101,7 +113,9 @@ def group_and_sort_locate(
     second_tier = lexical_rank(query, ordered[1])[0]
     # Exact preferred label (0) or exact alias (3) that beats the next hit
     # is unique enough — extra full-text noise is not a picker.
-    unique_enough = top_tier in {0, 3} and top_tier < second_tier
+    unique_enough = (
+        top_tier in {0, 3} or _near_pref_label(query, ordered[0])
+    ) and top_tier < second_tier
     if unique_enough:
         extra = len(ordered) - 1
         winner = ordered[0]

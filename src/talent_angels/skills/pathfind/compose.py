@@ -78,14 +78,23 @@ def pathfind(
             warnings.append("no_path")
 
     gap_nodes, gap_warning = _skill_gap(suite, suite_name, from_node, to_node)
-    if gap_warning:
+    if gap_warning and gap_nodes:
+        labels = "; ".join(node.pref_label for node in gap_nodes[:8])
+        more = f"; {len(gap_nodes) - 8} more" if len(gap_nodes) > 8 else ""
+        warnings.append(f"{gap_warning}:{labels}{more}")
+    elif gap_warning:
         warnings.append(gap_warning)
-    # Derived gap skills are extra nodes; they are not a new taxonomy identity.
-    existing = {node.id for node in nodes}
-    for extra in gap_nodes:
-        if extra.id not in existing:
-            nodes.append(extra)
-            existing.add(extra.id)
+
+    # Keep route endpoints first so summaries never pick a skill-gap node.
+    ordered = [from_node]
+    if to_node.id != from_node.id:
+        ordered.append(to_node)
+    seen = {node.id for node in ordered}
+    for node in nodes:
+        if node.id not in seen:
+            ordered.append(node)
+            seen.add(node.id)
+    nodes = ordered
 
     policy_name = _policy_name(suite_name)
     score_paths = getattr(suite, "score_paths", None)
@@ -94,8 +103,9 @@ def pathfind(
         policy = _NamedPolicy(policy_name)
         try:
             scored = score_paths(raw_paths, policy)
-        except AttributeError:
+        except Exception:  # noqa: BLE001 — missing policy must not fail the turn
             scored = None
+            warnings.append(f"policy:{policy_name}:not_applied")
         if scored is not None:
             warnings.extend(str(item) for item in getattr(scored, "warnings", ()) or ())
             warnings.append(f"policy:{policy_name}")

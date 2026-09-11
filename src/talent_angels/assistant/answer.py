@@ -49,18 +49,16 @@ def summarize_result(result: AgentResult) -> str:
             f"Candidates: {rendered}{remainder}. Please clarify which candidate you mean."
         )
     if result.capability == "pathfind":
-        hop = max(1, len(result.edges))
-        extras = [node.pref_label for node in result.nodes if node.kind.casefold() == "skill"]
-        start = result.nodes[0].pref_label
-        end = result.nodes[-1].pref_label
-        summary = f"{start} → {end} ({hop} hop edge(s))"
-        if extras:
-            gap_shown = extras[:5]
-            summary += "; skill gap: " + "; ".join(gap_shown)
-            if len(extras) > 5:
-                summary += f"; {len(extras) - 5} more"
-        if result.warnings:
-            summary += f" [warnings: {', '.join(result.warnings)}]"
+        occupations = [node for node in result.nodes if node.kind.casefold() == "occupation"]
+        start = (occupations[0] if occupations else result.nodes[0]).pref_label
+        end = (occupations[-1] if occupations else result.nodes[-1]).pref_label
+        summary = f"{start} → {end}"
+        gap = next((item for item in result.warnings if item.startswith("derived_skill_gap:")), "")
+        if gap:
+            summary += "; " + gap.replace("derived_skill_gap:", "skill gap: ", 1)
+        other = [item for item in result.warnings if not item.startswith("derived_skill_gap:")]
+        if other:
+            summary += f" [warnings: {', '.join(other)}]"
         return summary
     if result.capability == "connect":
         center = result.nodes[0]

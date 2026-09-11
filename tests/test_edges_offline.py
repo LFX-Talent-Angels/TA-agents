@@ -132,8 +132,8 @@ def test_cli_query_searches_all_attached_suites(capsys: pytest.CaptureFixture[st
     assert set(events) == {"esco", "onet"}
     output = json.loads(capsys.readouterr().out)
     assert output["suites"] == ["esco", "onet"]
-    assert "ESCO · " in output["answer"]
-    assert "O*NET · " in output["answer"]
+    assert "Sources used:" in output["answer"]
+    assert "ESCO" in output["answer"] and "O*NET" in output["answer"]
     assert output["node_count"] == 2
 
 
@@ -183,8 +183,8 @@ def test_api_query_searches_all_attached_suites() -> None:
     body = response.json()
     assert body["suites"] == ["esco", "onet"]
     assert [item["suite"] for item in body["results"]] == ["esco", "onet"]
-    assert "ESCO · " in body["answer"]
-    assert "O*NET · " in body["answer"]
+    assert "Sources used:" in body["answer"]
+    assert "ESCO" in body["answer"] and "O*NET" in body["answer"]
 
 
 def test_api_unknown_suite_is_404() -> None:

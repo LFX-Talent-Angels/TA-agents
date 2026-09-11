@@ -20,6 +20,7 @@ def test_pathfind_returns_a_route_on_fake_suite() -> None:
     assert result.suite == "fake"
     assert result.edges
     assert "capability_not_implemented:pathfind" not in result.warnings
+    assert any(item.startswith("policy:") for item in result.warnings)
 
 
 def test_pathfind_without_enumerate_is_unimplemented() -> None:

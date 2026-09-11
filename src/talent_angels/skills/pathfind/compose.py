@@ -87,6 +87,19 @@ def pathfind(
             nodes.append(extra)
             existing.add(extra.id)
 
+    policy_name = _policy_name(suite_name)
+    score_paths = getattr(suite, "score_paths", None)
+    raw_paths = getattr(raw, "paths", None)
+    if score_paths is not None and raw_paths:
+        policy = _NamedPolicy(policy_name)
+        try:
+            scored = score_paths(raw_paths, policy)
+        except AttributeError:
+            scored = None
+        if scored is not None:
+            warnings.extend(str(item) for item in getattr(scored, "warnings", ()) or ())
+            warnings.append(f"policy:{policy_name}")
+
     return AgentResult(
         capability="pathfind",
         suite=suite_name,
@@ -95,6 +108,20 @@ def pathfind(
         evidence=evidence,
         warnings=warnings,
     )
+
+
+class _NamedPolicy:
+    def __init__(self, name: str, version: str = "1") -> None:
+        self.name = name
+        self.version = version
+
+
+def _policy_name(suite_name: str) -> str:
+    if suite_name == "onet":
+        return "onet-importance-v1"
+    if suite_name == "esco":
+        return "esco-unweighted-v1"
+    return f"{suite_name}-unranked-v1"
 
 
 def _skill_gap(

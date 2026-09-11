@@ -2,11 +2,13 @@
 
 Headless assistant runtime for **Talent Angels**. One main assistant
 interprets a natural-language question, searches **every attached taxonomy**
-(ESCO and O*NET today), and returns a cited JSON answer with tokens and cost.
+(ESCO and O*NET today; more suites register the same way), and returns a
+cited JSON answer with tokens and cost.
 
-`--suite` / API `suite` forces one taxonomy for debugging. Pathfind (routes
-between two occupations) is not implemented yet: those questions are refused
-honestly. Evaluate and cross-suite identity (crosswalks) come later.
+`--suite` / API `suite` forces one taxonomy for debugging. Pathfind walks
+`enumerate_paths` **per suite** (never ESCO→O*NET without a crosswalk).
+Evaluate ranks those paths with a named policy. Cross-suite identity
+(crosswalks) is still out of scope.
 
 Sibling graph library: [`TA-taxonomies`](https://github.com/LFX-Talent-Angels/TA-taxonomies).
 Workspace policy: [`TA-workspace`](https://github.com/LFX-Talent-Angels/TA-workspace).
@@ -19,8 +21,8 @@ Internals: [`ARCHITECTURE.md`](./ARCHITECTURE.md).
 ```text
 you  →  CLI or FastAPI (/docs)
            →  main assistant (LLM tool loop)
-                 →  search_nodes / get_neighbors   (TA-taxonomies)
-                       →  Neo4j ESCO graph
+                 →  search_nodes / get_neighbors / enumerate_paths
+                       →  Neo4j (ESCO, O*NET, … attached suites)
 ```
 
 - CLI prints one JSON object (`answer`, `plan`, `tools`, `tokens`, `cost_usd`).

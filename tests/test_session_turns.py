@@ -482,7 +482,7 @@ def test_unique_locate_appends_next_step_when_bound() -> None:
     )
 
 
-def test_unique_locate_keeps_record_under_phrasing() -> None:
+def test_unique_locate_phrasing_omits_raw_id_line() -> None:
     from talent_angels.llm.protocol import LLMResult, LLMUsage
     from talent_angels.session.kernel import handle_line
 
@@ -505,7 +505,7 @@ def test_unique_locate_keeps_record_under_phrasing() -> None:
         llm_client=Voice(),
     )
     assert "implements nursing care" in reply.text
-    assert "confidence" in reply.text.casefold()
+    assert "id=" not in reply.text
     assert "You can ask for essential skills, optional skills, or pick another number." in (
         reply.text
     )
@@ -1006,8 +1006,8 @@ def test_tui_renders_a_card_per_suite() -> None:
         )
 
     reply = handle_line(new_session(), "software developer", runner=runner)
-    assert "**ESCO**" in reply.text
-    assert "**O*NET**" in reply.text
+    assert "## ESCO" in reply.text
+    assert "## O*NET" in reply.text
     assert "software developer" in reply.text
     assert "Software Developers" in reply.text
     assert reply.source_note == "ESCO · O*NET"
@@ -1072,8 +1072,8 @@ def test_tui_shows_onet_picker_next_to_esco_card() -> None:
 
     state = new_session()
     reply = handle_line(state, "I want to be a software engineer", runner=runner)
-    assert "**ESCO**" in reply.text
-    assert "**O*NET**" in reply.text
+    assert "## ESCO" in reply.text
+    assert "## O*NET" in reply.text
     assert "software developer" in reply.text
     assert "Blockchain Engineers" in reply.text
     assert reply.source_note == "ESCO · O*NET"

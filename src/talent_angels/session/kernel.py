@@ -460,11 +460,12 @@ def _render_unique_block(
             card=locate_card(result),
         )
         if uses_chat_phrasing(llm_client) and phrased.strip() != record.strip():
-            body = f"{phrased}\n\n{record}"
+            body = phrased
         else:
             body = phrased
     if heading:
-        return f"**{heading}**\n\n{body}"
+        # Plain ATX heading — TUI treats **bold** lines as picker group names.
+        return f"## {heading}\n\n{body}"
     return body
 
 
@@ -518,7 +519,7 @@ def _from_single_outcome(
             card=locate_card(result),
         )
         if uses_chat_phrasing(llm_client) and phrased.strip() != record.strip():
-            text = f"{phrased}\n\n{record}"
+            text = f"{phrased}\n\n{MAP_NEXT_STEP}"
         else:
             text = record
     elif result.capability == "connect" and result.nodes:
@@ -571,7 +572,7 @@ def _from_outcome(
     for result in results:
         heading = suite_heading(result.suite) if result.suite else "Map"
         if is_unimplemented_pathfind(result):
-            blocks.append(f"**{heading}**\n\n{_map_answer(summarize_result(result))}")
+            blocks.append(f"## {heading}\n\n{_map_answer(summarize_result(result))}")
             all_miss = False
             continue
         if "ambiguous" in result.warnings and result.nodes:
@@ -599,11 +600,11 @@ def _from_outcome(
                 intro=intro,
                 include_source=False,
             )
-            blocks.append(f"**{heading}**\n\n{picker}")
+            blocks.append(f"## {heading}\n\n{picker}")
             pending_all.extend(choices)
             continue
         if not result.nodes or "not_found" in result.warnings:
-            blocks.append(f"**{heading}**\n\n{LOCATE_MISS}")
+            blocks.append(f"## {heading}\n\n{LOCATE_MISS}")
             continue
         all_miss = False
         any_hit = True

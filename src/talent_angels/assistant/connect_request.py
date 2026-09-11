@@ -102,6 +102,34 @@ _FOLLOWUP_NEIGHBORS = frozenset(
 )
 
 
+_DESCRIBE_RE = re.compile(
+    r"what\s+does\s+.+\s+do|"
+    r"what\s+do\s+they\s+do|"
+    r"what\s+is\s+this(\s+job|\s+occupation)?|"
+    r"\bduties\b|"
+    r"\bdefinition\b|"
+    r"describe\s+(this|the|that|it|the\s+job)",
+    re.IGNORECASE,
+)
+
+
+def is_describe_followup(question: str, bindings: dict[str, NodeRef]) -> bool:
+    """True when the user asks what the already-bound occupation does."""
+    if not bindings:
+        return False
+    if not _DESCRIBE_RE.search(question.strip()):
+        return False
+    q = f" {question.casefold()} "
+    if any(token in q for token in (" they ", " this ", " that ", " it ", " the job ")):
+        return True
+    for node in bindings.values():
+        label = node.pref_label.casefold().strip()
+        stem = label.rstrip("s")
+        if label and (label in q or (stem and stem in q)):
+            return True
+    return False
+
+
 def followup_connect_request(question: str, bound: NodeRef) -> ConnectRequest | None:
     """Build a Connect request for a short follow-up around an already-bound node.
 

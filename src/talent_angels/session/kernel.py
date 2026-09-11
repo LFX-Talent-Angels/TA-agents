@@ -8,7 +8,10 @@ from datetime import UTC, datetime
 from typing import Literal, Protocol
 
 from talent_angels.assistant.answer import is_unimplemented_pathfind, summarize_result
-from talent_angels.assistant.connect_request import followup_connect_request
+from talent_angels.assistant.connect_request import (
+    followup_connect_request,
+    is_describe_followup,
+)
 from talent_angels.assistant.intent import CAPABILITY_CONNECT
 from talent_angels.assistant.merge import suite_heading
 from talent_angels.assistant.suite_select import resolve_show_token
@@ -634,6 +637,7 @@ def _from_outcome(
     state.last_result = preferred
 
     blocks: list[str] = []
+    unique_cards: list[str] = []
     pending_all: list[PendingChoice] = []
     unique_bind: NodeRef | None = None
     any_hit = False
@@ -681,6 +685,9 @@ def _from_outcome(
         _set_bind(state, result.nodes[0])
         if unique_bind is None:
             unique_bind = result.nodes[0]
+        unique_cards.append(
+            _render_unique_block(result, question=question, llm_client=llm_client, heading=heading)
+        )
 
     if pending_all:
         state.pending = pending_all
@@ -705,13 +712,14 @@ def _from_outcome(
             mode="miss",
         )
     elif pending_all:
-        # Unique maps in the synthesis; pickers stay numbered so a reply binds.
         text = synthesize(results, question=question, llm_client=llm_client)
+        extras = [*unique_cards]
         picker_blocks = [
             block for block in blocks if "I won't pick" in block or "Which one" in block
         ]
-        if picker_blocks:
-            text = text + "\n\n" + "\n\n---\n\n".join(picker_blocks)
+        extras.extend(picker_blocks)
+        if extras:
+            text = text + "\n\n---\n\n" + "\n\n---\n\n".join(extras)
     else:
         text = synthesize(results, question=question, llm_client=llm_client)
         if unique_bind is not None and MAP_NEXT_STEP not in text:
@@ -758,6 +766,29 @@ def _handle_expand(state: SessionState, text: str, *, runner: TurnRunner) -> Cha
     return _reply(state, message, source_note=source)
 
 
+def _describe_bound(
+    state: SessionState,
+    text: str,
+    *,
+    llm_client: LLMClient | None,  # noqa: ARG001 — signature matches other handlers
+) -> ChatReply:
+    """Explain already-bound occupations. No new Locate."""
+    blocks: list[str] = []
+    for suite, node in state.bindings.items():
+        heading = suite_heading(suite)
+        desc = (node.description or "").strip()
+        if desc:
+            body = desc
+        else:
+            body = f"{node.pref_label} is on the {heading} map. I don't have a definition stored."
+        blocks.append(f"## {heading}\n\n**{node.pref_label}**\n\n{body}")
+    message = "\n\n---\n\n".join(blocks)
+    _record(state, "assistant", message)
+    names = [suite_heading(s) for s in state.bindings]
+    source_note = " · ".join(names) if names else None
+    return _reply(state, message, source_note=source_note)
+
+
 def _handle_map(
     state: SessionState,
     text: str,
@@ -769,6 +800,8 @@ def _handle_map(
     bound = state.binding.node if state.binding is not None else None
     sample = next(iter(state.bindings.values()), bound)
     bound_nodes = dict(state.bindings) if state.bindings else None
+    if bound_nodes and is_describe_followup(text, bound_nodes):
+        return _describe_bound(state, text, llm_client=llm_client)
     if sample is not None and followup_connect_request(text, sample) is not None:
         outcome = runner(
             text,

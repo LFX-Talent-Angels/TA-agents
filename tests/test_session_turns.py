@@ -1195,3 +1195,26 @@ def test_show_suite_uses_stored_card_without_search() -> None:
     shown = handle_line(state, "show O*NET", runner=_boom)
     assert "Software Developers" in shown.text
     assert shown.source_note == "O*NET"
+
+
+def test_what_does_bound_job_do_does_not_search() -> None:
+    from talent_angels.contracts import NodeRef
+    from talent_angels.session.kernel import handle_line
+    from talent_angels.session.models import LastBinding
+
+    node = NodeRef(
+        id="onet:occupation:29-1229.03",
+        suite="onet",
+        source="onet",
+        source_id="29-1229.03",
+        kind="Occupation",
+        pref_label="Urologists",
+        description="Diagnose and treat diseases of the urinary tract.",
+    )
+    state = new_session()
+    state.binding = LastBinding(node=node)
+    state.bindings = {"onet": node}
+    reply = handle_line(state, "what does Urologists do ?", runner=_boom)
+    assert "Diagnose and treat" in reply.text
+    assert "Urologists" in reply.text
+    assert "O*NET" in (reply.source_note or "")

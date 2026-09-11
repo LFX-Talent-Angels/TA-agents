@@ -60,6 +60,8 @@ def _in_suite_suffixes() -> tuple[str, ...]:
 
 
 _SUBJECT_PATTERNS = (
+    re.compile(r"^what does (?:a |an |the )?(.+?) do\b", re.I),
+    re.compile(r"^what do (?:a |an |the )?(.+?) do\b", re.I),
     re.compile(r"^what essential skills does (?:a |an )?(.+?) need\b", re.I),
     re.compile(r"^what skills does (?:a |an )?(.+?) need\b", re.I),
     re.compile(

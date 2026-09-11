@@ -95,6 +95,7 @@ def test_classify_capability_heuristics(question: str, expected: str) -> None:
     [
         ("Where is nurse in ESCO?", "nurse"),
         ("Where is firefighter in O*NET?", "firefighter"),
+        ("What does Urologists do?", "Urologists"),
         ("software developer", "software developer"),
         ("Find accountant", "accountant"),
         (

@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import re
+from difflib import SequenceMatcher
 
 from talent_angels.contracts import NodeRef
 from talent_angels.skills.connect.models import ConnectRequest
@@ -113,6 +114,16 @@ _DESCRIBE_RE = re.compile(
 )
 
 
+def _close_label(left: str, right: str) -> bool:
+    a = left.casefold().strip()
+    b = right.casefold().strip()
+    if not a or not b:
+        return False
+    if a in b or b in a:
+        return True
+    return SequenceMatcher(None, a, b).ratio() >= 0.75
+
+
 def is_describe_followup(question: str, bindings: dict[str, NodeRef]) -> bool:
     """True when the user asks what the already-bound occupation does."""
     if not bindings:
@@ -122,10 +133,15 @@ def is_describe_followup(question: str, bindings: dict[str, NodeRef]) -> bool:
     q = f" {question.casefold()} "
     if any(token in q for token in (" they ", " this ", " that ", " it ", " the job ")):
         return True
+    from talent_angels.assistant.intent import extract_locate_subject
+
+    subject = extract_locate_subject(question)
     for node in bindings.values():
-        label = node.pref_label.casefold().strip()
-        stem = label.rstrip("s")
-        if label and (label in q or (stem and stem in q)):
+        label = node.pref_label
+        if _close_label(subject, label) or _close_label(question, label):
+            return True
+        stem = label.casefold().strip().rstrip("s")
+        if stem and stem in q:
             return True
     return False
 

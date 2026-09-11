@@ -1218,3 +1218,5 @@ def test_what_does_bound_job_do_does_not_search() -> None:
     assert "Diagnose and treat" in reply.text
     assert "Urologists" in reply.text
     assert "O*NET" in (reply.source_note or "")
+    typo = handle_line(state, "what does Urologitst do ?", runner=_boom)
+    assert "Diagnose and treat" in typo.text

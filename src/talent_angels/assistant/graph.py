@@ -14,8 +14,10 @@ from talent_angels.assistant.connect_request import (
 from talent_angels.assistant.intent import (
     CAPABILITY_CONNECT,
     CAPABILITY_LOCATE,
+    CAPABILITY_PATHFIND,
     Capability,
     extract_locate_subject,
+    extract_pathfind_endpoints,
 )
 from talent_angels.assistant.llm_plan import (
     connect_request_from_draft,
@@ -28,6 +30,7 @@ from talent_angels.runlog import usage_from_stage
 from talent_angels.skills.connect import connect
 from talent_angels.skills.locate import ESCO_SUITE_NAME, locate
 from talent_angels.skills.locate.rank import group_and_sort_locate
+from talent_angels.skills.pathfind import pathfind
 from talent_angels.suites.measured import MeasuredSuite
 from talent_angels.suites.protocol import SuiteTools
 
@@ -137,6 +140,14 @@ def dispatch_plan(state: AssistantState, *, suite: SuiteTools, suite_name: str) 
             "tool_calls": measured.tool_calls,
         }
 
+    if capability == CAPABILITY_PATHFIND:
+        return _dispatch_pathfind(
+            state,
+            suite=measured,
+            suite_name=suite_name,
+            draft=draft,
+        )
+
     return {
         "result": AgentResult(
             capability=capability,
@@ -145,6 +156,66 @@ def dispatch_plan(state: AssistantState, *, suite: SuiteTools, suite_name: str) 
         ),
         "tool_calls": [],
     }
+
+
+def _dispatch_pathfind(
+    state: AssistantState,
+    *,
+    suite: MeasuredSuite,
+    suite_name: str,
+    draft: object,
+) -> AssistantState:
+    ends: tuple[str, str] | None = None
+    subject = getattr(draft, "subject", None) if draft is not None else None
+    secondary = getattr(draft, "secondary_subject", None) if draft is not None else None
+    if isinstance(subject, str) and isinstance(secondary, str) and subject and secondary:
+        ends = (subject, secondary)
+    else:
+        ends = extract_pathfind_endpoints(state["question"])
+    if ends is None:
+        return {
+            "result": AgentResult(
+                capability=CAPABILITY_PATHFIND,
+                suite=suite_name,
+                warnings=["unsupported_pathfind_query"],
+            ),
+            "tool_calls": suite.tool_calls,
+        }
+    from_text, to_text = ends
+    located_from = group_and_sort_locate(
+        suite,
+        locate(suite, suite_name, from_text, kind="occupation"),
+        from_text,
+        suite_name=suite_name,
+    )
+    located_to = group_and_sort_locate(
+        suite,
+        locate(suite, suite_name, to_text, kind="occupation"),
+        to_text,
+        suite_name=suite_name,
+    )
+    if not located_from.nodes or "ambiguous" in located_from.warnings:
+        return {
+            "result": located_from.model_copy(
+                update={
+                    "capability": CAPABILITY_PATHFIND,
+                    "warnings": [*located_from.warnings, "endpoint_not_found"],
+                }
+            ),
+            "tool_calls": suite.tool_calls,
+        }
+    if not located_to.nodes or "ambiguous" in located_to.warnings:
+        return {
+            "result": located_to.model_copy(
+                update={
+                    "capability": CAPABILITY_PATHFIND,
+                    "warnings": [*located_to.warnings, "endpoint_not_found"],
+                }
+            ),
+            "tool_calls": suite.tool_calls,
+        }
+    result = pathfind(suite, suite_name, located_from.nodes[0], located_to.nodes[0])
+    return {"result": result, "tool_calls": suite.tool_calls}
 
 
 def _answer(state: AssistantState, *, llm_client: LLMClient, answer_mode: str) -> AssistantState:

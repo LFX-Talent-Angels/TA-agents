@@ -77,6 +77,16 @@ class FakeSuite:
             evidence=[f"test:neighbors:{node_id}"],
         )
 
+    def enumerate_paths(
+        self,
+        from_id: str,
+        to_id: str,
+        *,
+        max_depth: int = 4,
+        max_paths: int = 20,
+    ) -> FakeToolResult:
+        return FakeToolResult(warnings=["no_path"], evidence=[f"test:paths:{from_id}->{to_id}"])
+
 
 def _registry(*, reachable: bool = True) -> SuiteRegistry:
     @contextmanager
@@ -237,9 +247,9 @@ def test_cli_pathfind_question_is_honest(
     output = json.loads(capsys.readouterr().out)
     assert output["capability"] == "pathfind"
     assert output["plan"] == ["locate", "connect", "pathfind"]
-    assert "capability_not_implemented:pathfind" in output["warnings"]
-    assert "Pathfind is not in this MVP" in output["answer"]
-    assert output["tools"] == []
+    assert "capability_not_implemented:pathfind" not in output["warnings"]
+    assert "Pathfind is not in this MVP" not in output["answer"]
+    assert "no_path" in output["warnings"] or "endpoint_not_found" in output["warnings"]
 
 
 def test_cli_quality_writes_full_report(capsys: pytest.CaptureFixture[str], tmp_path: Path) -> None:
@@ -301,9 +311,10 @@ def test_api_pathfind_question_is_honest() -> None:
     assert response.status_code == 200
     body = response.json()
     assert body["capability"] == "pathfind"
-    assert "capability_not_implemented:pathfind" in body["result"]["warnings"]
-    assert "Pathfind is not in this MVP" in body["answer"]
-    assert body["usage"]["tools"] == []
+    assert "capability_not_implemented:pathfind" not in body["result"]["warnings"]
+    assert "Pathfind is not in this MVP" not in body["answer"]
+    warnings = body["result"]["warnings"]
+    assert "no_path" in warnings or "endpoint_not_found" in warnings
 
 
 def test_cli_connect_uses_the_same_assistant_flow(

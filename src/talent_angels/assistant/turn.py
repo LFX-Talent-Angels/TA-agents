@@ -13,6 +13,7 @@ from dataclasses import dataclass, field
 from talent_angels.assistant.answer import build_answer
 from talent_angels.assistant.cache import ResultCache
 from talent_angels.assistant.graph import build_graph, dispatch_plan
+from talent_angels.assistant.honesty import honesty_warnings
 from talent_angels.assistant.intent import CAPABILITY_LOCATE, Capability
 from talent_angels.assistant.llm_plan import interpret_question
 from talent_angels.assistant.merge import merge_answers
@@ -351,6 +352,7 @@ def run_turn(
             extra_warnings.append(f"suite_unavailable:{name}")
 
     result_tuple = tuple(collected)
+    extra_warnings.extend(honesty_warnings(result_tuple))
     if not result_tuple:
         empty = AgentResult(
             capability=capability,

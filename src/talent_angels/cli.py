@@ -33,6 +33,8 @@ from talent_angels.evals.quality import (
 from talent_angels.llm.factory import get_answer_mode, get_llm_client
 from talent_angels.query_details import write_query_details
 from talent_angels.runlog.report import render_recent_report
+from talent_angels.session.copy import ADVICE_REFUSE, CATALOGUE_REFUSE
+from talent_angels.session.router import route_line
 from talent_angels.suites import SuiteRegistry, UnknownSuiteError, default_suite_registry
 
 GOLDEN_LOCATE_PATH = Path(__file__).resolve().parents[2] / "tests" / "evals" / "golden_locate.json"
@@ -106,6 +108,25 @@ def main(argv: Sequence[str] | None = None, *, registry: SuiteRegistry | None = 
         return 0
     if args.command == "quality":
         return _run_quality(args, selected_registry)
+
+    if args.command in {"query", "locate", "connect"}:
+        routed = route_line(args.question)
+        if routed.kind in {"advice", "catalogue"}:
+            warning = "advice_refused" if routed.kind == "advice" else "catalogue_refused"
+            answer = ADVICE_REFUSE if routed.kind == "advice" else CATALOGUE_REFUSE
+            print(
+                json.dumps(
+                    {
+                        "answer": answer,
+                        "capability": "locate",
+                        "suites": [],
+                        "warnings": [warning],
+                        "node_count": 0,
+                    },
+                    indent=2,
+                )
+            )
+            return 0
 
     llm_client = get_llm_client()
     try:

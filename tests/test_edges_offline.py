@@ -137,6 +137,18 @@ def test_cli_query_searches_all_attached_suites(capsys: pytest.CaptureFixture[st
     assert output["node_count"] == 2
 
 
+def test_cli_refuses_catalogue_and_advice(capsys: pytest.CaptureFixture[str]) -> None:
+    assert main(["query", "list all jobs"], registry=_registry()) == 0
+    catalogue = json.loads(capsys.readouterr().out)
+    assert "catalogue_refused" in catalogue["warnings"]
+    assert catalogue["node_count"] == 0
+
+    assert main(["query", "should I study medicine or CS"], registry=_registry()) == 0
+    advice = json.loads(capsys.readouterr().out)
+    assert "advice_refused" in advice["warnings"]
+    assert advice["node_count"] == 0
+
+
 def test_cli_opens_named_suite(capsys: pytest.CaptureFixture[str]) -> None:
     events: list[str] = []
 

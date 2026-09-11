@@ -21,7 +21,7 @@ from talent_angels.assistant.planning import (
     ExecutionPlan,
     build_plan_for_capability,
 )
-from talent_angels.assistant.suite_select import select_suites
+from talent_angels.assistant.suite_select import named_unattached, select_suites
 from talent_angels.contracts import AgentResult, NodeRef
 from talent_angels.llm import LLMClient, LLMUsage
 from talent_angels.runlog import (
@@ -296,7 +296,9 @@ def run_turn(
         override=suite_override,
         question=question,
     )
-    extra_warnings: list[str] = []
+    extra_warnings: list[str] = [
+        f"suite_not_attached:{name}" for name in named_unattached(question, registry.available)
+    ]
     collected: list[AgentResult] = []
     tools = []
     stages = []

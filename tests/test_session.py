@@ -154,7 +154,7 @@ def test_picker_markdown_does_not_search_and_cites_quietly() -> None:
     )
     text = render_picker("developer", pending, omitted=19)
     assert "1." in text and "software developer" in text
-    assert "I won't pick #1" in text or "I will not pick" in text.lower()
+    assert "won't pick" in text.casefold()
     assert text.lower().count("esco") <= 1  # quiet source line only
     assert "19 more" in text
 

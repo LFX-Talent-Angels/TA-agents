@@ -148,6 +148,18 @@ def test_cli_refuses_catalogue_and_advice(capsys: pytest.CaptureFixture[str]) ->
     assert "advice_refused" in advice["warnings"]
     assert advice["node_count"] == 0
 
+    assert main(["query", "thanks"], registry=_registry()) == 0
+    greet = json.loads(capsys.readouterr().out)
+    assert "not_a_map_question" in greet["warnings"]
+
+    assert main(["query", "help"], registry=_registry()) == 0
+    help_out = json.loads(capsys.readouterr().out)
+    assert "not_a_map_question" in help_out["warnings"]
+
+    assert main(["query", "1"], registry=_registry()) == 0
+    pick = json.loads(capsys.readouterr().out)
+    assert "not_a_map_question" in pick["warnings"]
+
 
 def test_cli_opens_named_suite(capsys: pytest.CaptureFixture[str]) -> None:
     events: list[str] = []

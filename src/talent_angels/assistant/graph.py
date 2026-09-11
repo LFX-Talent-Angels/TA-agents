@@ -114,6 +114,21 @@ def dispatch_plan(state: AssistantState, *, suite: SuiteTools, suite_name: str) 
         locate_kind = state.get("kind") or (draft.kind if draft else None)
         if locate_kind is None and request.rel_types == ("HAS_SKILL",):
             locate_kind = "occupation"
+        bound = state.get("bound_node")
+        if bound is None and request.subject.strip().casefold() in {
+            "it",
+            "that",
+            "this",
+            "them",
+        }:
+            return {
+                "result": AgentResult(
+                    capability=capability,
+                    suite=suite_name,
+                    warnings=["bind_required"],
+                ),
+                "tool_calls": [],
+            }
         located = locate(
             measured,
             suite_name,

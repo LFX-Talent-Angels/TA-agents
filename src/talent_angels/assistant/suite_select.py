@@ -8,6 +8,7 @@ Health filtering happens at dispatch (skip unreachable), not here.
 
 from __future__ import annotations
 
+import re
 from collections.abc import Sequence
 
 from talent_angels.assistant.merge import suite_heading
@@ -38,16 +39,40 @@ def resolve_show_token(token: str, available: Sequence[str]) -> str | None:
     return None
 
 
-def named_suites(question: str, available: Sequence[str]) -> tuple[str, ...]:
-    """Return attached suites the user named, in `available` order."""
+def _normalize_mentions(question: str) -> str:
+    """Fold O*NET spellings to the token 'onet' without substring traps."""
     text = question.casefold()
+    text = text.replace("o*net", " onet ").replace("o-net", " onet ")
+    text = re.sub(r"\bo\s+net\b", " onet ", text)
+    return text
+
+
+def _alias_token(alias: str) -> str:
+    return alias.casefold().replace("o*net", "onet").replace("o-net", "onet")
+
+
+def _token_in(text: str, token: str) -> bool:
+    if not token:
+        return False
+    return re.search(rf"(?<![a-z0-9]){re.escape(token)}(?![a-z0-9])", text) is not None
+
+
+def named_suites(question: str, available: Sequence[str]) -> tuple[str, ...]:
+    """Return suites the user named as whole tokens, in `available` order."""
+    text = _normalize_mentions(question)
     hits: list[str] = []
     for name in available:
         for alias in _aliases(name):
-            if alias.casefold() in text:
+            if _token_in(text, _alias_token(alias)):
                 hits.append(name)
                 break
     return tuple(hits)
+
+
+def named_unattached(question: str, available: Sequence[str]) -> tuple[str, ...]:
+    """Suite aliases the user named that are not in the attached registry."""
+    known = tuple(dict.fromkeys([*SUITE_ALIASES.keys(), *available]))
+    return tuple(name for name in named_suites(question, known) if name not in available)
 
 
 def select_suites(

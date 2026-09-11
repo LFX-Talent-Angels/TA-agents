@@ -12,6 +12,7 @@ def test_extract_pathfind_endpoints() -> None:
         "data analyst",
         "data scientist",
     )
+    assert extract_pathfind_endpoints("software engineer vs web developer") is None
 
 
 def test_pathfind_returns_a_route_on_fake_suite() -> None:

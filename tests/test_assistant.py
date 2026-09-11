@@ -82,6 +82,8 @@ def _occupation_node() -> FakeNode:
         ("skill path from data analyst to data scientist", "pathfind"),
         ("path analyst → scientist", "pathfind"),
         ("what skills I need to become a nurse", "connect"),
+        ("software engineer vs web developer", "locate"),
+        ("web developer AND plumber", "locate"),
     ],
 )
 def test_classify_capability_heuristics(question: str, expected: str) -> None:
@@ -92,6 +94,7 @@ def test_classify_capability_heuristics(question: str, expected: str) -> None:
     ("question", "expected"),
     [
         ("Where is nurse in ESCO?", "nurse"),
+        ("Where is firefighter in O*NET?", "firefighter"),
         ("software developer", "software developer"),
         ("Find accountant", "accountant"),
         (

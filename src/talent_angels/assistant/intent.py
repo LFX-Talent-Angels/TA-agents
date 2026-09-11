@@ -17,7 +17,6 @@ CAPABILITY_CONNECT: Capability = "connect"
 CAPABILITY_PATHFIND: Capability = "pathfind"
 
 _PATHFIND_KEYWORDS = (
-    "gap",
     "path between",
     "path from",
     "path to",
@@ -26,9 +25,12 @@ _PATHFIND_KEYWORDS = (
     "learning path",
     "route from",
     "route to",
+    "gap from",
+    "gap between",
     "→",
     "->",
 )
+_COMPARE_RE = re.compile(r"\b(vs\.?|versus)\b", re.I)
 _CONNECT_KEYWORDS = (
     "skills for",
     "skills does",
@@ -41,6 +43,21 @@ _CONNECT_KEYWORDS = (
     "essential skill",
     "optional skill",
 )
+
+
+def _in_suite_suffixes() -> tuple[str, ...]:
+    """' in esco', ' in o*net', … from the alias table — not ESCO-only."""
+    from talent_angels.assistant.merge import suite_heading
+    from talent_angels.assistant.suite_select import SUITE_ALIASES
+
+    suffixes: list[str] = []
+    for name, aliases in SUITE_ALIASES.items():
+        for alias in (name, suite_heading(name).casefold(), *aliases):
+            token = f" in {alias.casefold()}"
+            if token not in suffixes:
+                suffixes.append(token)
+    return tuple(suffixes)
+
 
 _SUBJECT_PATTERNS = (
     re.compile(r"^what essential skills does (?:a |an )?(.+?) need\b", re.I),
@@ -66,9 +83,11 @@ def extract_locate_subject(question: str) -> str:
     if text.endswith("?"):
         text = text[:-1].rstrip()
     lowered = text.lower()
-    if lowered.endswith(" in esco"):
-        text = text[: -len(" in esco")].rstrip()
-        lowered = text.lower()
+    for suffix in _in_suite_suffixes():
+        if lowered.endswith(suffix):
+            text = text[: -len(suffix)].rstrip()
+            lowered = text.lower()
+            break
 
     for pattern in _SUBJECT_PATTERNS:
         match = pattern.match(text)
@@ -92,6 +111,8 @@ _FROM_TO = re.compile(r"\bfrom\s+(.+?)\s+to\s+(.+?)\s*$", re.I)
 def extract_pathfind_endpoints(question: str) -> tuple[str, str] | None:
     """Best-effort 'from A to B' split. Planner draft wins when present."""
     text = question.strip().rstrip("?.!")
+    if _COMPARE_RE.search(text):
+        return None
     for pattern in (_PATH_ENDS, _FROM_TO):
         match = pattern.search(text)
         if match:
@@ -105,6 +126,10 @@ def extract_pathfind_endpoints(question: str) -> tuple[str, str] | None:
 def classify_capability(question: str) -> Capability:
     q = question.lower()
     padded = f" {q} "
+    if _COMPARE_RE.search(q):
+        if any(k in q for k in _CONNECT_KEYWORDS):
+            return CAPABILITY_CONNECT
+        return CAPABILITY_LOCATE
     if any(k in q for k in _PATHFIND_KEYWORDS):
         return CAPABILITY_PATHFIND
     if " from " in padded and " to " in padded:

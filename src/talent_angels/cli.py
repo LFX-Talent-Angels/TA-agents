@@ -33,11 +33,39 @@ from talent_angels.evals.quality import (
 from talent_angels.llm.factory import get_answer_mode, get_llm_client
 from talent_angels.query_details import write_query_details
 from talent_angels.runlog.report import render_recent_report
-from talent_angels.session.copy import ADVICE_REFUSE, CATALOGUE_REFUSE
+from talent_angels.session.copy import (
+    ADVICE_REFUSE,
+    CATALOGUE_REFUSE,
+    GREETING,
+    HELP_TEXT,
+)
 from talent_angels.session.router import route_line
 from talent_angels.suites import SuiteRegistry, UnknownSuiteError, default_suite_registry
 
 GOLDEN_LOCATE_PATH = Path(__file__).resolve().parents[2] / "tests" / "evals" / "golden_locate.json"
+
+
+def _cli_non_map_reply(kind: str) -> tuple[str, str] | None:
+    """CLI has no picker/session: refuse the same non-map kinds as the TUI."""
+    if kind == "advice":
+        return "advice_refused", ADVICE_REFUSE
+    if kind == "catalogue":
+        return "catalogue_refused", CATALOGUE_REFUSE
+    if kind == "greet":
+        return "not_a_map_question", GREETING
+    if kind == "help_plain":
+        return "not_a_map_question", HELP_TEXT
+    if kind == "pick":
+        return (
+            "not_a_map_question",
+            "Pick a number in ta-agent after a list, or name a job title.",
+        )
+    if kind == "show_suite":
+        return (
+            "not_a_map_question",
+            "show <suite> is a TUI follow-up; name a job or pass --suite.",
+        )
+    return None
 
 
 def _build_parser() -> argparse.ArgumentParser:
@@ -111,9 +139,9 @@ def main(argv: Sequence[str] | None = None, *, registry: SuiteRegistry | None = 
 
     if args.command in {"query", "locate", "connect"}:
         routed = route_line(args.question)
-        if routed.kind in {"advice", "catalogue"}:
-            warning = "advice_refused" if routed.kind == "advice" else "catalogue_refused"
-            answer = ADVICE_REFUSE if routed.kind == "advice" else CATALOGUE_REFUSE
+        refused = _cli_non_map_reply(routed.kind)
+        if refused is not None:
+            warning, answer = refused
             print(
                 json.dumps(
                     {

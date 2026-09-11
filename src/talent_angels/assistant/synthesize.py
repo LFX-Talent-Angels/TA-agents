@@ -6,6 +6,7 @@ in Sources used on the next turn.
 
 from __future__ import annotations
 
+import re
 from collections.abc import Sequence
 
 from talent_angels.assistant.merge import suite_heading
@@ -13,12 +14,28 @@ from talent_angels.contracts import AgentResult
 from talent_angels.llm import LLMClient, Message
 from talent_angels.session.phrase import uses_chat_phrasing
 
+_NODE_ID_RE = re.compile(
+    r"\b(?:esco|onet|sfia|bls):[a-z0-9][a-z0-9_.:-]*",
+    re.IGNORECASE,
+)
+_DUMMY_SUBJECT_RE = re.compile(
+    r"\b(the subject|or the subject)\b",
+    re.IGNORECASE,
+)
+
+
+def _phrasing_is_unsafe(text: str) -> bool:
+    """Raw ids and dummy subjects belong in JSON, not the user sentence."""
+    return bool(_NODE_ID_RE.search(text) or _DUMMY_SUBJECT_RE.search(text))
+
+
 _SYNTH_SYSTEM = """You phrase taxonomy map facts for a terminal user.
 Rules:
 - Use only titles, ids, skills, and descriptions in the FACT CARD.
 - Do not say two records are the same id or the same node.
 - If two maps name similar titles, say they are separate official records.
-- Do not invent occupations or skills.
+- Do not invent occupations, skills, or people.
+- Do not paste node ids (esco:…, onet:…). Titles only.
 - One short next-step at the end (skills, or pick a number if a map is ambiguous).
 - Do not write LFX or Talent Angels.
 - 3-6 sentences. Then stop; Sources used is printed in code."""
@@ -67,6 +84,10 @@ def synthesize_structured(
     if not results:
         empty = sources_line((), extra_warnings=extra_warnings)
         return "No attached taxonomy was reachable. " + empty
+
+    if results and all("bind_required" in result.warnings for result in results):
+        body = "Name or pick an occupation first, then ask for skills."
+        return f"{body}\n\n{sources_line(results, extra_warnings=extra_warnings)}"
 
     hits = [phrase for result in results if (phrase := _hit_phrase(result))]
     if not hits:
@@ -123,7 +144,7 @@ def synthesize(
     except (RuntimeError, OSError, ValueError):
         return fallback
     text = (llm_result.text or "").strip()
-    if not text:
+    if not text or _phrasing_is_unsafe(text):
         return fallback
     sources = sources_line(results, extra_warnings=extra_warnings)
     if "Sources used:" not in text:

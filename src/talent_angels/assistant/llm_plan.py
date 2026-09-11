@@ -14,6 +14,7 @@ from talent_angels.assistant.intent import (
     CAPABILITY_PATHFIND,
     Capability,
     classify_capability,
+    extract_pathfind_endpoints,
 )
 from talent_angels.assistant.llm_call import measure_complete
 from talent_angels.assistant.planning import ExecutionPlan, build_plan, build_plan_for_capability
@@ -38,8 +39,8 @@ How to choose target:
 - locate = only identify / define a node ("what is X", "where is X in ESCO")
 - connect = neighbors, skills, hierarchy around one node
   ("what skills does X need", "essential skills", "neighbors of X")
-- pathfind = a route or gap between TWO things
-  ("path from A to B", "skill gap from A to B")
+- pathfind = ONLY an explicit route ("path from A to B", "route from A to B")
+- "X vs Y" or "X and Y" as two titles is locate, not pathfind
 
 If the user asks for skills, neighbors, or what someone needs, target MUST be
 connect, not locate. Put only the occupation or skill name in subject — never
@@ -135,6 +136,9 @@ def _prefer_stronger_heuristic_target(question: str, draft: PlanDraft) -> PlanDr
     Stops a skills question being planned as locate-only. Never downgrades.
     """
     hinted = classify_capability(question)
+    if draft.target == CAPABILITY_PATHFIND and hinted != CAPABILITY_PATHFIND:
+        if extract_pathfind_endpoints(question) is None:
+            return draft.model_copy(update={"target": hinted})
     if _PLAN_RANK[hinted] <= _PLAN_RANK[draft.target]:
         return draft
     return draft.model_copy(update={"target": hinted})

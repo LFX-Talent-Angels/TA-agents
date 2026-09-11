@@ -32,6 +32,8 @@ def is_terminal_locate(result: AgentResult) -> bool:
 
 def summarize_result(result: AgentResult) -> str:
     """Deterministic user-facing text from a typed result (no LLM)."""
+    if "bind_required" in result.warnings:
+        return "Name or pick an occupation first, then ask for skills."
     if is_unimplemented_pathfind(result):
         return PATHFIND_UNAVAILABLE
     if not result.nodes:

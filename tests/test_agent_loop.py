@@ -427,7 +427,7 @@ def test_unique_skills_question_connects_after_locate() -> None:
         [("software developer", None)],
     )
     assert outcome.result.capability == "connect"
-    assert suite.neighbor_calls == [(occupation.id, ["HAS_SKILL"])]
+    assert suite.neighbor_calls == [(occupation.id, ["HAS_SKILL", "USES_SOFTWARE"])]
     assert "computer programming" in outcome.answer
 
 

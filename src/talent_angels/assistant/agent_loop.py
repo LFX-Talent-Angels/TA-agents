@@ -37,13 +37,13 @@ Return ONLY a JSON object each turn. Do not invent node IDs or skills.
 
 Call a graph tool:
 {"tool":"search_nodes","text":"software developer","kind":"occupation"}
-{"tool":"get_neighbors","node_id":"esco:occupation:...","rel_types":["HAS_SKILL"],"relation_filter":"essential"}
+{"tool":"get_neighbors","node_id":"esco:occupation:...","rel_types":["HAS_SKILL","USES_SOFTWARE"],"relation_filter":"essential"}
 
 Or finish with the user-facing answer:
 {"final":"one sentence using only returned labels, ids, and confidence"}
 
 Search the occupation or skill phrase from the question (not the whole sentence).
-Skills questions: search_nodes first, then get_neighbors with HAS_SKILL if the search is unique.
+Skills questions: search_nodes first, then get_neighbors with HAS_SKILL and USES_SOFTWARE if the search is unique.
 If TOOL_RESULT warnings include ambiguous or not_found, return final and stop. Do not search again.
 If node_count is larger than the listed nodes, mention the count and a few examples.
 Do not offer to fetch, paginate, or retrieve the rest.
@@ -141,7 +141,7 @@ def _execute_tool(
         if isinstance(rel_raw, list) and rel_raw:
             rel_types = tuple(str(item) for item in rel_raw)
         else:
-            rel_types = ("HAS_SKILL",)
+            rel_types = ("HAS_SKILL", "USES_SOFTWARE")
         relation = args.get("relation_filter")
         relation_kind = relation if isinstance(relation, str) else None
         center = None
@@ -344,7 +344,7 @@ def run_tool_loop(
             located.nodes[0],
             request=ConnectRequest(
                 subject=located.nodes[0].pref_label,
-                rel_types=("HAS_SKILL",),
+                rel_types=("HAS_SKILL", "USES_SOFTWARE"),
                 relation_kind="essential",
             ),
             confidence=located.confidence,

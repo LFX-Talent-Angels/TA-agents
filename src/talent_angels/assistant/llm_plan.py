@@ -139,7 +139,7 @@ def connect_request_from_draft(draft: PlanDraft) -> ConnectRequest | None:
         return None
     rel_types = draft.rel_types
     if rel_types is None and (draft.relation_filter or draft.target == "connect"):
-        rel_types = ("HAS_SKILL",)
+        rel_types = ("HAS_SKILL", "USES_SOFTWARE")
     return ConnectRequest(
         subject=draft.subject.strip(),
         rel_types=rel_types or (),

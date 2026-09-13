@@ -14,6 +14,7 @@ from talent_angels.assistant.connect_request import (
 from talent_angels.assistant.intent import (
     CAPABILITY_CONNECT,
     CAPABILITY_LOCATE,
+    CAPABILITY_PATHFIND,
     Capability,
     extract_locate_subject,
 )
@@ -183,6 +184,16 @@ def dispatch_plan(state: AssistantState, *, suite: SuiteTools, suite_name: str) 
         return {
             "result": result,
             "tool_calls": measured.tool_calls,
+        }
+
+    if capability == CAPABILITY_PATHFIND:
+        return {
+            "result": AgentResult(
+                capability=capability,
+                suite=suite_name,
+                warnings=["capability_not_implemented:pathfind"],
+            ),
+            "tool_calls": [],
         }
 
     return {

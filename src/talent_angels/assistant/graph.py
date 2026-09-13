@@ -99,17 +99,25 @@ def dispatch_plan(state: AssistantState, *, suite: SuiteTools, suite_name: str) 
             try:
                 request = extract_connect_request(state["question"])
             except UnsupportedConnectQuery:
-                return {
-                    "result": AgentResult(
-                        capability=capability,
-                        suite=suite_name,
-                        warnings=["unsupported_connect_query"],
-                    ),
-                    "tool_calls": [],
-                }
+                if draft is not None and draft.subject:
+                    from talent_angels.skills.connect.models import ConnectRequest as _CR
+
+                    request = _CR(
+                        subject=draft.subject,
+                        rel_types=("HAS_SKILL", "USES_SOFTWARE"),
+                    )
+                else:
+                    return {
+                        "result": AgentResult(
+                            capability=capability,
+                            suite=suite_name,
+                            warnings=["unsupported_connect_query"],
+                        ),
+                        "tool_calls": [],
+                    }
 
         locate_kind = state.get("kind") or (draft.kind if draft else None)
-        if locate_kind is None and request.rel_types == ("HAS_SKILL",):
+        if locate_kind is None and "HAS_SKILL" in request.rel_types:
             locate_kind = "occupation"
         bound = state.get("bound_node")
         if bound is None and request.subject.strip().casefold() in {

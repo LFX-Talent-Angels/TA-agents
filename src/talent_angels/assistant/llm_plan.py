@@ -141,8 +141,11 @@ def connect_request_from_draft(
 ) -> ConnectRequest | None:
     if not draft.subject:
         return None
-    rel_types = draft.rel_types
-    if rel_types is None and (draft.relation_filter or draft.target == "connect"):
+    # Always use suite-schema skill_rel_types for connect queries. The LLM planner
+    # only knows ESCO's "HAS_SKILL" example — it cannot know suite-specific types
+    # like O*NET's "USES_SOFTWARE". Ignore draft.rel_types for skill connects.
+    rel_types: tuple[str, ...] | None = None
+    if draft.target == "connect" or draft.relation_filter or draft.rel_types:
         rel_types = skill_rel_types
     return ConnectRequest(
         subject=draft.subject.strip(),

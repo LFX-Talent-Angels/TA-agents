@@ -264,7 +264,9 @@ def test_graph_planner_owns_subject_before_search() -> None:
 
     assert final_state["capability"] == "connect"
     assert suite.search_calls == [("software developer", "occupation")]
-    assert suite.neighbor_calls == [(node.id, ["HAS_SKILL"])]
+    # Schema always overrides LLM-suggested rel_types; fake suite schema returns
+    # ("HAS_SKILL", "USES_SOFTWARE") regardless of what the LLM sent.
+    assert suite.neighbor_calls == [(node.id, ["HAS_SKILL", "USES_SOFTWARE"])]
     assert PLAN_SYSTEM in client.calls[0][0].content
     assert LOOP_SYSTEM not in client.calls[0][0].content
 

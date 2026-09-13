@@ -102,18 +102,37 @@ def connect(
                 request.relation_kind == "optional"
                 and edge.properties.get("relation_type") in optional_rel_values
             )
+            # Edges with no relation_type carry no essential/optional signal
+            # (e.g. O*NET USES_SOFTWARE) — always include them in any filter.
+            or edge.properties.get("relation_type") is None
         ]
 
     kept_ids = {center.id}
     for edge in edges:
         kept_ids.update((edge.from_id, edge.to_id))
 
+    # Order skill nodes so tech-tool rel_types (e.g. USES_SOFTWARE) appear before
+    # generic ones (e.g. HAS_SKILL). The last rel_type in request.rel_types gets
+    # priority 0, so its skills surface first in the compacted LLM context window.
+    _rel_priority: dict[str, int] = {rt: i for i, rt in enumerate(reversed(request.rel_types))}
+    node_rel_priority: dict[str, int] = {}
+    for edge in edges:
+        nid = edge.to_id if edge.from_id == center.id else edge.from_id
+        pri = _rel_priority.get(edge.type, len(request.rel_types))
+        if nid not in node_rel_priority or pri < node_rel_priority[nid]:
+            node_rel_priority[nid] = pri
+
     nodes = [center]
-    nodes.extend(
-        _node_ref(node, suite_name)
-        for node in raw.nodes
-        if node.id != center.id and node.id in kept_ids
+    skill_nodes = sorted(
+        (
+            _node_ref(node, suite_name)
+            for node in raw.nodes
+            if node.id != center.id and node.id in kept_ids
+        ),
+        key=lambda n: node_rel_priority.get(n.id, len(request.rel_types)),
     )
+    nodes.extend(skill_nodes)
+
     mapped_edges = [
         EdgeRef(
             type=edge.type,

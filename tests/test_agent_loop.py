@@ -274,7 +274,7 @@ def test_graph_falls_back_when_provider_rejects_tools() -> None:
 
     assert final_state["capability"] == "connect"
     assert suite.search_calls == [("software developer", "occupation")]
-    assert suite.neighbor_calls == [(occupation.id, ["HAS_SKILL"])]
+    assert suite.neighbor_calls == [(occupation.id, ["HAS_SKILL", "USES_SOFTWARE"])]
 
 
 def test_graph_uses_planner_when_provider_is_not_stub() -> None:

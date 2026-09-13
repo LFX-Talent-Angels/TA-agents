@@ -52,7 +52,7 @@ def extract_connect_request(question: str) -> ConnectRequest:
     if match:
         return ConnectRequest(
             subject=match.group(1).strip(),
-            rel_types=("HAS_SKILL",),
+            rel_types=("HAS_SKILL", "USES_SOFTWARE"),
             relation_kind=relation_kind,
         )
 
@@ -164,29 +164,29 @@ def followup_connect_request(question: str, bound: NodeRef) -> ConnectRequest | 
     if normalized in _FOLLOWUP_ESSENTIAL:
         return ConnectRequest(
             subject=bound.pref_label,
-            rel_types=("HAS_SKILL",),
+            rel_types=("HAS_SKILL", "USES_SOFTWARE"),
             relation_kind="essential",
         )
     if normalized in _FOLLOWUP_OPTIONAL:
         return ConnectRequest(
             subject=bound.pref_label,
-            rel_types=("HAS_SKILL",),
+            rel_types=("HAS_SKILL", "USES_SOFTWARE"),
             relation_kind="optional",
         )
     if normalized in _FOLLOWUP_SKILLS:
-        return ConnectRequest(subject=bound.pref_label, rel_types=("HAS_SKILL",))
+        return ConnectRequest(subject=bound.pref_label, rel_types=("HAS_SKILL", "USES_SOFTWARE"))
     if normalized in _FOLLOWUP_NEIGHBORS:
         return ConnectRequest(subject=bound.pref_label)
     if re.search(r"\b(become|becoming)\s+(an?\s+)?(one|that|this|it)\b", normalized):
         return ConnectRequest(
             subject=bound.pref_label,
-            rel_types=("HAS_SKILL",),
+            rel_types=("HAS_SKILL", "USES_SOFTWARE"),
             relation_kind="essential",
         )
     if re.search(r"how\s+(do\s+i\s+|can\s+i\s+|to\s+)become\s*$", normalized):
         return ConnectRequest(
             subject=bound.pref_label,
-            rel_types=("HAS_SKILL",),
+            rel_types=("HAS_SKILL", "USES_SOFTWARE"),
             relation_kind="essential",
         )
 
@@ -209,15 +209,15 @@ def _bound_skills_followup(normalized: str, bound: NodeRef) -> ConnectRequest | 
     ):
         return ConnectRequest(
             subject=bound.pref_label,
-            rel_types=("HAS_SKILL",),
+            rel_types=("HAS_SKILL", "USES_SOFTWARE"),
             relation_kind="essential",
         )
     if re.search(r"\boptional\s+skills?\b", normalized):
         return ConnectRequest(
             subject=bound.pref_label,
-            rel_types=("HAS_SKILL",),
+            rel_types=("HAS_SKILL", "USES_SOFTWARE"),
             relation_kind="optional",
         )
     if re.search(r"\bskills\b", normalized):
-        return ConnectRequest(subject=bound.pref_label, rel_types=("HAS_SKILL",))
+        return ConnectRequest(subject=bound.pref_label, rel_types=("HAS_SKILL", "USES_SOFTWARE"))
     return None

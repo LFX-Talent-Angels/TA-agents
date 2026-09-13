@@ -51,21 +51,26 @@ def _center_ref() -> NodeRef:
         (
             "What essential skills does a software developer need?",
             "software developer",
-            ("HAS_SKILL",),
+            ("HAS_SKILL", "USES_SOFTWARE"),
             "essential",
         ),
-        ("What skills does software developer need?", "software developer", ("HAS_SKILL",), None),
-        ("Show skills for an accountant", "accountant", ("HAS_SKILL",), None),
+        (
+            "What skills does software developer need?",
+            "software developer",
+            ("HAS_SKILL", "USES_SOFTWARE"),
+            None,
+        ),
+        ("Show skills for an accountant", "accountant", ("HAS_SKILL", "USES_SOFTWARE"), None),
         (
             "what skills I need to be a software developer",
             "software developer",
-            ("HAS_SKILL",),
+            ("HAS_SKILL", "USES_SOFTWARE"),
             None,
         ),
         (
             "skills I need to become a software developer",
             "software developer",
-            ("HAS_SKILL",),
+            ("HAS_SKILL", "USES_SOFTWARE"),
             None,
         ),
         ("Show neighbors of data scientist", "data scientist", (), None),
@@ -124,7 +129,7 @@ def test_connect_filters_edge_property_and_preserves_graph_facts() -> None:
         locate_evidence=[EvidencePointer(suite="esco", pointer="esco:search:exact_pref")],
     )
 
-    assert suite.calls == [(center.id, ["HAS_SKILL"])]
+    assert suite.calls == [(center.id, ["HAS_SKILL", "USES_SOFTWARE"])]
     assert [node.id for node in result.nodes] == [center.id, essential.id]
     assert len(result.edges) == 1
     assert result.edges[0].source_node_id == center.id

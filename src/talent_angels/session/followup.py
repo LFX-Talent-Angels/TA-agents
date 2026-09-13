@@ -11,7 +11,8 @@ _BARE_YES = re.compile(r"^\s*yes\s*[.!]?\s*$", re.IGNORECASE)
 _EXPAND = re.compile(
     r"(complete|full|entire|whole)\s+(list|set)|"
     r"list(\s+down)?(\s+the)?\s+(complete|full|all)|"
-    r"show(\s+me)?(\s+the)?\s+(complete|full|all|rest)|"
+    r"show(\s+me)?(\s+the)?\s+(complete|full|all|rest|more)|"
+    r"more\s+(skills?|results?)|"
     r"list\s+them(\s+all)?|"
     r"the\s+rest|"
     r"all\s+(the\s+)?skills|"

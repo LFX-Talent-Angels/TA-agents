@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import re
+from dataclasses import replace
 from difflib import SequenceMatcher
 
 from talent_angels.contracts import NodeRef
@@ -102,6 +103,13 @@ _FOLLOWUP_NEIGHBORS = frozenset(
     }
 )
 
+_GENERIC_SUBJECT_RE = re.compile(
+    r"^(?:this|that|it|the|one|"
+    r"job|role|occupation|position|"
+    r"(?:this|that|the)\s+(?:job|role|occupation|position))$",
+    re.IGNORECASE,
+)
+
 
 _DESCRIBE_RE = re.compile(
     r"what\s+does\s+.+\s+do|"
@@ -186,9 +194,12 @@ def followup_connect_request(question: str, bound: NodeRef) -> ConnectRequest | 
         request = extract_connect_request(question)
     except UnsupportedConnectQuery:
         return _bound_skills_followup(normalized, bound)
-    if request.subject.casefold() != bound.pref_label.casefold():
-        return None
-    return request
+    subj = request.subject.casefold().strip()
+    if subj == bound.pref_label.casefold():
+        return request
+    if _GENERIC_SUBJECT_RE.match(subj):
+        return replace(request, subject=bound.pref_label)
+    return None
 
 
 def _bound_skills_followup(normalized: str, bound: NodeRef) -> ConnectRequest | None:

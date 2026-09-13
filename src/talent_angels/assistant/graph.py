@@ -62,6 +62,7 @@ def dispatch_plan(state: AssistantState, *, suite: SuiteTools, suite_name: str) 
     capability = state["plan"].intent.target
     measured = MeasuredSuite(suite)
     draft = state.get("plan_draft")
+    schema = suite.suite_schema
     if capability == CAPABILITY_LOCATE:
         locate_text = (
             draft.subject if draft and draft.subject else extract_locate_subject(state["question"])
@@ -73,13 +74,22 @@ def dispatch_plan(state: AssistantState, *, suite: SuiteTools, suite_name: str) 
             locate_text,
             kind=locate_kind,
         )
-        result = group_and_sort_locate(measured, result, locate_text, suite_name=suite_name)
+        result = group_and_sort_locate(
+            measured,
+            result,
+            locate_text,
+            suite_name=suite_name,
+            group_rel_type=schema.group_rel_type,
+            group_node_kinds=schema.group_node_kinds,
+        )
         return {"result": result, "tool_calls": measured.tool_calls}
 
     if capability == CAPABILITY_CONNECT:
         bound = state.get("bound_node")
         if isinstance(bound, NodeRef) and bound.suite == suite_name:
-            followup = followup_connect_request(state["question"], bound)
+            followup = followup_connect_request(
+                state["question"], bound, skill_rel_types=schema.skill_rel_types
+            )
             if followup is not None:
                 result = connect(
                     measured,
@@ -88,23 +98,30 @@ def dispatch_plan(state: AssistantState, *, suite: SuiteTools, suite_name: str) 
                     request=followup,
                     confidence=None,
                     locate_evidence=[],
+                    optional_rel_values=schema.optional_rel_values,
                 )
                 return {
                     "result": result,
                     "tool_calls": measured.tool_calls,
                 }
 
-        request = connect_request_from_draft(draft) if draft is not None else None
+        request = (
+            connect_request_from_draft(draft, skill_rel_types=schema.skill_rel_types)
+            if draft is not None
+            else None
+        )
         if request is None:
             try:
-                request = extract_connect_request(state["question"])
+                request = extract_connect_request(
+                    state["question"], skill_rel_types=schema.skill_rel_types
+                )
             except UnsupportedConnectQuery:
                 if draft is not None and draft.subject:
                     from talent_angels.skills.connect.models import ConnectRequest as _CR
 
                     request = _CR(
                         subject=draft.subject,
-                        rel_types=("HAS_SKILL", "USES_SOFTWARE"),
+                        rel_types=schema.skill_rel_types,
                     )
                 else:
                     return {
@@ -140,7 +157,14 @@ def dispatch_plan(state: AssistantState, *, suite: SuiteTools, suite_name: str) 
             request.subject,
             kind=locate_kind,
         )
-        located = group_and_sort_locate(measured, located, request.subject, suite_name=suite_name)
+        located = group_and_sort_locate(
+            measured,
+            located,
+            request.subject,
+            suite_name=suite_name,
+            group_rel_type=schema.group_rel_type,
+            group_node_kinds=schema.group_node_kinds,
+        )
         if not located.nodes or "ambiguous" in located.warnings:
             return {
                 "result": located.model_copy(update={"capability": capability}),
@@ -154,6 +178,7 @@ def dispatch_plan(state: AssistantState, *, suite: SuiteTools, suite_name: str) 
             request=request,
             confidence=located.confidence,
             locate_evidence=located.evidence,
+            optional_rel_values=schema.optional_rel_values,
         )
         return {
             "result": result,

@@ -9,12 +9,24 @@ from talent_angels.assistant.turn import run_turn
 from talent_angels.contracts import NodeRef
 from talent_angels.llm.stub_client import StubLLMClient
 from talent_angels.skills.connect.models import ConnectRequest
+from talent_angels.suites.schema import SuiteSchema
+
+_DEFAULT_SCHEMA = SuiteSchema(
+    skill_rel_types=("HAS_SKILL", "USES_SOFTWARE"),
+    optional_rel_values=frozenset({"optional", "transferable"}),
+    group_rel_type=None,
+    group_node_kinds=frozenset(),
+)
 
 
 class RecordingSuite:
     def __init__(self) -> None:
         self.searches: list[str] = []
         self.neighbor_ids: list[str] = []
+
+    @property
+    def suite_schema(self) -> SuiteSchema:
+        return _DEFAULT_SCHEMA
 
     def search_nodes(self, text: str, kind: str | None = None):
         self.searches.append(text)

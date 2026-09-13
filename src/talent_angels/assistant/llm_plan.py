@@ -134,12 +134,16 @@ def _prefer_stronger_heuristic_target(question: str, draft: PlanDraft) -> PlanDr
     return draft.model_copy(update={"target": hinted})
 
 
-def connect_request_from_draft(draft: PlanDraft) -> ConnectRequest | None:
+def connect_request_from_draft(
+    draft: PlanDraft,
+    *,
+    skill_rel_types: tuple[str, ...] = ("HAS_SKILL", "USES_SOFTWARE"),
+) -> ConnectRequest | None:
     if not draft.subject:
         return None
     rel_types = draft.rel_types
     if rel_types is None and (draft.relation_filter or draft.target == "connect"):
-        rel_types = ("HAS_SKILL", "USES_SOFTWARE")
+        rel_types = skill_rel_types
     return ConnectRequest(
         subject=draft.subject.strip(),
         rel_types=rel_types or (),

@@ -87,20 +87,20 @@ def connect(
     request: ConnectRequest,
     confidence: float | None,
     locate_evidence: Sequence[EvidencePointer],
+    optional_rel_values: frozenset[str] = frozenset({"optional", "transferable"}),
 ) -> AgentResult:
     """Return direct graph neighbors of an already-resolved center node."""
     rel_types = list(request.rel_types) or None
     raw = suite.get_neighbors(center.id, rel_types=rel_types)
     edges = list(raw.edges)
     if request.relation_kind is not None:
-        _optional_aliases = {"optional", "transferable"}
         edges = [
             edge
             for edge in edges
             if edge.properties.get("relation_type") == request.relation_kind
             or (
                 request.relation_kind == "optional"
-                and edge.properties.get("relation_type") in _optional_aliases
+                and edge.properties.get("relation_type") in optional_rel_values
             )
         ]
 

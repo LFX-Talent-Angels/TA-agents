@@ -13,16 +13,6 @@ from talent_angels.llm import LLMClient, Message
 from talent_angels.runlog import StageUsage
 
 AMBIGUOUS_CHOICE_LIMIT = 3
-PATHFIND_UNIMPLEMENTED_WARNING = "capability_not_implemented:pathfind"
-PATHFIND_UNAVAILABLE = (
-    "Pathfind is not in this MVP, so I cannot compute a skill path or gap "
-    "between two occupations. Ask me to locate one occupation, or to list "
-    "the skills of one occupation."
-)
-
-
-def is_unimplemented_pathfind(result: AgentResult) -> bool:
-    return PATHFIND_UNIMPLEMENTED_WARNING in result.warnings
 
 
 def is_terminal_locate(result: AgentResult) -> bool:
@@ -34,8 +24,6 @@ def summarize_result(result: AgentResult) -> str:
     """Deterministic user-facing text from a typed result (no LLM)."""
     if "bind_required" in result.warnings:
         return "Name or pick an occupation first, then ask for skills."
-    if is_unimplemented_pathfind(result):
-        return PATHFIND_UNAVAILABLE
     if not result.nodes:
         warning = result.warnings[0] if result.warnings else "not_found"
         return f"No match found for capability '{result.capability}' ({warning})."
@@ -50,18 +38,6 @@ def summarize_result(result: AgentResult) -> str:
             f"Ambiguous locate result — confidence {confidence_pct}. "
             f"Candidates: {rendered}{remainder}. Please clarify which candidate you mean."
         )
-    if result.capability == "pathfind":
-        occupations = [node for node in result.nodes if node.kind.casefold() == "occupation"]
-        start = (occupations[0] if occupations else result.nodes[0]).pref_label
-        end = (occupations[-1] if occupations else result.nodes[-1]).pref_label
-        summary = f"{start} → {end}"
-        gap = next((item for item in result.warnings if item.startswith("derived_skill_gap:")), "")
-        if gap:
-            summary += "; " + gap.replace("derived_skill_gap:", "skill gap: ", 1)
-        other = [item for item in result.warnings if not item.startswith("derived_skill_gap:")]
-        if other:
-            summary += f" [warnings: {', '.join(other)}]"
-        return summary
     if result.capability == "connect":
         center = result.nodes[0]
         neighbors = result.nodes[1:]
@@ -93,7 +69,7 @@ def build_answer(
 ) -> tuple[str, StageUsage | None]:
     """Returns (answer text, answer-stage usage). Stage is None when no LLM call ran."""
     summary = summarize_result(result)
-    if is_unimplemented_pathfind(result) or is_terminal_locate(result) or not result.nodes:
+    if is_terminal_locate(result) or not result.nodes:
         return summary, None
     # Many neighbors: keep the counted summary. Do not let the model invent pagination.
     if result.capability == "connect" and len(result.edges) > 5:

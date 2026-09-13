@@ -11,10 +11,8 @@ from pydantic import BaseModel, ConfigDict, Field, ValidationError, field_valida
 from talent_angels.assistant.intent import (
     CAPABILITY_CONNECT,
     CAPABILITY_LOCATE,
-    CAPABILITY_PATHFIND,
     Capability,
     classify_capability,
-    extract_pathfind_endpoints,
 )
 from talent_angels.assistant.llm_call import measure_complete
 from talent_angels.assistant.planning import ExecutionPlan, build_plan, build_plan_for_capability
@@ -26,9 +24,8 @@ from talent_angels.skills.locate import ESCO_SUITE_NAME
 PLAN_SYSTEM = """You are the LFX Talent Angels planner. Return ONLY a JSON object.
 
 Keys:
-- target: locate | connect | pathfind
+- target: locate | connect
 - subject: short search phrase, or null
-- secondary_subject: second pathfind endpoint, or null
 - kind: occupation | skill | null
 - rel_types: array of relationship names, or null
 - relation_filter: essential | optional | null
@@ -39,8 +36,7 @@ How to choose target:
 - locate = only identify / define a node ("what is X", "where is X in ESCO")
 - connect = neighbors, skills, hierarchy around one node
   ("what skills does X need", "essential skills", "neighbors of X")
-- pathfind = ONLY an explicit route ("path from A to B", "route from A to B")
-- "X vs Y" or "X and Y" as two titles is locate, not pathfind
+- "X vs Y" or "X and Y" as two titles is locate
 
 If the user asks for skills, neighbors, or what someone needs, target MUST be
 connect, not locate. Put only the occupation or skill name in subject — never
@@ -53,7 +49,6 @@ Examples:
 {"target":"locate","subject":"firefighter","kind":"occupation"}
 {"target":"connect","subject":"software developer","kind":"occupation",
  "rel_types":["HAS_SKILL"],"relation_filter":"essential"}
-{"target":"pathfind","subject":"data analyst","secondary_subject":"data scientist"}
 
 Same connect shape for: "what skills does a X need", "what skills I need to be
 a X", "skills I need to become a X", "I want to be a X".
@@ -63,7 +58,6 @@ Same locate shape for: "what is a X", "what does a X do", "where is X".
 _PLAN_RANK = {
     CAPABILITY_LOCATE: 0,
     CAPABILITY_CONNECT: 1,
-    CAPABILITY_PATHFIND: 2,
 }
 
 _JSON_OBJECT = re.compile(r"\{.*\}", re.DOTALL)
@@ -76,13 +70,12 @@ class PlanDraft(BaseModel):
 
     target: Capability
     subject: str | None = None
-    secondary_subject: str | None = None
     kind: str | None = None
     rel_types: tuple[str, ...] | None = None
     relation_filter: str | None = None
     suites: tuple[str, ...] = Field(default=())
 
-    @field_validator("subject", "secondary_subject", "kind", "relation_filter", mode="before")
+    @field_validator("subject", "kind", "relation_filter", mode="before")
     @classmethod
     def blank_to_none(cls, value: object) -> object:
         if isinstance(value, str) and not value.strip():
@@ -136,9 +129,6 @@ def _prefer_stronger_heuristic_target(question: str, draft: PlanDraft) -> PlanDr
     Stops a skills question being planned as locate-only. Never downgrades.
     """
     hinted = classify_capability(question)
-    if draft.target == CAPABILITY_PATHFIND and hinted != CAPABILITY_PATHFIND:
-        if extract_pathfind_endpoints(question) is None:
-            return draft.model_copy(update={"target": hinted})
     if _PLAN_RANK[hinted] <= _PLAN_RANK[draft.target]:
         return draft
     return draft.model_copy(update={"target": hinted})

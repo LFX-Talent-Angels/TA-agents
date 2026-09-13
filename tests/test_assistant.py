@@ -78,9 +78,6 @@ def _occupation_node() -> FakeNode:
     [
         ("Where is software developer in ESCO?", "locate"),
         ("What essential skills does a software developer need?", "connect"),
-        ("What is the skill gap from data analyst to data scientist?", "pathfind"),
-        ("skill path from data analyst to data scientist", "pathfind"),
-        ("path analyst → scientist", "pathfind"),
         ("what skills I need to become a nurse", "connect"),
         ("software engineer vs web developer", "locate"),
         ("web developer AND plumber", "locate"),
@@ -350,10 +347,6 @@ def test_turn_separates_cache_and_runlog_by_suite(
         (
             "What essential skills does a software developer need?",
             ("locate", "connect"),
-        ),
-        (
-            "What is the skill gap from data analyst to data scientist?",
-            ("locate", "connect", "pathfind"),
         ),
     ],
 )

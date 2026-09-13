@@ -48,9 +48,9 @@ class EvidencePointer(BaseModel):
 
 
 class AgentResult(BaseModel):
-    """Returned by every skill dispatch (locate/connect/pathfind/evaluate)."""
+    """Returned by every skill dispatch (locate/connect)."""
 
-    capability: str  # locate | connect | pathfind | evaluate
+    capability: str  # locate | connect
     suite: str  # esco | onet | sfia | bls | ...
     nodes: list[NodeRef] = Field(default_factory=list)
     edges: list[EdgeRef] = Field(default_factory=list)

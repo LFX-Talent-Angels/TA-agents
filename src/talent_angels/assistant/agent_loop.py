@@ -7,16 +7,12 @@ import re
 from dataclasses import dataclass, field
 
 from talent_angels.assistant.answer import (
-    PATHFIND_UNAVAILABLE,
-    PATHFIND_UNIMPLEMENTED_WARNING,
     is_terminal_locate,
-    is_unimplemented_pathfind,
     summarize_result,
 )
 from talent_angels.assistant.intent import (
     CAPABILITY_CONNECT,
     CAPABILITY_LOCATE,
-    CAPABILITY_PATHFIND,
     Capability,
     classify_capability,
     extract_locate_subject,
@@ -242,22 +238,7 @@ def _capability_from_result(result: AgentResult | None) -> Capability:
         return CAPABILITY_LOCATE
     if result.capability == CAPABILITY_CONNECT:
         return CAPABILITY_CONNECT
-    if result.capability == CAPABILITY_PATHFIND:
-        return CAPABILITY_PATHFIND
     return CAPABILITY_LOCATE
-
-
-def _unimplemented_pathfind(suite_name: str) -> AgentLoopOutcome:
-    result = AgentResult(
-        capability=CAPABILITY_PATHFIND,
-        suite=suite_name,
-        warnings=[PATHFIND_UNIMPLEMENTED_WARNING],
-    )
-    return AgentLoopOutcome(
-        answer=PATHFIND_UNAVAILABLE,
-        result=result,
-        plan=build_plan_for_capability(CAPABILITY_PATHFIND, suites=(suite_name,)),
-    )
 
 
 def run_tool_loop(
@@ -268,9 +249,6 @@ def run_tool_loop(
     llm_client: LLMClient,
     kind: str | None = None,
 ) -> AgentLoopOutcome:
-    if classify_capability(question) == CAPABILITY_PATHFIND:
-        return _unimplemented_pathfind(suite_name)
-
     measured = MeasuredSuite(suite)
     messages: list[Message] = [
         Message(role="system", content=LOOP_SYSTEM),
@@ -384,7 +362,7 @@ def run_tool_loop(
     if intent == CAPABILITY_CONNECT and is_terminal_locate(last_result):
         last_result = last_result.model_copy(update={"capability": CAPABILITY_CONNECT})
 
-    if is_unimplemented_pathfind(last_result) or is_terminal_locate(last_result):
+    if is_terminal_locate(last_result):
         answer = summarize_result(last_result)
     elif (
         (last_result.capability == CAPABILITY_CONNECT and len(last_result.edges) > 5)

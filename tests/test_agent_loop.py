@@ -7,7 +7,6 @@ from talent_angels.assistant.agent_loop import (
     parse_loop_turn,
     run_tool_loop,
 )
-from talent_angels.assistant.answer import PATHFIND_UNAVAILABLE, PATHFIND_UNIMPLEMENTED_WARNING
 from talent_angels.assistant.graph import build_graph
 from talent_angels.contracts import AgentResult, EdgeRef, NodeRef
 from talent_angels.llm.protocol import LLMResult, LLMUsage, Message
@@ -305,60 +304,6 @@ def test_graph_uses_planner_when_provider_is_not_stub() -> None:
     assert "software developer" in final_state["answer"]
     assert suite.search_calls == [("software developer", "occupation")]
     assert [stage.stage for stage in final_state["llm_stages"]] == ["intent"]
-
-
-def test_path_question_does_not_list_neighbors() -> None:
-    occupation = _occupation()
-    suite = FakeSuite(
-        FakeToolResult(
-            candidates=[FakeCandidate(node=occupation, confidence=0.95, method="exact_pref")],
-            nodes=[occupation],
-        )
-    )
-    client = ScriptedToolClient(
-        [
-            LLMResult(
-                text='{"tool":"search_nodes","text":"data analyst"}',
-                provider="litellm",
-                model="actual",
-                usage=LLMUsage(input_tokens=4, output_tokens=2),
-            )
-        ]
-    )
-
-    outcome = run_tool_loop(
-        question="What is the skill path from data analyst to data scientist?",
-        suite=suite,
-        suite_name="esco",
-        llm_client=client,
-    )
-
-    assert PATHFIND_UNIMPLEMENTED_WARNING in outcome.result.warnings
-    assert outcome.plan.capabilities == ("locate", "connect", "pathfind")
-    assert outcome.result.capability == "pathfind"
-    assert suite.search_calls == []
-    assert suite.neighbor_calls == []
-    assert client.calls == []
-    assert outcome.tool_calls == []
-    assert outcome.answer == PATHFIND_UNAVAILABLE
-
-
-def test_graph_path_question_does_not_fallback_to_connect() -> None:
-    occupation = _occupation()
-    suite = FakeSuite(
-        FakeToolResult(
-            candidates=[FakeCandidate(node=occupation, confidence=0.95, method="exact_pref")],
-            nodes=[occupation],
-        )
-    )
-    graph = build_graph(suite=suite, llm_client=ExplodingToolClient(), answer_mode="structured")
-
-    final_state = graph.invoke({"question": "skill path from data analyst to data scientist"})
-
-    assert final_state["capability"] == "pathfind"
-    assert PATHFIND_UNIMPLEMENTED_WARNING in final_state["result"].warnings
-    assert final_state["answer"] == PATHFIND_UNAVAILABLE
-    assert all(call[0] != "connect" for call in suite.neighbor_calls)
 
 
 def test_ambiguous_search_stops_without_another_lookup() -> None:

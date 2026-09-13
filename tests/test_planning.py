@@ -22,11 +22,6 @@ from talent_angels.assistant.planning import (
             "connect",
             ("locate", "connect"),
         ),
-        (
-            "What is the skill gap from data analyst to data scientist?",
-            "pathfind",
-            ("locate", "connect", "pathfind"),
-        ),
     ],
 )
 def test_build_plan_is_cumulative_and_suite_scoped(
@@ -72,7 +67,7 @@ def test_execution_plan_rejects_non_cumulative_direct_construction() -> None:
     with pytest.raises(ValidationError, match="requires cumulative steps"):
         ExecutionPlan(
             intent=Intent(target="connect"),
-            steps=(PlanStep(capability="pathfind", suites=("esco",)),),
+            steps=(PlanStep(capability="locate", suites=("esco",)),),
         )
 
 

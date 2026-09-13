@@ -7,7 +7,7 @@ from dataclasses import dataclass
 from datetime import UTC, datetime
 from typing import Literal, Protocol
 
-from talent_angels.assistant.answer import is_unimplemented_pathfind, summarize_result
+from talent_angels.assistant.answer import summarize_result
 from talent_angels.assistant.connect_request import (
     followup_connect_request,
     is_describe_followup,
@@ -518,8 +518,6 @@ def _from_single_outcome(
             mode="intro",
         )
         text = render_picker(question, pending, omitted=omitted, intro=intro)
-    elif is_unimplemented_pathfind(result):
-        text = outcome.answer
     elif "not_found" in result.warnings:
         text = phrase_chat(
             llm_client,
@@ -645,10 +643,6 @@ def _from_outcome(
 
     for result in results:
         heading = suite_heading(result.suite) if result.suite else "Map"
-        if is_unimplemented_pathfind(result):
-            blocks.append(f"## {heading}\n\n{_map_answer(summarize_result(result))}")
-            all_miss = False
-            continue
         if "ambiguous" in result.warnings and result.nodes:
             all_miss = False
             any_hit = True

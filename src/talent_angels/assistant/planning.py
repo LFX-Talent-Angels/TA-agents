@@ -1,4 +1,4 @@
-"""Typed deterministic planning for Locate, Connect, and Pathfind."""
+"""Typed deterministic planning for Locate and Connect."""
 
 from __future__ import annotations
 
@@ -9,7 +9,6 @@ from pydantic import BaseModel, ConfigDict, field_validator, model_validator
 from talent_angels.assistant.intent import (
     CAPABILITY_CONNECT,
     CAPABILITY_LOCATE,
-    CAPABILITY_PATHFIND,
     Capability,
     classify_capability,
 )
@@ -17,11 +16,6 @@ from talent_angels.assistant.intent import (
 _CAPABILITY_SEQUENCE: dict[Capability, tuple[Capability, ...]] = {
     CAPABILITY_LOCATE: (CAPABILITY_LOCATE,),
     CAPABILITY_CONNECT: (CAPABILITY_LOCATE, CAPABILITY_CONNECT),
-    CAPABILITY_PATHFIND: (
-        CAPABILITY_LOCATE,
-        CAPABILITY_CONNECT,
-        CAPABILITY_PATHFIND,
-    ),
 }
 
 
@@ -102,5 +96,5 @@ def build_plan_for_capability(target: Capability, *, suites: Sequence[str]) -> E
 
 
 def build_plan(question: str, *, suites: Sequence[str]) -> ExecutionPlan:
-    """Classify a question and create an L, L+C, or L+C+P plan."""
+    """Classify a question and create an L or L+C plan."""
     return build_plan_for_capability(classify_capability(question), suites=suites)

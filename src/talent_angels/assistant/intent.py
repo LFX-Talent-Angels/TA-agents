@@ -1,35 +1,14 @@
-"""Heuristic intent routing (MVP plan Sec 5) — zero tokens, keyword-based.
-
-Only `locate` is implemented in Gate A. A question that heuristically routes
-to `connect`/`pathfind` still returns a typed result — with an explicit
-`capability_not_implemented` warning — rather than silently answering with
-Locate instead (ARCHITECTURE.md: never invent; warnings are how "no" is said).
-"""
+"""Heuristic intent routing (MVP plan Sec 5) — zero tokens, keyword-based."""
 
 from __future__ import annotations
 
 import re
 from typing import Literal
 
-Capability = Literal["locate", "connect", "pathfind"]
+Capability = Literal["locate", "connect"]
 CAPABILITY_LOCATE: Capability = "locate"
 CAPABILITY_CONNECT: Capability = "connect"
-CAPABILITY_PATHFIND: Capability = "pathfind"
 
-_PATHFIND_KEYWORDS = (
-    "path between",
-    "path from",
-    "path to",
-    "skill path",
-    "career path",
-    "learning path",
-    "route from",
-    "route to",
-    "gap from",
-    "gap between",
-    "→",
-    "->",
-)
 _COMPARE_RE = re.compile(r"\b(vs\.?|versus)\b", re.I)
 _CONNECT_KEYWORDS = (
     "skills for",
@@ -103,39 +82,12 @@ def extract_locate_subject(question: str) -> str:
     return text.strip() or question.strip()
 
 
-_PATH_ENDS = re.compile(
-    r"(?:path|route|gap)\s+(?:from\s+)?(.+?)\s+to\s+(.+?)\s*$",
-    re.I,
-)
-_FROM_TO = re.compile(r"\bfrom\s+(.+?)\s+to\s+(.+?)\s*$", re.I)
-
-
-def extract_pathfind_endpoints(question: str) -> tuple[str, str] | None:
-    """Best-effort 'from A to B' split. Planner draft wins when present."""
-    text = question.strip().rstrip("?.!")
-    if _COMPARE_RE.search(text):
-        return None
-    for pattern in (_PATH_ENDS, _FROM_TO):
-        match = pattern.search(text)
-        if match:
-            left = match.group(1).strip()
-            right = match.group(2).strip()
-            if left and right:
-                return left, right
-    return None
-
-
 def classify_capability(question: str) -> Capability:
     q = question.lower()
-    padded = f" {q} "
     if _COMPARE_RE.search(q):
         if any(k in q for k in _CONNECT_KEYWORDS):
             return CAPABILITY_CONNECT
         return CAPABILITY_LOCATE
-    if any(k in q for k in _PATHFIND_KEYWORDS):
-        return CAPABILITY_PATHFIND
-    if " from " in padded and " to " in padded:
-        return CAPABILITY_PATHFIND
     if any(k in q for k in _CONNECT_KEYWORDS):
         return CAPABILITY_CONNECT
     return CAPABILITY_LOCATE

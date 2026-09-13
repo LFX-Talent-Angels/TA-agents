@@ -425,53 +425,6 @@ def test_not_found_is_honest_miss_not_suite_identity() -> None:
     assert reply.source_note == "TEST"
 
 
-def test_pathfind_uses_unavailable_copy_without_neighbors() -> None:
-    from talent_angels.assistant.answer import PATHFIND_UNAVAILABLE
-    from talent_angels.session.kernel import handle_line
-
-    suite = RecordingFakeSuite(unique_nodes=[_occ(1, "data analyst")])
-    reply = handle_line(
-        new_session(),
-        "skill path from data analyst to data scientist",
-        runner=_runner_for(suite),
-    )
-    assert reply.text == PATHFIND_UNAVAILABLE
-    assert suite.neighbor_ids == []
-    assert "computer programming" not in reply.text
-
-
-def test_pathfind_refuse_ignores_phrasing_model() -> None:
-    from talent_angels.assistant.answer import PATHFIND_UNAVAILABLE
-    from talent_angels.llm.protocol import LLMResult, LLMUsage
-    from talent_angels.session.kernel import handle_line
-
-    class Inventing:
-        provider = "litellm"
-
-        def complete(self, messages: object, **_kwargs: object) -> LLMResult:
-            return LLMResult(
-                text=(
-                    "Skill gaps typically involve machine learning, Python, and R. "
-                    "That's a great direction!"
-                ),
-                provider=self.provider,
-                model="test",
-                usage=LLMUsage(),
-            )
-
-    suite = RecordingFakeSuite(unique_nodes=[_occ(1, "data analyst")])
-    reply = handle_line(
-        new_session(),
-        "skill path from data analyst to data scientist",
-        runner=_runner_for(suite),
-        llm_client=Inventing(),
-    )
-    assert reply.text == PATHFIND_UNAVAILABLE
-    assert "Python" not in reply.text
-    assert "machine learning" not in reply.text
-    assert suite.neighbor_ids == []
-
-
 def test_unique_locate_appends_next_step_when_bound() -> None:
     from talent_angels.session.kernel import handle_line
 

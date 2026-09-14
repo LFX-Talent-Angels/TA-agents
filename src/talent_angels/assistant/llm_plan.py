@@ -11,6 +11,7 @@ from pydantic import BaseModel, ConfigDict, Field, ValidationError, field_valida
 from talent_angels.assistant.intent import (
     CAPABILITY_CONNECT,
     CAPABILITY_LOCATE,
+    CAPABILITY_PATHFIND,
     Capability,
     classify_capability,
 )
@@ -24,8 +25,9 @@ from talent_angels.skills.locate import ESCO_SUITE_NAME
 PLAN_SYSTEM = """You are the LFX Talent Angels planner. Return ONLY a JSON object.
 
 Keys:
-- target: locate | connect
+- target: locate | connect | pathfind
 - subject: short search phrase, or null
+- secondary_subject: second pathfind endpoint, or null
 - kind: occupation | skill | null
 - rel_types: array of relationship names, or null
 - relation_filter: essential | optional | null
@@ -36,6 +38,8 @@ How to choose target:
 - locate = only identify / define a node ("what is X", "where is X in ESCO")
 - connect = neighbors, skills, hierarchy around one node
   ("what skills does X need", "essential skills", "neighbors of X")
+- pathfind = a route or gap between TWO things
+  ("path from A to B", "skill gap from A to B", "how to become X from Y")
 - "X vs Y" or "X and Y" as two titles is locate
 
 If the user asks for skills, neighbors, or what someone needs, target MUST be
@@ -49,15 +53,19 @@ Examples:
 {"target":"locate","subject":"firefighter","kind":"occupation"}
 {"target":"connect","subject":"software developer","kind":"occupation",
  "rel_types":["HAS_SKILL"],"relation_filter":"essential"}
+{"target":"pathfind","subject":"data analyst","secondary_subject":"data scientist"}
 
 Same connect shape for: "what skills does a X need", "what skills I need to be
 a X", "skills I need to become a X", "I want to be a X".
 Same locate shape for: "what is a X", "what does a X do", "where is X".
+Same pathfind shape for: "path from X to Y", "skill gap from X to Y",
+"how to become X from Y", "how do I move from X to Y".
 """
 
 _PLAN_RANK = {
     CAPABILITY_LOCATE: 0,
     CAPABILITY_CONNECT: 1,
+    CAPABILITY_PATHFIND: 2,
 }
 
 _JSON_OBJECT = re.compile(r"\{.*\}", re.DOTALL)
@@ -70,12 +78,13 @@ class PlanDraft(BaseModel):
 
     target: Capability
     subject: str | None = None
+    secondary_subject: str | None = None
     kind: str | None = None
     rel_types: tuple[str, ...] | None = None
     relation_filter: str | None = None
     suites: tuple[str, ...] = Field(default=())
 
-    @field_validator("subject", "kind", "relation_filter", mode="before")
+    @field_validator("subject", "secondary_subject", "kind", "relation_filter", mode="before")
     @classmethod
     def blank_to_none(cls, value: object) -> object:
         if isinstance(value, str) and not value.strip():
@@ -134,12 +143,19 @@ def _prefer_stronger_heuristic_target(question: str, draft: PlanDraft) -> PlanDr
     return draft.model_copy(update={"target": hinted})
 
 
-def connect_request_from_draft(draft: PlanDraft) -> ConnectRequest | None:
+def connect_request_from_draft(
+    draft: PlanDraft,
+    *,
+    skill_rel_types: tuple[str, ...] = ("HAS_SKILL", "USES_SOFTWARE"),
+) -> ConnectRequest | None:
     if not draft.subject:
         return None
-    rel_types = draft.rel_types
-    if rel_types is None and (draft.relation_filter or draft.target == "connect"):
-        rel_types = ("HAS_SKILL", "USES_SOFTWARE")
+    # Always use suite-schema skill_rel_types for connect queries. The LLM planner
+    # only knows ESCO's "HAS_SKILL" example — it cannot know suite-specific types
+    # like O*NET's "USES_SOFTWARE". Ignore draft.rel_types for skill connects.
+    rel_types: tuple[str, ...] | None = None
+    if draft.target == "connect" or draft.relation_filter or draft.rel_types:
+        rel_types = skill_rel_types
     return ConnectRequest(
         subject=draft.subject.strip(),
         rel_types=rel_types or (),

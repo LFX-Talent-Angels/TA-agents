@@ -36,7 +36,7 @@ Rules:
 - If two maps name similar titles, say they are separate official records.
 - Do not invent occupations, skills, or people.
 - Do not paste node ids (esco:…, onet:…). Titles only.
-- One short next-step at the end (skills, or pick a number if a map is ambiguous).
+- Do not suggest pathfinding, filtering by category, or any interactive capability.
 - Do not write LFX or Talent Angels.
 - 3-6 sentences. Then stop; Sources used is printed in code."""
 

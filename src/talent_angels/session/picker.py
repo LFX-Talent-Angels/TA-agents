@@ -13,7 +13,7 @@ def choices_from_result(result: AgentResult, *, limit: int = PICKER_LIMIT) -> li
     groups = {
         edge.source_node_id: str(edge.properties.get("group_label") or "")
         for edge in result.edges
-        if edge.type == "CLASSIFIED_UNDER"
+        if edge.properties.get("group_label")
     }
     nodes = result.nodes[:limit]
     return [

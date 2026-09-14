@@ -48,21 +48,29 @@ def _edge_ends(edge: object) -> tuple[str, str, str]:
 
 
 def classified_under_parent(
-    suite: ConnectableSuite, node: NodeRef, *, suite_name: str
+    suite: ConnectableSuite,
+    node: NodeRef,
+    *,
+    suite_name: str,
+    group_rel_type: str | None = "CLASSIFIED_UNDER",
+    group_node_kinds: frozenset[str] = frozenset({"ISCOGroup", "isco group"}),
 ) -> NodeRef | None:
+    if group_rel_type is None:
+        return None
     if node.kind.casefold() != "occupation":
         return None
-    hop = suite.get_neighbors(node.id, rel_types=["CLASSIFIED_UNDER"])
+    hop = suite.get_neighbors(node.id, rel_types=[group_rel_type])
     by_id = {item.id: item for item in hop.nodes}
+    _group_kinds_lower = frozenset(k.casefold() for k in group_node_kinds)
     for edge in hop.edges:
         edge_type, source, target = _edge_ends(edge)
-        if edge_type != "CLASSIFIED_UNDER" or source != node.id:
+        if edge_type != group_rel_type or source != node.id:
             continue
         parent = by_id.get(target)
         if parent is None:
             continue
-        if str(getattr(parent, "kind", "")).casefold() not in {"iscogroup", "isco group"}:
-            # Still use it as a heading if the suite marked it as the CLASSIFIED_UNDER target.
+        if str(getattr(parent, "kind", "")).casefold() not in _group_kinds_lower:
+            # Still use it as a heading if the suite marked it as the group target.
             pass
         label = getattr(parent, "pref_label", None) or getattr(parent, "label", None)
         if isinstance(parent, NodeRef):
@@ -77,14 +85,22 @@ def group_and_sort_locate(
     query: str,
     *,
     suite_name: str,
+    group_rel_type: str | None = "CLASSIFIED_UNDER",
+    group_node_kinds: frozenset[str] = frozenset({"ISCOGroup", "isco group"}),
 ) -> AgentResult:
-    """Reorder Locate hits; attach CLASSIFIED_UNDER edges; mark multi-hit as ambiguous."""
+    """Reorder Locate hits; attach group edges; mark multi-hit as ambiguous."""
     if len(result.nodes) <= 1:
         return result
 
     parents: dict[str, NodeRef] = {}
     for node in result.nodes:
-        parent = classified_under_parent(suite, node, suite_name=suite_name)
+        parent = classified_under_parent(
+            suite,
+            node,
+            suite_name=suite_name,
+            group_rel_type=group_rel_type,
+            group_node_kinds=group_node_kinds,
+        )
         if parent is not None:
             parents[node.id] = parent
 
@@ -123,7 +139,7 @@ def group_and_sort_locate(
         edges = (
             [
                 EdgeRef(
-                    type="CLASSIFIED_UNDER",
+                    type=group_rel_type or "CLASSIFIED_UNDER",
                     suite=suite_name,
                     source_node_id=winner.id,
                     target_node_id=parent.id,
@@ -148,7 +164,7 @@ def group_and_sort_locate(
 
     edges = [
         EdgeRef(
-            type="CLASSIFIED_UNDER",
+            type=group_rel_type or "CLASSIFIED_UNDER",
             suite=suite_name,
             source_node_id=node.id,
             target_node_id=parents[node.id].id,

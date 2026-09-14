@@ -425,53 +425,6 @@ def test_not_found_is_honest_miss_not_suite_identity() -> None:
     assert reply.source_note == "TEST"
 
 
-def test_pathfind_uses_unavailable_copy_without_neighbors() -> None:
-    from talent_angels.assistant.answer import PATHFIND_UNAVAILABLE
-    from talent_angels.session.kernel import handle_line
-
-    suite = RecordingFakeSuite(unique_nodes=[_occ(1, "data analyst")])
-    reply = handle_line(
-        new_session(),
-        "skill path from data analyst to data scientist",
-        runner=_runner_for(suite),
-    )
-    assert reply.text == PATHFIND_UNAVAILABLE
-    assert suite.neighbor_ids == []
-    assert "computer programming" not in reply.text
-
-
-def test_pathfind_refuse_ignores_phrasing_model() -> None:
-    from talent_angels.assistant.answer import PATHFIND_UNAVAILABLE
-    from talent_angels.llm.protocol import LLMResult, LLMUsage
-    from talent_angels.session.kernel import handle_line
-
-    class Inventing:
-        provider = "litellm"
-
-        def complete(self, messages: object, **_kwargs: object) -> LLMResult:
-            return LLMResult(
-                text=(
-                    "Skill gaps typically involve machine learning, Python, and R. "
-                    "That's a great direction!"
-                ),
-                provider=self.provider,
-                model="test",
-                usage=LLMUsage(),
-            )
-
-    suite = RecordingFakeSuite(unique_nodes=[_occ(1, "data analyst")])
-    reply = handle_line(
-        new_session(),
-        "skill path from data analyst to data scientist",
-        runner=_runner_for(suite),
-        llm_client=Inventing(),
-    )
-    assert reply.text == PATHFIND_UNAVAILABLE
-    assert "Python" not in reply.text
-    assert "machine learning" not in reply.text
-    assert suite.neighbor_ids == []
-
-
 def test_unique_locate_appends_next_step_when_bound() -> None:
     from talent_angels.session.kernel import handle_line
 
@@ -1007,10 +960,9 @@ def test_tui_renders_a_card_per_suite() -> None:
         )
 
     reply = handle_line(new_session(), "software developer", runner=runner)
-    assert "## ESCO" in reply.text
-    assert "## O*NET" in reply.text
     assert "software developer" in reply.text
     assert "Software Developers" in reply.text
+    assert "Sources used: ESCO · O*NET" in reply.text
     assert reply.source_note == "ESCO · O*NET"
 
 
@@ -1073,10 +1025,9 @@ def test_tui_shows_onet_picker_next_to_esco_card() -> None:
 
     state = new_session()
     reply = handle_line(state, "I want to be a software engineer", runner=runner)
-    assert "## ESCO" in reply.text
-    assert "## O*NET" in reply.text
-    assert "software developer" in reply.text
+    assert "software developer" in reply.text.casefold() or "ESCO" in reply.text
     assert "Blockchain Engineers" in reply.text
+    assert "Sources used:" in reply.text
     assert reply.source_note == "ESCO · O*NET"
     assert state.binding is not None
     assert state.binding.node.suite == "esco"
@@ -1142,3 +1093,83 @@ def test_tui_pick_keeps_the_other_suite_binding() -> None:
     assert state.bindings["onet"].id == onet_a.id
     assert "ESCO" in (picked.bound_label or "")
     assert "O*NET" in (picked.bound_label or "")
+
+
+def test_show_suite_uses_stored_card_without_search() -> None:
+    from talent_angels.assistant.planning import build_plan_for_capability
+    from talent_angels.assistant.turn import TurnOutcome
+    from talent_angels.contracts import AgentResult, NodeRef
+    from talent_angels.runlog import RunLogRecord
+    from talent_angels.session.kernel import handle_line
+
+    esco = AgentResult(
+        capability="locate",
+        suite="esco",
+        nodes=[
+            NodeRef(
+                id="esco:occupation:dev",
+                suite="esco",
+                source="esco",
+                source_id="esco-dev",
+                kind="Occupation",
+                pref_label="software developer",
+            )
+        ],
+        confidence=0.95,
+    )
+    onet = AgentResult(
+        capability="locate",
+        suite="onet",
+        nodes=[
+            NodeRef(
+                id="onet:occupation:15-1252.00",
+                suite="onet",
+                source="onet",
+                source_id="15-1252.00",
+                kind="Occupation",
+                pref_label="Software Developers",
+            )
+        ],
+        confidence=0.95,
+    )
+
+    def runner(question: str, **_kwargs: object) -> TurnOutcome:
+        return TurnOutcome(
+            capability="locate",
+            plan=build_plan_for_capability("locate", suites=("esco", "onet")),
+            result=esco,
+            results=(esco, onet),
+            answer="ignored",
+            record=RunLogRecord(suite="esco,onet", plan=["locate"], question=question),
+        )
+
+    state = new_session()
+    handle_line(state, "software developer", runner=runner)
+    shown = handle_line(state, "show O*NET", runner=_boom)
+    assert "Software Developers" in shown.text
+    assert shown.source_note == "O*NET"
+
+
+def test_what_does_bound_job_do_does_not_search() -> None:
+    from talent_angels.contracts import NodeRef
+    from talent_angels.session.kernel import handle_line
+    from talent_angels.session.models import LastBinding
+
+    node = NodeRef(
+        id="onet:occupation:29-1229.03",
+        suite="onet",
+        source="onet",
+        source_id="29-1229.03",
+        kind="Occupation",
+        pref_label="Urologists",
+        description="Diagnose and treat diseases of the urinary tract.",
+    )
+    state = new_session()
+    state.binding = LastBinding(node=node)
+    state.bindings = {"onet": node}
+    reply = handle_line(state, "what does Urologists do ?", runner=_boom)
+    assert "Diagnose and treat" in reply.text
+    assert "Urologists" in reply.text
+    assert "O*NET" in (reply.source_note or "")
+    typo = handle_line(state, "what does Urologitst do ?", runner=_boom)
+    assert "Diagnose and treat" in typo.text

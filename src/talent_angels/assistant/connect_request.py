@@ -3,6 +3,8 @@
 from __future__ import annotations
 
 import re
+from dataclasses import replace
+from difflib import SequenceMatcher
 
 from talent_angels.contracts import NodeRef
 from talent_angels.skills.connect.models import ConnectRequest
@@ -50,7 +52,7 @@ def extract_connect_request(question: str) -> ConnectRequest:
     if match:
         return ConnectRequest(
             subject=match.group(1).strip(),
-            rel_types=("HAS_SKILL",),
+            rel_types=("HAS_SKILL", "USES_SOFTWARE"),
             relation_kind=relation_kind,
         )
 
@@ -101,6 +103,56 @@ _FOLLOWUP_NEIGHBORS = frozenset(
     }
 )
 
+_GENERIC_SUBJECT_RE = re.compile(
+    r"^(?:this|that|it|the|one|"
+    r"job|role|occupation|position|"
+    r"(?:this|that|the)\s+(?:job|role|occupation|position))$",
+    re.IGNORECASE,
+)
+
+
+_DESCRIBE_RE = re.compile(
+    r"what\s+does\s+.+\s+do|"
+    r"what\s+do\s+they\s+do|"
+    r"what\s+is\s+this(\s+job|\s+occupation)?|"
+    r"\bduties\b|"
+    r"\bdefinition\b|"
+    r"describe\s+(this|the|that|it|the\s+job)",
+    re.IGNORECASE,
+)
+
+
+def _close_label(left: str, right: str) -> bool:
+    a = left.casefold().strip()
+    b = right.casefold().strip()
+    if not a or not b:
+        return False
+    if a in b or b in a:
+        return True
+    return SequenceMatcher(None, a, b).ratio() >= 0.75
+
+
+def is_describe_followup(question: str, bindings: dict[str, NodeRef]) -> bool:
+    """True when the user asks what the already-bound occupation does."""
+    if not bindings:
+        return False
+    if not _DESCRIBE_RE.search(question.strip()):
+        return False
+    q = f" {question.casefold()} "
+    if any(token in q for token in (" they ", " this ", " that ", " it ", " the job ")):
+        return True
+    from talent_angels.assistant.intent import extract_locate_subject
+
+    subject = extract_locate_subject(question)
+    for node in bindings.values():
+        label = node.pref_label
+        if _close_label(subject, label) or _close_label(question, label):
+            return True
+        stem = label.casefold().strip().rstrip("s")
+        if stem and stem in q:
+            return True
+    return False
+
 
 def followup_connect_request(question: str, bound: NodeRef) -> ConnectRequest | None:
     """Build a Connect request for a short follow-up around an already-bound node.
@@ -112,29 +164,29 @@ def followup_connect_request(question: str, bound: NodeRef) -> ConnectRequest | 
     if normalized in _FOLLOWUP_ESSENTIAL:
         return ConnectRequest(
             subject=bound.pref_label,
-            rel_types=("HAS_SKILL",),
+            rel_types=("HAS_SKILL", "USES_SOFTWARE"),
             relation_kind="essential",
         )
     if normalized in _FOLLOWUP_OPTIONAL:
         return ConnectRequest(
             subject=bound.pref_label,
-            rel_types=("HAS_SKILL",),
+            rel_types=("HAS_SKILL", "USES_SOFTWARE"),
             relation_kind="optional",
         )
     if normalized in _FOLLOWUP_SKILLS:
-        return ConnectRequest(subject=bound.pref_label, rel_types=("HAS_SKILL",))
+        return ConnectRequest(subject=bound.pref_label, rel_types=("HAS_SKILL", "USES_SOFTWARE"))
     if normalized in _FOLLOWUP_NEIGHBORS:
         return ConnectRequest(subject=bound.pref_label)
     if re.search(r"\b(become|becoming)\s+(an?\s+)?(one|that|this|it)\b", normalized):
         return ConnectRequest(
             subject=bound.pref_label,
-            rel_types=("HAS_SKILL",),
+            rel_types=("HAS_SKILL", "USES_SOFTWARE"),
             relation_kind="essential",
         )
     if re.search(r"how\s+(do\s+i\s+|can\s+i\s+|to\s+)become\s*$", normalized):
         return ConnectRequest(
             subject=bound.pref_label,
-            rel_types=("HAS_SKILL",),
+            rel_types=("HAS_SKILL", "USES_SOFTWARE"),
             relation_kind="essential",
         )
 
@@ -142,9 +194,12 @@ def followup_connect_request(question: str, bound: NodeRef) -> ConnectRequest | 
         request = extract_connect_request(question)
     except UnsupportedConnectQuery:
         return _bound_skills_followup(normalized, bound)
-    if request.subject.casefold() != bound.pref_label.casefold():
-        return None
-    return request
+    subj = request.subject.casefold().strip()
+    if subj == bound.pref_label.casefold():
+        return request
+    if _GENERIC_SUBJECT_RE.match(subj):
+        return replace(request, subject=bound.pref_label)
+    return None
 
 
 def _bound_skills_followup(normalized: str, bound: NodeRef) -> ConnectRequest | None:
@@ -154,15 +209,15 @@ def _bound_skills_followup(normalized: str, bound: NodeRef) -> ConnectRequest | 
     ):
         return ConnectRequest(
             subject=bound.pref_label,
-            rel_types=("HAS_SKILL",),
+            rel_types=("HAS_SKILL", "USES_SOFTWARE"),
             relation_kind="essential",
         )
     if re.search(r"\boptional\s+skills?\b", normalized):
         return ConnectRequest(
             subject=bound.pref_label,
-            rel_types=("HAS_SKILL",),
+            rel_types=("HAS_SKILL", "USES_SOFTWARE"),
             relation_kind="optional",
         )
     if re.search(r"\bskills\b", normalized):
-        return ConnectRequest(subject=bound.pref_label, rel_types=("HAS_SKILL",))
+        return ConnectRequest(subject=bound.pref_label, rel_types=("HAS_SKILL", "USES_SOFTWARE"))
     return None

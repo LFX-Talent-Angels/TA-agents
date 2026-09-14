@@ -6,7 +6,9 @@ import re
 from dataclasses import dataclass
 from typing import Literal
 
-LineKind = Literal["command", "greet", "help_plain", "advice", "catalogue", "pick", "map"]
+LineKind = Literal[
+    "command", "greet", "help_plain", "advice", "catalogue", "pick", "show_suite", "map"
+]
 
 _GREET_RE = re.compile(
     r"^\s*(hi|hello|hey|thanks|thank you|"
@@ -45,11 +47,15 @@ _CATALOGUE_RE = re.compile(
 )
 
 
+_SHOW_RE = re.compile(r"^\s*show\s+(.+?)\s*$", re.IGNORECASE)
+
+
 @dataclass(frozen=True, slots=True)
 class RoutedLine:
     kind: LineKind
     text: str
     pick: int | None = None
+    show_token: str | None = None
 
 
 def _is_advice(lowered: str) -> bool:
@@ -84,5 +90,9 @@ def route_line(text: str) -> RoutedLine:
 
     if _CATALOGUE_RE.search(stripped):
         return RoutedLine(kind="catalogue", text=stripped)
+
+    show = _SHOW_RE.match(stripped)
+    if show:
+        return RoutedLine(kind="show_suite", text=stripped, show_token=show.group(1).strip())
 
     return RoutedLine(kind="map", text=stripped)

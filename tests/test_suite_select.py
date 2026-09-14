@@ -4,7 +4,11 @@ from __future__ import annotations
 
 import pytest
 
-from talent_angels.assistant.suite_select import named_suites, select_suites
+from talent_angels.assistant.suite_select import (
+    named_suites,
+    named_unattached,
+    select_suites,
+)
 from talent_angels.suites import UnknownSuiteError
 
 _ATTACHED = ("esco", "onet")
@@ -48,9 +52,26 @@ def test_named_source_that_is_not_attached_is_ignored() -> None:
     assert select_suites(available=_ATTACHED, question="look this up in SFIA") == _ATTACHED
 
 
+def test_suite_name_is_a_token_not_a_substring() -> None:
+    assert named_suites("bayonet", _ATTACHED) == ()
+    assert select_suites(available=_ATTACHED, question="bayonet") == _ATTACHED
+    assert named_suites("sonet mixer", _ATTACHED) == ()
+    assert named_suites("shop at tesco", _ATTACHED) == ()  # esco not inside tesco
+
+
+def test_o_net_spellings_still_narrow() -> None:
+    assert select_suites(available=_ATTACHED, question="in O NET") == ("onet",)
+    assert select_suites(available=_ATTACHED, question="o-net software") == ("onet",)
+
+
 def test_unknown_override_raises() -> None:
     with pytest.raises(UnknownSuiteError, match="sfia"):
         select_suites(available=_ATTACHED, override="sfia")
+
+
+def test_named_unattached_suite_is_reported() -> None:
+    assert named_unattached("look this up in SFIA", _ATTACHED) == ("sfia",)
+    assert named_unattached("software developer", _ATTACHED) == ()
 
 
 def test_empty_available_raises() -> None:

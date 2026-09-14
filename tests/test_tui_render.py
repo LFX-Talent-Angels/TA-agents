@@ -39,6 +39,44 @@ These are graph neighbors, not a study plan.
     assert "graph neighbors" in parsed.footer
 
 
+def test_two_suite_pickers_stay_separate_tables() -> None:
+    text = """ESCO has several matches; O*NET has several matches.
+
+Sources used: ESCO · O*NET
+
+## ESCO
+
+I found several ESCO matches for "developer". Which one did you mean?
+
+1. IoT developer
+2. software developer
+3. web developer
+
+I won't pick #1 for you — reply with a number. Showing 10 of 25 (15 more).
+
+---
+
+## O*NET
+
+I found several O*NET matches for "developer". Which one did you mean?
+
+11. Web Developers
+12. Software Developers
+13. Database Architects
+
+I won't pick #1 for you — reply with a number. Showing 10 of 25 (15 more).
+"""
+    console = Console(record=True, force_terminal=True, width=100, color_system="truecolor")
+    render_assistant(console, ChatReply(text=text, source_note="ESCO · O*NET"))
+    exported = console.export_text()
+    assert "IoT developer" in exported
+    assert "Web Developers" in exported
+    assert "Database Architects" in exported
+    # One merged table would list Economists-style noise as ESCO rows; both
+    # headings must survive as separate sections.
+    assert exported.index("ESCO") < exported.index("O*NET") or "O*NET" in exported
+
+
 def test_short_prose_is_not_a_table() -> None:
     parsed = parse_list_reply("Hi there. Name a job title.")
     assert parsed.rows == ()

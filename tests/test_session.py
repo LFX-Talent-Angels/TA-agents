@@ -89,6 +89,8 @@ def test_router_classifies_non_map_lines() -> None:
     assert route_line("1").kind == "pick" and route_line("1").pick == 1
     assert route_line("3.").kind == "pick" and route_line("3.").pick == 3
     assert route_line("the first one").kind == "pick" and route_line("the first one").pick == 1
+    assert route_line("show O*NET").kind == "show_suite"
+    assert route_line("show all").kind == "show_suite"
     assert route_line("developer").kind == "map"
     assert route_line("what are the essential skills?").kind == "map"
     assert route_line("list all jobs").kind == "catalogue"
@@ -152,7 +154,7 @@ def test_picker_markdown_does_not_search_and_cites_quietly() -> None:
     )
     text = render_picker("developer", pending, omitted=19)
     assert "1." in text and "software developer" in text
-    assert "I won't pick #1" in text or "I will not pick" in text.lower()
+    assert "won't pick" in text.casefold()
     assert text.lower().count("esco") <= 1  # quiet source line only
     assert "19 more" in text
 

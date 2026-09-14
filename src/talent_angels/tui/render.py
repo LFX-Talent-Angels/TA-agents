@@ -112,7 +112,7 @@ def _list_table(rows: tuple[tuple[str, str, str, str], ...]) -> Table:
     return table
 
 
-def _assistant_body(text: str) -> RenderableType:
+def _chunk_body(text: str) -> RenderableType:
     parsed = parse_list_reply(text)
     if len(parsed.rows) < 3:
         return Markdown(text)
@@ -122,6 +122,19 @@ def _assistant_body(text: str) -> RenderableType:
     parts.append(_list_table(parsed.rows))
     if parsed.footer:
         parts.append(Markdown(parsed.footer))
+    return Group(*parts)
+
+
+def _assistant_body(text: str) -> RenderableType:
+    """One table per `---` block so ESCO and O*NET pickers do not merge."""
+    chunks = [chunk.strip() for chunk in re.split(r"\n-{3,}\n", text) if chunk.strip()]
+    if len(chunks) <= 1:
+        return _chunk_body(text)
+    parts: list[RenderableType] = []
+    for index, chunk in enumerate(chunks):
+        if index:
+            parts.append(Rule(style="bright_black"))
+        parts.append(_chunk_body(chunk))
     return Group(*parts)
 
 

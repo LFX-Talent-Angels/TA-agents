@@ -31,7 +31,8 @@ Keys:
 - kind: occupation | skill | null
 - rel_types: array of relationship names, or null
 - relation_filter: essential | optional | null
-- suites: array of suite names (default ["esco"])
+- suites: array of attached suite names (runtime fills this; do not drop
+  a suite unless the user named one taxonomy)
 
 How to choose target:
 - locate = only identify / define a node ("what is X", "where is X in ESCO")
@@ -78,7 +79,7 @@ class PlanDraft(BaseModel):
     kind: str | None = None
     rel_types: tuple[str, ...] | None = None
     relation_filter: str | None = None
-    suites: tuple[str, ...] = Field(default=(ESCO_SUITE_NAME,))
+    suites: tuple[str, ...] = Field(default=())
 
     @field_validator("subject", "secondary_subject", "kind", "relation_filter", mode="before")
     @classmethod
@@ -100,7 +101,7 @@ class PlanDraft(BaseModel):
     @classmethod
     def default_suites(cls, value: object) -> object:
         if value is None or value == [] or value == ():
-            return (ESCO_SUITE_NAME,)
+            return ()
         return value
 
 
@@ -155,20 +156,22 @@ def connect_request_from_draft(draft: PlanDraft) -> ConnectRequest | None:
 def interpret_question(
     question: str,
     *,
-    suite_name: str,
     llm_client: LLMClient,
+    suite_name: str | None = None,
+    suites: tuple[str, ...] | None = None,
     forced_capability: Capability | None = None,
 ) -> InterpretedPlan:
+    selected = suites or ((suite_name,) if suite_name else (ESCO_SUITE_NAME,))
     if forced_capability is not None:
         return InterpretedPlan(
-            plan=build_plan_for_capability(forced_capability, suites=(suite_name,)),
+            plan=build_plan_for_capability(forced_capability, suites=selected),
             draft=None,
             heuristic=True,
             stage=None,
         )
     if not uses_llm_planner(llm_client):
         return InterpretedPlan(
-            plan=build_plan(question, suites=(suite_name,)),
+            plan=build_plan(question, suites=selected),
             draft=None,
             heuristic=True,
             stage=None,
@@ -185,7 +188,7 @@ def interpret_question(
         )
     except RuntimeError:
         return InterpretedPlan(
-            plan=build_plan(question, suites=(suite_name,)),
+            plan=build_plan(question, suites=selected),
             draft=None,
             heuristic=True,
             stage=None,
@@ -193,11 +196,12 @@ def interpret_question(
     try:
         draft = parse_plan_text(result.text)
         draft = _prefer_stronger_heuristic_target(question, draft)
-        plan = build_plan_for_capability(draft.target, suites=draft.suites or (suite_name,))
+        # Suite choice is owned by select_suites / the caller, not the model.
+        plan = build_plan_for_capability(draft.target, suites=selected)
         return InterpretedPlan(plan=plan, draft=draft, heuristic=False, stage=stage)
     except (ValueError, ValidationError, json.JSONDecodeError):
         return InterpretedPlan(
-            plan=build_plan(question, suites=(suite_name,)),
+            plan=build_plan(question, suites=selected),
             draft=None,
             heuristic=True,
             stage=stage,

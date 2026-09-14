@@ -38,5 +38,6 @@ class SessionState(BaseModel):
     name: str | None = None
     transcript: list[TranscriptLine] = Field(default_factory=list)
     binding: LastBinding | None = None
+    bindings: dict[str, NodeRef] = Field(default_factory=dict)
     pending: list[PendingChoice] = Field(default_factory=list)
     last_result: AgentResult | None = None

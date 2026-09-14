@@ -50,3 +50,50 @@ class MeasuredSuite:
                     args={"node_id": node_id, "rel_types": rel_types},
                 )
             )
+
+    def enumerate_paths(
+        self,
+        from_id: str,
+        to_id: str,
+        *,
+        max_depth: int = 4,
+        max_paths: int = 20,
+    ) -> object:
+        inner = getattr(self._suite, "enumerate_paths", None)
+        if inner is None:
+            raise AttributeError("enumerate_paths")
+        start = time.perf_counter()
+        ok = False
+        try:
+            result = inner(from_id, to_id, max_depth=max_depth, max_paths=max_paths)
+            ok = True
+            return result
+        finally:
+            self.tool_calls.append(
+                ToolCall(
+                    name="enumerate_paths",
+                    ms=(time.perf_counter() - start) * 1000,
+                    ok=ok,
+                    args={"from_id": from_id, "to_id": to_id, "max_depth": max_depth},
+                )
+            )
+
+    def score_paths(self, paths: object, policy: object) -> object:
+        inner = getattr(self._suite, "score_paths", None)
+        if inner is None:
+            raise AttributeError("score_paths")
+        start = time.perf_counter()
+        ok = False
+        try:
+            result = inner(paths, policy)
+            ok = True
+            return result
+        finally:
+            self.tool_calls.append(
+                ToolCall(
+                    name="score_paths",
+                    ms=(time.perf_counter() - start) * 1000,
+                    ok=ok,
+                    args={"policy": getattr(policy, "name", str(policy))},
+                )
+            )

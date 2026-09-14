@@ -10,7 +10,7 @@ from talent_angels.runlog import CostBreakdown, GenAIUsage, GraphStats, ToolCall
 
 class QueryRequest(BaseModel):
     question: str
-    suite: str = "esco"
+    suite: str | None = None
     kind: str | None = None
 
 
@@ -25,7 +25,9 @@ class QueryResponse(BaseModel):
     run_id: str
     capability: str
     suite: str
+    suites: list[str] = []
     result: AgentResult
+    results: list[AgentResult] = []
     answer: str
     usage: UsageInfo
 

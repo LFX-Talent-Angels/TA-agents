@@ -357,9 +357,8 @@ def test_graph_path_question_does_not_fallback_to_connect() -> None:
 
     assert final_state["capability"] == "pathfind"
     assert PATHFIND_UNIMPLEMENTED_WARNING in final_state["result"].warnings
-    assert suite.search_calls == []
-    assert suite.neighbor_calls == []
     assert final_state["answer"] == PATHFIND_UNAVAILABLE
+    assert all(call[0] != "connect" for call in suite.neighbor_calls)
 
 
 def test_ambiguous_search_stops_without_another_lookup() -> None:

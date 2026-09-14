@@ -82,6 +82,26 @@ def extract_locate_subject(question: str) -> str:
     return text.strip() or question.strip()
 
 
+_PATH_ENDS = re.compile(
+    r"(?:path|route|gap)\s+(?:from\s+)?(.+?)\s+to\s+(.+?)\s*$",
+    re.I,
+)
+_FROM_TO = re.compile(r"\bfrom\s+(.+?)\s+to\s+(.+?)\s*$", re.I)
+
+
+def extract_pathfind_endpoints(question: str) -> tuple[str, str] | None:
+    """Best-effort 'from A to B' split. Planner draft wins when present."""
+    text = question.strip().rstrip("?.!")
+    for pattern in (_PATH_ENDS, _FROM_TO):
+        match = pattern.search(text)
+        if match:
+            left = match.group(1).strip()
+            right = match.group(2).strip()
+            if left and right:
+                return left, right
+    return None
+
+
 def classify_capability(question: str) -> Capability:
     q = question.lower()
     padded = f" {q} "

@@ -62,9 +62,10 @@ SERVER_VERSION = "0.1.0"
 ToolContext = Context[SuiteSession, Any]
 
 SERVER_INSTRUCTIONS = """\
-Read-only access to the Talent Angels taxonomy graphs (ESCO today; O*NET,
+Read-only access to the Talent Angels taxonomy graphs (ESCO and O*NET;
 SFIA and BLS later) through the suite contract: search_nodes, get_neighbors,
-enumerate_paths, score_paths.
+enumerate_paths, score_paths. Pass suite=`esco` or suite=`onet`. Do not treat
+IDs from one suite as belonging to the other.
 
 Two rules govern everything these tools return.
 

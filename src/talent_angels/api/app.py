@@ -1,6 +1,6 @@
-"""FastAPI edge — thin: one Neo4j driver + one LLM client for the app's
-lifetime (lifespan), then every request calls `assistant.run_turn`. No
-reasoning lives here (ARCHITECTURE.md).
+"""FastAPI edge — thin: LLM client for the app's lifetime, then every
+request calls `assistant.run_turn` with the suite registry. No reasoning
+lives here (ARCHITECTURE.md).
 """
 
 from __future__ import annotations
@@ -8,24 +8,22 @@ from __future__ import annotations
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
 
-from fastapi import FastAPI
+from fastapi import FastAPI, HTTPException
 
 from talent_angels.api.schemas import HealthResponse, QueryRequest, QueryResponse, UsageInfo
 from talent_angels.assistant import run_turn
 from talent_angels.assistant.intent import CAPABILITY_CONNECT, Capability
 from talent_angels.env import load_local_dotenv
 from talent_angels.llm.factory import get_answer_mode, get_llm_client
-from talent_angels.suites import SuiteRegistry, default_suite_registry
+from talent_angels.suites import SuiteRegistry, UnknownSuiteError, default_suite_registry
 
 
 @asynccontextmanager
 async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     load_local_dotenv()
-    with app.state.registry.open() as runtime:
-        app.state.runtime = runtime
-        app.state.llm_client = get_llm_client()
-        app.state.answer_mode = get_answer_mode()
-        yield
+    app.state.llm_client = get_llm_client()
+    app.state.answer_mode = get_answer_mode()
+    yield
 
 
 def create_app(*, registry: SuiteRegistry | None = None) -> FastAPI:
@@ -34,7 +32,12 @@ def create_app(*, registry: SuiteRegistry | None = None) -> FastAPI:
 
     @app.get("/v1/health", response_model=HealthResponse)
     def health() -> HealthResponse:
-        reachable = app.state.runtime.is_reachable()
+        reachable = False
+        try:
+            with app.state.registry.open() as runtime:
+                reachable = runtime.is_reachable()
+        except Exception:  # noqa: BLE001 — health must not raise
+            reachable = False
         return HealthResponse(status="ok", neo4j_reachable=reachable)
 
     @app.post("/v1/query", response_model=QueryResponse)
@@ -59,22 +62,27 @@ def _handle(
     force_locate: bool = False,
     force_capability: Capability | None = None,
 ) -> QueryResponse:
-    outcome = run_turn(
-        suite=app.state.runtime.suite,
-        suite_name=app.state.runtime.name,
-        llm_client=app.state.llm_client,
-        question=payload.question,
-        kind=payload.kind,
-        answer_mode=app.state.answer_mode,
-        force_locate=force_locate,
-        force_capability=force_capability,
-    )
+    try:
+        outcome = run_turn(
+            registry=app.state.registry,
+            suite_override=payload.suite,
+            llm_client=app.state.llm_client,
+            question=payload.question,
+            kind=payload.kind,
+            answer_mode=app.state.answer_mode,
+            force_locate=force_locate,
+            force_capability=force_capability,
+        )
+    except UnknownSuiteError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
     record = outcome.record
     return QueryResponse(
         run_id=record.run_id,
         capability=outcome.capability,
         suite=outcome.result.suite,
+        suites=[item.suite for item in outcome.results],
         result=outcome.result,
+        results=list(outcome.results),
         answer=outcome.answer,
         usage=UsageInfo(
             gen_ai=record.gen_ai,

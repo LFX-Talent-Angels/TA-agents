@@ -25,7 +25,7 @@ from talent_angels.session.credentials import (
 )
 from talent_angels.session.kernel import handle_line
 from talent_angels.session.router import route_line
-from talent_angels.session.store import new_session, sessions_dir
+from talent_angels.session.store import load_last, new_session, save_session, sessions_dir
 from talent_angels.session.switch import SwitchError, apply, current_choice, load_catalogue, resolve
 from talent_angels.suites import SuiteRegistry, default_suite_registry
 from talent_angels.tui.picker_ui import Option, is_interactive, select
@@ -130,7 +130,10 @@ def main(argv: Sequence[str] | None = None, *, registry: SuiteRegistry | None = 
     console = Console()
 
     llm_client = _start_client(console)
-    state = new_session()
+    try:
+        state = load_last()
+    except Exception:
+        state = new_session()
     os.environ["RUNLOG_PATH"] = str(sessions_dir() / state.session_id / "runlog.jsonl")
     attached = " · ".join(
         "O*NET" if name == "onet" else name.upper() for name in selected.available
@@ -205,6 +208,7 @@ def main(argv: Sequence[str] | None = None, *, registry: SuiteRegistry | None = 
                 )
                 continue
         state = turn_state
+        save_session(state)
         for outcome, question in turn_outcomes:
             append_record(outcome.record)
             write_query_details(outcome, question=question)

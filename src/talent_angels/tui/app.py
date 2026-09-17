@@ -11,6 +11,8 @@ from rich.console import Console
 
 from talent_angels.assistant import TurnOutcome, run_turn
 from talent_angels.env import load_local_dotenv
+from talent_angels.memory.agent_notes import append_note
+from talent_angels.memory.paths import MEMORY_MD
 from talent_angels.llm import LLMClient
 from talent_angels.llm.factory import get_llm_client
 from talent_angels.query_details import write_query_details
@@ -123,9 +125,24 @@ def _read_line(console: Console) -> str:
     return "\n".join(parts)
 
 
+_SEED_NOTES = [
+    "O*NET USES_SOFTWARE edges have relation_type=None — always include in essential filter",
+    "ESCO and O*NET both resolve 'software developer' — always show picker",
+    "Pathfind not yet implemented — redirect gracefully",
+]
+
+
+def _seed_memory_if_new() -> None:
+    """Write seed notes to MEMORY.md on first run only."""
+    if not MEMORY_MD.exists():
+        for note in _SEED_NOTES:
+            append_note(note)
+
+
 def main(argv: Sequence[str] | None = None, *, registry: SuiteRegistry | None = None) -> int:
     del argv
     load_local_dotenv()
+    _seed_memory_if_new()
     selected = registry or default_suite_registry()
     console = Console()
 

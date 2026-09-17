@@ -12,6 +12,7 @@ from collections.abc import Sequence
 from talent_angels.assistant.merge import suite_heading
 from talent_angels.contracts import AgentResult
 from talent_angels.llm import LLMClient, Message
+from talent_angels.memory.profile import read_user_profile
 from talent_angels.session.phrase import uses_chat_phrasing
 
 _NODE_ID_RE = re.compile(
@@ -119,6 +120,16 @@ def _fact_card(results: Sequence[AgentResult]) -> str:
     return "\n".join(lines).strip()
 
 
+def _profile_prefix() -> str:
+    """Returns a profile card prefix for the system prompt, or empty string."""
+    content = read_user_profile().strip()
+    if not content:
+        return ""
+    lines = content.splitlines()[:5]
+    card = "\n".join(lines)
+    return f"[User profile — confirmed by user, not from taxonomy]\n{card}\n\n"
+
+
 def synthesize(
     results: Sequence[AgentResult],
     *,
@@ -130,8 +141,9 @@ def synthesize(
     if not uses_chat_phrasing(llm_client) or not results:
         return fallback
     assert llm_client is not None
+    system_prompt = _profile_prefix() + _SYNTH_SYSTEM
     messages = [
-        Message(role="system", content=_SYNTH_SYSTEM),
+        Message(role="system", content=system_prompt),
         Message(
             role="user",
             content=f"User: {question}\n\nFACT CARD:\n{_fact_card(results)}",

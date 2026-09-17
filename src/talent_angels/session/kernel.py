@@ -8,6 +8,7 @@ from datetime import UTC, datetime
 from typing import Literal, Protocol
 
 from talent_angels.assistant.answer import summarize_result
+from talent_angels.memory.profile import write_standing
 from talent_angels.assistant.connect_request import (
     followup_connect_request,
     is_describe_followup,
@@ -181,6 +182,7 @@ def _record(state: SessionState, role: Literal["user", "assistant", "system"], t
 def _set_bind(state: SessionState, node: NodeRef) -> None:
     state.bindings[node.suite] = node
     state.binding = LastBinding(node=node)
+    write_standing(node)
 
 
 def _bound_status(state: SessionState) -> str | None:

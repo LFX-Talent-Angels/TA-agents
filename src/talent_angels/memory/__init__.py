@@ -4,6 +4,14 @@ Explicit-confirm writes only; erase is total. Session-scoped state (the
 current conversation's bindings) lives in `talent_angels.session` instead.
 """
 
+from talent_angels.memory.cache import (
+    DEFAULT_TTL_SECONDS,
+    CachedSuite,
+    cache_db_path,
+    clear_neighbor_cache,
+    get_cached_neighbors,
+    set_cached_neighbors,
+)
 from talent_angels.memory.erase import erase_all
 from talent_angels.memory.models import MAX_REJECTED_ENTRIES, ProfileRef, UserProfile
 from talent_angels.memory.notes import (
@@ -27,23 +35,29 @@ from talent_angels.memory.profile import (
 )
 
 __all__ = [
+    "DEFAULT_TTL_SECONDS",
     "MAX_NOTES",
     "MAX_REJECTED_ENTRIES",
+    "CachedSuite",
     "MemoryFullError",
     "ProfileRef",
     "UserProfile",
     "add_note",
     "add_rejected",
+    "cache_db_path",
+    "clear_neighbor_cache",
     "confirm_goal",
     "confirm_standing",
     "erase_all",
     "erase_notes",
     "erase_profile",
+    "get_cached_neighbors",
     "load_notes",
     "load_profile",
     "memory_dir",
     "remove_note",
     "replace_note",
+    "set_cached_neighbors",
     "set_style_notes",
     "set_suite_preference",
 ]

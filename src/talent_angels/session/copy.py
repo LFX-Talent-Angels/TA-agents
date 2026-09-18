@@ -48,4 +48,10 @@ UNKNOWN_COMMAND = "{token} isn't a command. /help lists the ones I know."
 
 LOCATE_MISS = "No node for that phrase with today's search. That's a miss, not a maybe."
 
+PATHFIND_REDIRECT = (
+    "Finding a learning path between two roles isn't available yet — "
+    "but it's coming. For now, try: 'What skills does a data scientist need?' "
+    "or 'Connect software developer to data scientist.'"
+)
+
 MAP_NEXT_STEP = "You can ask for essential skills, optional skills, or pick another number."

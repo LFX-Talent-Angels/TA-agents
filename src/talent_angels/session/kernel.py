@@ -32,6 +32,7 @@ from talent_angels.session.copy import (
     HELP_TEXT,
     LOCATE_MISS,
     MAP_NEXT_STEP,
+    PATHFIND_REDIRECT,
     UNKNOWN_COMMAND,
 )
 from talent_angels.session.followup import (
@@ -558,6 +559,8 @@ def _from_single_outcome(
             fallback=fallback,
             card=connect_card(result),
         )
+    elif any(w.startswith("capability_not_implemented") for w in result.warnings):
+        text = PATHFIND_REDIRECT
     else:
         text = _map_answer(outcome.answer)
     source = result.suite.upper() if result.suite else None
@@ -672,6 +675,9 @@ def _from_outcome(
             )
             blocks.append(f"## {heading}\n\n{picker}")
             pending_all.extend(choices)
+            continue
+        if any(w.startswith("capability_not_implemented") for w in result.warnings):
+            blocks.append(f"## {heading}\n\n{PATHFIND_REDIRECT}")
             continue
         if not result.nodes or "not_found" in result.warnings:
             blocks.append(f"## {heading}\n\n{LOCATE_MISS}")

@@ -12,6 +12,14 @@ from talent_angels.memory.cache import (
     get_cached_neighbors,
     set_cached_neighbors,
 )
+from talent_angels.memory.episodes import (
+    Episode,
+    clear_episodes,
+    episodes_citing,
+    episodes_db_path,
+    recent_episodes,
+    record_episode,
+)
 from talent_angels.memory.erase import erase_all
 from talent_angels.memory.models import MAX_REJECTED_ENTRIES, ProfileRef, UserProfile
 from talent_angels.memory.notes import (
@@ -39,15 +47,19 @@ __all__ = [
     "MAX_NOTES",
     "MAX_REJECTED_ENTRIES",
     "CachedSuite",
+    "Episode",
     "MemoryFullError",
     "ProfileRef",
     "UserProfile",
     "add_note",
     "add_rejected",
     "cache_db_path",
+    "clear_episodes",
     "clear_neighbor_cache",
     "confirm_goal",
     "confirm_standing",
+    "episodes_citing",
+    "episodes_db_path",
     "erase_all",
     "erase_notes",
     "erase_profile",
@@ -55,6 +67,8 @@ __all__ = [
     "load_notes",
     "load_profile",
     "memory_dir",
+    "record_episode",
+    "recent_episodes",
     "remove_note",
     "replace_note",
     "set_cached_neighbors",

@@ -24,6 +24,7 @@ from talent_angels.assistant.llm_plan import (
 from talent_angels.assistant.state import AssistantState
 from talent_angels.contracts import AgentResult, NodeRef
 from talent_angels.llm import LLMClient
+from talent_angels.memory import CachedSuite
 from talent_angels.runlog import usage_from_stage
 from talent_angels.skills.connect import connect
 from talent_angels.skills.locate import ESCO_SUITE_NAME, locate
@@ -59,7 +60,7 @@ def _interpret_intent(
 
 def _dispatch_plan(state: AssistantState, *, suite: SuiteTools, suite_name: str) -> AssistantState:
     capability = state["plan"].intent.target
-    measured = MeasuredSuite(suite)
+    measured = MeasuredSuite(CachedSuite(suite))
     draft = state.get("plan_draft")
     if capability == CAPABILITY_LOCATE:
         locate_text = (

@@ -20,6 +20,7 @@ from talent_angels.assistant.planning import (
 )
 from talent_angels.contracts import AgentResult, NodeRef
 from talent_angels.llm import LLMClient, LLMUsage
+from talent_angels.memory import record_episode
 from talent_angels.runlog import (
     EfficiencyInfo,
     GenAIUsage,
@@ -168,6 +169,7 @@ def run_turn(
     )
     if persist:
         append_record(record)
+        record_episode(record)
 
     return TurnOutcome(
         capability=capability,

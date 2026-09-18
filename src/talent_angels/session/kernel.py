@@ -121,6 +121,7 @@ def handle_line(
             hint=(
                 "User asked what you can do. One short paragraph, then they will see commands."
                 + _bound_title_hint(state)
+                + _profile_hint()
             ),
         )
         body = f"{intro}\n\n{COMMANDS_BLOCK}" if uses_chat_phrasing(llm_client) else HELP_TEXT
@@ -133,6 +134,7 @@ def handle_line(
             hint=(
                 "User greeted you. Invite them to name a job or skill. Do not look anything up."
                 + _bound_title_hint(state)
+                + _profile_hint()
             ),
         )
         return _finish(state, text, said)
@@ -377,6 +379,28 @@ def _bound_title_hint(state: SessionState) -> str:
     if state.binding is None:
         return ""
     return f" Bound title this session: {state.binding.node.pref_label}. Do not pretend you forgot."
+
+
+def _profile_hint() -> str:
+    profile = load_profile()
+    if profile.is_empty():
+        return ""
+    facts: list[str] = []
+    if profile.standing is not None:
+        facts.append(f"current role {profile.standing.label}")
+    if profile.goal is not None:
+        facts.append(f"target role {profile.goal.label}")
+    if profile.rejected:
+        facts.append("not " + ", ".join(ref.label for ref in profile.rejected))
+    if profile.suite_preference:
+        facts.append(f"prefers {profile.suite_preference}")
+    if profile.style_notes:
+        facts.append(profile.style_notes)
+    joined = "; ".join(facts)
+    return (
+        f" Saved profile, self-reported by the user, not a taxonomy fact — "
+        f"never present it as something the graph said: {joined}."
+    )
 
 
 def _handle_pick(

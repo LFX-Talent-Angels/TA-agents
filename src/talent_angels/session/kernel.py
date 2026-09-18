@@ -684,6 +684,7 @@ def _from_outcome(
             continue
         if any(w.startswith("capability_not_implemented") for w in result.warnings):
             blocks.append(f"## {heading}\n\n{PATHFIND_REDIRECT}")
+            all_miss = False
             continue
         if not result.nodes or "not_found" in result.warnings:
             blocks.append(f"## {heading}\n\n{LOCATE_MISS}")

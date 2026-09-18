@@ -382,3 +382,33 @@ def test_turn_records_cumulative_plan(
 
     assert outcome.plan.capabilities == expected_plan
     assert tuple(outcome.record.plan) == expected_plan
+
+
+def test_route_line_show_suite_with_me_and_on():
+    from talent_angels.session.router import route_line
+    result = route_line("show me skills for web developer on O*NET")
+    assert result.kind == "show_suite"
+    assert result.show_token is not None
+    assert result.show_token.lower() in ("o*net", "onet")
+
+
+def test_route_line_show_suite_simple():
+    from talent_angels.session.router import route_line
+    result = route_line("show ESCO")
+    assert result.kind == "show_suite"
+    assert result.show_token is not None
+    assert result.show_token.lower() == "esco"
+
+
+def test_route_line_show_me_suite():
+    from talent_angels.session.router import route_line
+    result = route_line("show me ESCO")
+    assert result.kind == "show_suite"
+    assert result.show_token is not None
+    assert result.show_token.lower() == "esco"
+
+
+def test_pathfind_redirect_constant_exists():
+    from talent_angels.session.copy import PATHFIND_REDIRECT
+    assert "path" in PATHFIND_REDIRECT.lower() or "coming" in PATHFIND_REDIRECT.lower()
+    assert len(PATHFIND_REDIRECT) > 20

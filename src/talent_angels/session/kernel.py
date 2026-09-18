@@ -13,6 +13,13 @@ from talent_angels.assistant.intent import CAPABILITY_CONNECT
 from talent_angels.assistant.turn import TurnOutcome
 from talent_angels.contracts import AgentResult, NodeRef
 from talent_angels.llm import LLMClient
+from talent_angels.memory import (
+    add_rejected,
+    confirm_goal,
+    confirm_standing,
+    erase_all,
+    load_profile,
+)
 from talent_angels.session.budget import model_view
 from talent_angels.session.catalog import FreeModel
 from talent_angels.session.commands import UnknownCommand, parse_command
@@ -248,7 +255,79 @@ def _handle_command(state: SessionState, text: str) -> ChatReply:
             )
         _record(state, "user", "/login")
         return _reply(state, "", request_key=True)
+    if command.name == "standing":
+        return _handle_confirm(state, text, kind="standing")
+    if command.name == "goal":
+        return _handle_confirm(state, text, kind="goal")
+    if command.name == "reject":
+        return _handle_confirm(state, text, kind="reject")
+    if command.name == "forget":
+        return _handle_forget(state, text)
+    if command.name == "whoami":
+        return _handle_whoami(state, text)
     return _finish(state, text, UNKNOWN_COMMAND.format(token=text.split()[0]))
+
+
+def _resolve_bound_node(state: SessionState) -> tuple[NodeRef | None, str | None]:
+    """Pick the node a /standing, /goal, or /reject call should confirm.
+
+    Returns (node, None) on success, or (None, message) when nothing is
+    bound yet.
+    """
+    if state.binding is not None:
+        return state.binding.node, None
+    return None, "Nothing is bound yet. Locate a title first, then confirm it."
+
+
+def _handle_confirm(
+    state: SessionState,
+    text: str,
+    *,
+    kind: Literal["standing", "goal", "reject"],
+) -> ChatReply:
+    node, error = _resolve_bound_node(state)
+    if error is not None or node is None:
+        return _finish(state, text, error or "Nothing is bound yet.")
+    if kind == "standing":
+        confirm_standing(node.pref_label, node_id=node.id, since=_today())
+        message = f"Noted — standing: {node.pref_label}."
+    elif kind == "goal":
+        confirm_goal(node.pref_label, node_id=node.id)
+        message = f"Noted — goal: {node.pref_label}."
+    else:
+        add_rejected(node.pref_label, node_id=node.id)
+        message = f"Noted — not {node.pref_label}."
+    return _finish(state, text, message)
+
+
+def _handle_forget(state: SessionState, text: str) -> ChatReply:
+    removed = erase_all()
+    message = "Cleared your saved profile and notes." if removed else "Nothing was saved to forget."
+    return _finish(state, text, message)
+
+
+def _handle_whoami(state: SessionState, text: str) -> ChatReply:
+    profile = load_profile()
+    if profile.is_empty():
+        message = "Nothing saved yet. /standing, /goal, or /reject after a locate to start."
+        return _finish(state, text, message)
+    lines: list[str] = []
+    if profile.standing is not None:
+        since = f" (since {profile.standing_since})" if profile.standing_since else ""
+        lines.append(f"Standing: {profile.standing.label}{since}")
+    if profile.goal is not None:
+        lines.append(f"Goal: {profile.goal.label}")
+    if profile.rejected:
+        lines.append("Rejected: " + ", ".join(ref.label for ref in profile.rejected))
+    if profile.suite_preference:
+        lines.append(f"Suite preference: {profile.suite_preference}")
+    if profile.style_notes:
+        lines.append(f"Style: {profile.style_notes}")
+    return _finish(state, text, "\n".join(lines))
+
+
+def _today() -> str:
+    return datetime.now(UTC).date().isoformat()
 
 
 def _handle_model(state: SessionState, text: str, argument: str) -> ChatReply:

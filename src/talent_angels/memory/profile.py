@@ -37,12 +37,12 @@ def write_standing(node: NodeRef) -> None:
     """
     tag = _node_id_str(node)
     today = date.today().isoformat()
-    new_line = f"STANDING: {node.pref_label}  [{tag}]   since: {today}"
+    new_line = f"STANDING[{node.suite}]: {node.pref_label}  [{tag}]   since: {today}"
 
     content = read_user_profile()
     lines = content.splitlines()
     for i, line in enumerate(lines):
-        if line.startswith("STANDING:"):
+        if line.startswith(f"STANDING[{node.suite}]:"):
             lines[i] = new_line
             USER_MD.write_text("\n".join(lines) + ("\n" if lines else ""))
             return

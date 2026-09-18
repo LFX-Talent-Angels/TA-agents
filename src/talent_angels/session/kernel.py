@@ -8,7 +8,7 @@ from datetime import UTC, datetime
 from typing import Literal, Protocol
 
 from talent_angels.assistant.answer import summarize_result
-from talent_angels.memory.profile import write_standing
+from talent_angels.memory.profile import write_goal, write_rejected, write_standing
 from talent_angels.assistant.connect_request import (
     followup_connect_request,
     is_describe_followup,
@@ -534,6 +534,12 @@ def _from_single_outcome(
         )
     elif result.capability == "locate" and result.nodes:
         _set_bind(state, result.nodes[0])
+        _draft = getattr(outcome, "plan_draft", None)
+        if _draft is not None:
+            if _draft.profile_intent == "goal":
+                write_goal(result.nodes[0])
+            elif _draft.profile_intent == "reject":
+                write_rejected(result.nodes[0])
         state.pending = []
         record = f"{_map_answer(outcome.answer)}\n\n{MAP_NEXT_STEP}"
         phrased = phrase_map(
@@ -685,6 +691,12 @@ def _from_outcome(
         all_miss = False
         any_hit = True
         _set_bind(state, result.nodes[0])
+        _draft = getattr(outcome, "plan_draft", None)
+        if _draft is not None:
+            if _draft.profile_intent == "goal":
+                write_goal(result.nodes[0])
+            elif _draft.profile_intent == "reject":
+                write_rejected(result.nodes[0])
         if unique_bind is None:
             unique_bind = result.nodes[0]
         unique_cards.append(

@@ -412,3 +412,21 @@ def test_pathfind_redirect_constant_exists():
     from talent_angels.session.copy import PATHFIND_REDIRECT
     assert "path" in PATHFIND_REDIRECT.lower() or "coming" in PATHFIND_REDIRECT.lower()
     assert len(PATHFIND_REDIRECT) > 20
+
+
+def test_plan_draft_has_profile_intent_field():
+    from talent_angels.assistant.llm_plan import PlanDraft
+    draft = PlanDraft(target="locate", subject="nurse")
+    assert draft.profile_intent is None
+
+
+def test_plan_draft_profile_intent_goal():
+    from talent_angels.assistant.llm_plan import PlanDraft
+    draft = PlanDraft(target="connect", subject="data scientist", profile_intent="goal")
+    assert draft.profile_intent == "goal"
+
+
+def test_plan_draft_profile_intent_reject():
+    from talent_angels.assistant.llm_plan import PlanDraft
+    draft = PlanDraft(target="locate", subject="web developer", profile_intent="reject")
+    assert draft.profile_intent == "reject"

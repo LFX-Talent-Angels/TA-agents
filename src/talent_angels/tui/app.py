@@ -11,10 +11,10 @@ from rich.console import Console
 
 from talent_angels.assistant import TurnOutcome, run_turn
 from talent_angels.env import load_local_dotenv
-from talent_angels.memory.agent_notes import append_note
-from talent_angels.memory.paths import MEMORY_MD
 from talent_angels.llm import LLMClient
 from talent_angels.llm.factory import get_llm_client
+from talent_angels.memory.agent_notes import append_note
+from talent_angels.memory.paths import MEMORY_MD
 from talent_angels.query_details import write_query_details
 from talent_angels.runlog import append_record
 from talent_angels.session.catalog import render_catalogue

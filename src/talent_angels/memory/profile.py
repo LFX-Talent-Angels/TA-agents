@@ -16,7 +16,11 @@ def _node_id_str(node: NodeRef) -> str:
     """Return suite:id_or_slug for display in USER.md."""
     source_id = (node.source_id or "").strip()
     if source_id:
-        slug = source_id
+        # ESCO source_ids are full URIs; take only the last path segment (the UUID).
+        if source_id.startswith("http"):
+            slug = source_id.rstrip("/").rsplit("/", 1)[-1]
+        else:
+            slug = source_id
     else:
         slug = node.pref_label.lower().replace(" ", "-")
     return f"{node.suite}:{slug}"

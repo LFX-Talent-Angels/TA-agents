@@ -848,8 +848,10 @@ def _handle_map(
             cached = next((r for r in state.last_results if r.suite == resolved), None)
             if cached is not None:
                 heading = suite_heading(resolved)
+                # Use structured output (no LLM) to match _handle_show — avoids the
+                # LLM reading the profile prefix instead of the skill card.
                 message = _render_unique_block(
-                    cached, question=text, llm_client=llm_client, heading=heading
+                    cached, question=text, llm_client=None, heading=heading
                 )
                 _record(state, "assistant", message)
                 return _reply(state, message, source_note=heading)

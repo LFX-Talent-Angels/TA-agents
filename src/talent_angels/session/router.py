@@ -48,7 +48,7 @@ _CATALOGUE_RE = re.compile(
 
 
 _SHOW_RE = re.compile(
-    r"^\s*show(?:\s+me)?\s+(?:.+\s+on\s+)?(.+?)\s*$",
+    r"^\s*show(?:\s+me)?\s+([^\s]+)\s*$",
     re.IGNORECASE,
 )
 

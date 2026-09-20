@@ -385,11 +385,11 @@ def test_turn_records_cumulative_plan(
 
 
 def test_route_line_show_suite_with_me_and_on():
+    # "show me skills for web developer on O*NET" has multiple words after "show me"
+    # so it falls through to the LLM path (suite_override), not the regex show_suite route.
     from talent_angels.session.router import route_line
     result = route_line("show me skills for web developer on O*NET")
-    assert result.kind == "show_suite"
-    assert result.show_token is not None
-    assert result.show_token.lower() in ("o*net", "onet")
+    assert result.kind != "show_suite"
 
 
 def test_route_line_show_suite_simple():
@@ -430,3 +430,15 @@ def test_plan_draft_profile_intent_reject():
     from talent_angels.assistant.llm_plan import PlanDraft
     draft = PlanDraft(target="locate", subject="web developer", profile_intent="reject")
     assert draft.profile_intent == "reject"
+
+
+def test_plan_draft_has_suite_override_field():
+    from talent_angels.assistant.llm_plan import PlanDraft
+    draft = PlanDraft(target="locate", subject="nurse")
+    assert draft.suite_override is None
+
+
+def test_plan_draft_suite_override_is_set():
+    from talent_angels.assistant.llm_plan import PlanDraft
+    draft = PlanDraft(target="locate", subject="nurse", suite_override="esco")
+    assert draft.suite_override == "esco"

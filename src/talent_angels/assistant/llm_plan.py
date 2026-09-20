@@ -62,9 +62,22 @@ Same pathfind shape for: "path from X to Y", "skill gap from X to Y",
 "how to become X from Y", "how do I move from X to Y".
 
 profile_intent rules:
-- Set "goal" when the user states a career destination: "my goal is X", "I want to become X", "I am working toward X". Set subject to that destination occupation.
-- Set "reject" when user denies an occupational identity: "I am not a X", "that's not my job", "I don't work as X". Set subject to the rejected occupation.
+- Set "goal" when the user states a career destination:
+  "my goal is X", "I want to become X", "I am working toward X".
+  Set subject to that destination occupation.
+- Set "reject" when user denies an occupational identity:
+  "I am not a X", "that's not my job", "I don't work as X".
+  Set subject to the rejected occupation.
 - Leave null for all other questions.
+
+suite_override rules:
+- Set suite_override to the suite name (lowercase: "onet", "esco") when the user asks to
+  see results on a specific taxonomy or switch the view to a different source.
+  Examples: "now show me the same on ESCO" → suite_override="esco",
+  "show me this on O*NET" → suite_override="onet",
+  "can I see the ESCO version?" → suite_override="esco",
+  "switch to O*NET" → suite_override="onet".
+- Leave null for all other requests.
 """
 
 _PLAN_RANK = {
@@ -90,6 +103,7 @@ class PlanDraft(BaseModel):
     suites: tuple[str, ...] = Field(default=())
 
     profile_intent: str | None = None
+    suite_override: str | None = None
 
     @field_validator("subject", "secondary_subject", "kind", "relation_filter", mode="before")
     @classmethod

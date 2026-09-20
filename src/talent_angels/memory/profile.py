@@ -94,6 +94,16 @@ def write_goal(node: NodeRef) -> None:
     USER_MD.write_text("\n".join(lines) + "\n")
 
 
+def profile_prefix() -> str:
+    """Returns a USER.md profile card for LLM system prompts, or empty string."""
+    content = read_user_profile().strip()
+    if not content:
+        return ""
+    lines = content.splitlines()[:5]
+    card = "\n".join(lines)
+    return f"[User profile — confirmed by user, not from taxonomy]\n{card}\n\n"
+
+
 def erase_person() -> None:
     """Deletes USER.md and MEMORY.md. Does not touch memory.db."""
     if USER_MD.exists():

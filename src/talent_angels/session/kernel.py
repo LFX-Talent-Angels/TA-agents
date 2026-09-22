@@ -16,6 +16,7 @@ from talent_angels.assistant.synthesize import synthesize
 from talent_angels.assistant.turn import TurnOutcome
 from talent_angels.contracts import AgentResult, NodeRef
 from talent_angels.llm import LLMClient
+from talent_angels.memory.paths import MEMORY_MD, USER_MD
 from talent_angels.memory.profile import write_goal, write_rejected, write_standing
 from talent_angels.session.budget import model_view
 from talent_angels.session.catalog import FreeModel
@@ -58,6 +59,7 @@ from talent_angels.session.store import (
     clear_conversation,
     load_last,
     load_session,
+    new_session,
     save_session,
     sessions_dir,
 )
@@ -259,6 +261,13 @@ def _handle_command(state: SessionState, text: str) -> ChatReply:
     if command.name == "clear":
         _copy_into(state, clear_conversation(state))
         return _finish(state, text, _CLEARED)
+    if command.name == "reset":
+        fresh = new_session()
+        _copy_into(state, clear_conversation(fresh))
+        for mem_path in (MEMORY_MD, USER_MD):
+            if mem_path.exists():
+                mem_path.unlink()
+        return _finish(state, text, "Memory and session cleared. Starting fresh.")
     if command.name == "model":
         if command.argument is None:
             _record(state, "user", text)

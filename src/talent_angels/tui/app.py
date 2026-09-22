@@ -127,7 +127,8 @@ def _read_line(console: Console) -> str:
 
 _SEED_NOTES = [
     "O*NET USES_SOFTWARE edges have relation_type=None — always include in essential filter",
-    "ESCO and O*NET both resolve 'software developer' — always show picker",
+    "Exact pref_label matches (e.g. 'software developer') auto-select — no picker shown",
+    "Ambiguous queries (e.g. 'developer', 'nurse') correctly show a numbered picker",
     "Pathfind not yet implemented — redirect gracefully",
 ]
 

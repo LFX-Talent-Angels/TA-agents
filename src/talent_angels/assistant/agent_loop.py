@@ -45,6 +45,7 @@ Or finish with the user-facing answer:
 
 Rules:
 - On your FIRST response you MUST call search_nodes. Never start with {"final":...}.
+- Always set kind to "occupation" when searching for job titles. Never omit kind.
 - Search the occupation or skill name from the question — not the full sentence.
 - For skills questions: search_nodes first, then get_neighbors once you have a unique node.
 - If TOOL_RESULT warnings include ambiguous or not_found, return {"final":...} and stop.
@@ -125,7 +126,9 @@ def _execute_tool(
         if not isinstance(text, str) or not text.strip():
             raise ValueError("search_nodes requires text")
         kind = args.get("kind")
-        kind_value = kind if isinstance(kind, str) else None
+        # Default to "occupation" — without it, O*NET returns task nodes and ESCO returns skill
+        # nodes mixed with occupations, breaking ranking and causing spurious ambiguous results.
+        kind_value = kind if isinstance(kind, str) else "occupation"
         search_text = _search_text_for(question, text, already_searched=already_searched)
         result = locate(suite, suite_name, search_text, kind=kind_value)
         schema = suite.suite_schema

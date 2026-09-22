@@ -121,6 +121,7 @@ def _dispatch_opened(
     force_capability: Capability | None,
     cache: ResultCache | None,
     force_locate: bool,
+    thread_id: str | None = None,
 ) -> tuple[
     Capability,
     ExecutionPlan,
@@ -145,8 +146,12 @@ def _dispatch_opened(
         llm_client=llm_client,
         answer_mode=answer_mode,
         forced_capability=force_capability,
+        thread_id=thread_id,
     )
-    final_state = graph.invoke({"question": question, "kind": kind, "bound_node": bound_node})
+    config = {"configurable": {"thread_id": thread_id}} if thread_id else {}
+    final_state = graph.invoke(  # type: ignore[call-overload]
+        {"question": question, "kind": kind, "bound_node": bound_node}, config=config
+    )
     return (
         final_state["capability"],
         final_state["plan"],
@@ -232,6 +237,7 @@ def run_turn(
     bound_node: NodeRef | None = None,
     bound_nodes: dict[str, NodeRef] | None = None,
     persist: bool = True,
+    thread_id: str | None = None,
 ) -> TurnOutcome:
     """Run one turn and append its run-log record.
 
@@ -270,6 +276,7 @@ def run_turn(
             force_capability=force_capability,
             cache=cache,
             force_locate=force_locate,
+            thread_id=thread_id,
         )
         record = _record_turn(
             suite_label=result.suite,
@@ -326,6 +333,9 @@ def run_turn(
         "heuristic_intent": interpreted.heuristic,
         "llm_stages": stages,
     }
+    # Number of stages already in seed_state (from interpret_question). dispatch_plan
+    # accumulates on top of these, so we only extend with the *new* stages it adds.
+    seed_stages_len = len(stages)
 
     for name in selected:
         per_state = {
@@ -346,9 +356,12 @@ def run_turn(
                     per_state,  # type: ignore[arg-type]
                     suite=runtime.suite,
                     suite_name=name,
+                    llm_client=llm_client,
+                    bound_node=_bound_for_suite(name, bound_node, bound_nodes),
                 )
                 collected.append(dispatched["result"])
                 tools.extend(dispatched.get("tool_calls") or [])
+                stages.extend((dispatched.get("llm_stages") or [])[seed_stages_len:])
         except UnknownSuiteError:
             raise
         except Exception:  # noqa: BLE001 — a down suite must not fail the turn

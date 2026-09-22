@@ -10,6 +10,7 @@ import re
 
 from talent_angels.contracts import AgentResult, NodeRef
 from talent_angels.llm import LLMClient, Message
+from talent_angels.memory.agent_notes import notes_prefix
 from talent_angels.memory.profile import profile_prefix
 
 _CHAT_SYSTEM = """You are LFX Talent Angels, a concise assistant in a terminal.
@@ -50,7 +51,10 @@ def phrase_chat(
         return fallback
     assert client is not None
     messages = [
-        Message(role="system", content=profile_prefix() + _CHAT_SYSTEM + "\n" + hint),
+        Message(
+            role="system",
+            content=profile_prefix() + notes_prefix() + _CHAT_SYSTEM + "\n" + hint,
+        ),
         Message(role="user", content=user_text),
     ]
     try:
@@ -79,7 +83,7 @@ def phrase_map(
         return fallback
     assert client is not None
     messages = [
-        Message(role="system", content=profile_prefix() + _MAP_SYSTEM),
+        Message(role="system", content=profile_prefix() + notes_prefix() + _MAP_SYSTEM),
         Message(role="user", content=f"User: {question}\n\nFACT CARD:\n{card}"),
     ]
     try:

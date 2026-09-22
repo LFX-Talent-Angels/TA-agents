@@ -42,14 +42,15 @@ Call a graph tool:
 Or finish with the user-facing answer:
 {"final":"one sentence using only returned labels, ids, and confidence"}
 
-Search the occupation or skill phrase from the question (not the whole sentence).
-Skills questions: search_nodes first, then get_neighbors with suite skill rel types if unique.
-If TOOL_RESULT warnings include ambiguous or not_found, return final and stop. Do not search again.
-If node_count is larger than the listed nodes, mention the count and a few examples.
-Do not offer to fetch, paginate, or retrieve the rest.
+Rules:
+- On your FIRST response you MUST call search_nodes. Never start with {"final":...}.
+- Search the occupation or skill name from the question — not the full sentence.
+- For skills questions: search_nodes first, then get_neighbors once you have a unique node.
+- If TOOL_RESULT warnings include ambiguous or not_found, return {"final":...} and stop.
+- If node_count is larger than the listed nodes, mention the count and a few examples.
+- Do not offer to fetch, paginate, or retrieve the rest.
 """
 
-_JSON_OBJECT = re.compile(r"\{.*\}", re.DOTALL)
 _XML_TOOL = re.compile(
     r"<tool_call>\s*([A-Za-z0-9_]+)\s*(.*?)</tool_call>",
     re.IGNORECASE | re.DOTALL,
@@ -100,13 +101,12 @@ def _compact_result(result: AgentResult) -> dict[str, object]:
 
 
 def _search_text_for(question: str, requested: str, *, already_searched: bool) -> str:
-    canonical = extract_locate_subject(question)
     raw = requested.strip()
-    if not already_searched:
-        return canonical or raw
-    if raw.casefold() == question.strip().casefold():
-        return canonical or raw
-    return raw or canonical
+    canonical = extract_locate_subject(question)
+    # Trust the LLM's extracted text unless it echoed the full question back verbatim.
+    if raw and raw.casefold() != question.strip().casefold():
+        return raw
+    return canonical or raw
 
 
 def _execute_tool(
@@ -198,16 +198,45 @@ def looks_like_tool_markup(text: str) -> bool:
     return "<tool_call>" in lowered or "<arg_key>" in lowered
 
 
+def _first_json_object(text: str) -> str | None:
+    """Extract the first complete JSON object from text, ignoring subsequent objects."""
+    start = text.find("{")
+    if start == -1:
+        return None
+    depth = 0
+    in_string = False
+    escape = False
+    for i, ch in enumerate(text[start:], start):
+        if escape:
+            escape = False
+            continue
+        if ch == "\\" and in_string:
+            escape = True
+            continue
+        if ch == '"':
+            in_string = not in_string
+            continue
+        if in_string:
+            continue
+        if ch == "{":
+            depth += 1
+        elif ch == "}":
+            depth -= 1
+            if depth == 0:
+                return text[start : i + 1]
+    return None
+
+
 def parse_loop_turn(text: str) -> tuple[list[ToolInvocation], str | None]:
     """Return tool invocations and/or a user-facing final string."""
     xml_calls = _parse_xml_tool_calls(text)
     if xml_calls:
         return xml_calls, None
 
-    match = _JSON_OBJECT.search(text.strip())
-    if match is not None:
+    raw = _first_json_object(text.strip())
+    if raw is not None:
         try:
-            payload = json.loads(match.group(0))
+            payload = json.loads(raw)
         except json.JSONDecodeError:
             payload = None
         if isinstance(payload, dict):
@@ -248,11 +277,15 @@ def run_tool_loop(
     suite_name: str,
     llm_client: LLMClient,
     kind: str | None = None,
+    bound_node: NodeRef | None = None,
 ) -> AgentLoopOutcome:
     measured = MeasuredSuite(suite)
+    user_content = question if kind is None else f"{question}\nkind={kind}"
+    if bound_node is not None:
+        user_content += f"\n[Currently bound: {bound_node.pref_label} ({bound_node.id})]"
     messages: list[Message] = [
         Message(role="system", content=LOOP_SYSTEM),
-        Message(role="user", content=question if kind is None else f"{question}\nkind={kind}"),
+        Message(role="user", content=user_content),
     ]
     stages: list[StageUsage] = []
     last_result: AgentResult | None = None
@@ -262,7 +295,7 @@ def run_tool_loop(
     intent = classify_capability(question)
     stop_tools = False
 
-    for _round_index in range(MAX_TOOL_ROUNDS):
+    for round_index in range(MAX_TOOL_ROUNDS):
         # JSON actions, not OpenAI tools: Nvidia/OpenRouter free models reject
         # native tool schemas with 400 "missing field function".
         llm_result, stage = measure_complete(llm_client, messages, stage="act")
@@ -274,8 +307,22 @@ def run_tool_loop(
         stages.append(stage)
 
         if not invocations:
-            answer = final or ""
-            break
+            # First-round guard: if the LLM skipped straight to a prose answer without
+            # searching, synthesise a search_nodes call from the question subject so we
+            # always ground the answer in real graph data on at least one round.
+            if round_index == 0 and not searched:
+                subject = extract_locate_subject(question)
+                invocations = [
+                    ToolInvocation(
+                        id="search_nodes",
+                        name="search_nodes",
+                        arguments={"text": subject, "kind": kind},
+                    )
+                ]
+                # Don't break — fall through to execute the forced search below.
+            else:
+                answer = final or ""
+                break
 
         messages.append(Message(role="assistant", content=llm_result.text))
         for invocation in invocations:

@@ -16,6 +16,14 @@ def read_agent_notes() -> str:
     return ""
 
 
+def notes_prefix() -> str:
+    """Returns MEMORY.md wrapped in a labeled block for system prompts, or empty string."""
+    content = read_agent_notes().strip()
+    if not content:
+        return ""
+    return f"[Agent operational notes]\n{content}\n\n"
+
+
 def append_note(note: str) -> None:
     """Appends a bullet note to MEMORY.md."""
     existing = read_agent_notes()

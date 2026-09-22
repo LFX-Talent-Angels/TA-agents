@@ -9,11 +9,8 @@ from dataclasses import dataclass
 from pydantic import BaseModel, ConfigDict, Field, ValidationError, field_validator
 
 from talent_angels.assistant.intent import (
-    CAPABILITY_CONNECT,
     CAPABILITY_LOCATE,
-    CAPABILITY_PATHFIND,
     Capability,
-    classify_capability,
 )
 from talent_angels.assistant.llm_call import measure_complete
 from talent_angels.assistant.planning import ExecutionPlan, build_plan, build_plan_for_capability
@@ -83,12 +80,6 @@ suite_override rules:
   "switch to O*NET" → suite_override="onet".
 - Leave null for all other requests.
 """
-
-_PLAN_RANK = {
-    CAPABILITY_LOCATE: 0,
-    CAPABILITY_CONNECT: 1,
-    CAPABILITY_PATHFIND: 2,
-}
 
 _JSON_OBJECT = re.compile(r"\{.*\}", re.DOTALL)
 
@@ -189,17 +180,6 @@ def parse_plan_text(text: str) -> PlanDraft:
     return PlanDraft.model_validate(payload)
 
 
-def _prefer_stronger_heuristic_target(question: str, draft: PlanDraft) -> PlanDraft:
-    """If keywords clearly ask for more map work than the model chose, upgrade.
-
-    Stops a skills question being planned as locate-only. Never downgrades.
-    """
-    hinted = classify_capability(question)
-    if _PLAN_RANK[hinted] <= _PLAN_RANK[draft.target]:
-        return draft
-    return draft.model_copy(update={"target": hinted})
-
-
 def connect_request_from_draft(
     draft: PlanDraft,
     *,
@@ -270,7 +250,6 @@ def interpret_question(
         )
     try:
         draft = parse_plan_text(result.text)
-        draft = _prefer_stronger_heuristic_target(question, draft)
         # Suite choice is owned by select_suites / the caller, not the model.
         plan = build_plan_for_capability(draft.target, suites=selected)
         return InterpretedPlan(plan=plan, draft=draft, heuristic=False, stage=stage)

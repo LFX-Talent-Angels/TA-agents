@@ -2,9 +2,13 @@
 
 from __future__ import annotations
 
+from typing import cast
+
+from langgraph.checkpoint.memory import MemorySaver
 from langgraph.graph import END, StateGraph
 from langgraph.graph.state import CompiledStateGraph
 
+from talent_angels.assistant.agent_loop import run_tool_loop
 from talent_angels.assistant.answer import build_answer
 from talent_angels.assistant.connect_request import (
     UnsupportedConnectQuery,
@@ -26,6 +30,7 @@ from talent_angels.assistant.state import AssistantState
 from talent_angels.contracts import AgentResult, NodeRef
 from talent_angels.llm import LLMClient
 from talent_angels.runlog import usage_from_stage
+from talent_angels.session.phrase import uses_chat_phrasing
 from talent_angels.skills.connect import connect
 from talent_angels.skills.locate import ESCO_SUITE_NAME, locate
 from talent_angels.skills.locate.rank import group_and_sort_locate
@@ -58,8 +63,10 @@ def _interpret_intent(
     }
 
 
-def dispatch_plan(state: AssistantState, *, suite: SuiteTools, suite_name: str) -> AssistantState:
-    """Run the planned capability against one opened suite."""
+def _dispatch_heuristic(
+    state: AssistantState, *, suite: SuiteTools, suite_name: str
+) -> AssistantState:
+    """No-LLM fallback: hardcoded capability routing for LLM_PROVIDER=none and offline tests."""
     capability = state["plan"].intent.target
     measured = MeasuredSuite(suite)
     draft = state.get("plan_draft")
@@ -206,7 +213,52 @@ def dispatch_plan(state: AssistantState, *, suite: SuiteTools, suite_name: str) 
     }
 
 
+def dispatch_plan(
+    state: AssistantState,
+    *,
+    suite: SuiteTools,
+    suite_name: str,
+    llm_client: LLMClient | None = None,
+    bound_node: NodeRef | None = None,
+) -> AssistantState:
+    """Run the planned capability against one opened suite.
+
+    When a real LLM is configured, delegates to run_tool_loop() so the model
+    can call search_nodes / get_neighbors in a multi-round loop and decide
+    capability from context. Falls back to _dispatch_heuristic() when running
+    offline (LLM_PROVIDER=none) so tests remain deterministic.
+    """
+    if uses_chat_phrasing(llm_client):
+        assert llm_client is not None
+        try:
+            outcome = run_tool_loop(
+                question=state["question"],
+                suite=suite,
+                suite_name=suite_name,
+                llm_client=llm_client,
+                kind=state.get("kind"),
+                bound_node=bound_node,
+            )
+        except Exception:
+            # Provider rejected the call or the loop failed — fall back to deterministic dispatch.
+            return _dispatch_heuristic(state, suite=suite, suite_name=suite_name)
+        stages = list(state.get("llm_stages") or [])
+        stages.extend(outcome.stages)
+        return {
+            "capability": cast(Capability, outcome.result.capability),
+            "plan": outcome.plan,
+            "result": outcome.result,
+            "tool_calls": outcome.tool_calls,
+            "llm_stages": stages,
+            "answer": outcome.answer,
+        }
+    return _dispatch_heuristic(state, suite=suite, suite_name=suite_name)
+
+
 def _answer(state: AssistantState, *, llm_client: LLMClient, answer_mode: str) -> AssistantState:
+    if state.get("answer"):
+        # Tool loop already produced the answer — avoid a redundant LLM phrasing call.
+        return {"llm_usage": None}
     answer, stage = build_answer(state["result"], llm_client=llm_client, mode=answer_mode)
     stages = list(state.get("llm_stages") or [])
     if stage is not None:
@@ -225,6 +277,7 @@ def build_graph(
     suite_name: str = ESCO_SUITE_NAME,
     answer_mode: str = "structured",
     forced_capability: Capability | None = None,
+    thread_id: str | None = None,
 ) -> CompiledStateGraph:
     """Intent → plan → dispatch → answer. The model names the goal; code walks the graph."""
     graph = StateGraph(AssistantState)
@@ -239,11 +292,18 @@ def build_graph(
     )
     graph.add_node(
         "dispatch_plan",
-        lambda s: dispatch_plan(s, suite=suite, suite_name=suite_name),
+        lambda s: dispatch_plan(
+            s,
+            suite=suite,
+            suite_name=suite_name,
+            llm_client=llm_client,
+            bound_node=s.get("bound_node"),
+        ),
     )
     graph.add_node("answer", lambda s: _answer(s, llm_client=llm_client, answer_mode=answer_mode))
     graph.set_entry_point("interpret_intent")
     graph.add_edge("interpret_intent", "dispatch_plan")
     graph.add_edge("dispatch_plan", "answer")
     graph.add_edge("answer", END)
-    return graph.compile()
+    checkpointer = MemorySaver() if thread_id is not None else None
+    return graph.compile(checkpointer=checkpointer)

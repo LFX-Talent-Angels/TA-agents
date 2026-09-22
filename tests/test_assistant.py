@@ -382,3 +382,63 @@ def test_turn_records_cumulative_plan(
 
     assert outcome.plan.capabilities == expected_plan
     assert tuple(outcome.record.plan) == expected_plan
+
+
+def test_route_line_show_suite_with_me_and_on():
+    # "show me skills for web developer on O*NET" has multiple words after "show me"
+    # so it falls through to the LLM path (suite_override), not the regex show_suite route.
+    from talent_angels.session.router import route_line
+    result = route_line("show me skills for web developer on O*NET")
+    assert result.kind != "show_suite"
+
+
+def test_route_line_show_suite_simple():
+    from talent_angels.session.router import route_line
+    result = route_line("show ESCO")
+    assert result.kind == "show_suite"
+    assert result.show_token is not None
+    assert result.show_token.lower() == "esco"
+
+
+def test_route_line_show_me_suite():
+    from talent_angels.session.router import route_line
+    result = route_line("show me ESCO")
+    assert result.kind == "show_suite"
+    assert result.show_token is not None
+    assert result.show_token.lower() == "esco"
+
+
+def test_pathfind_redirect_constant_exists():
+    from talent_angels.session.copy import PATHFIND_REDIRECT
+    assert "path" in PATHFIND_REDIRECT.lower() or "coming" in PATHFIND_REDIRECT.lower()
+    assert len(PATHFIND_REDIRECT) > 20
+
+
+def test_plan_draft_has_profile_intent_field():
+    from talent_angels.assistant.llm_plan import PlanDraft
+    draft = PlanDraft(target="locate", subject="nurse")
+    assert draft.profile_intent is None
+
+
+def test_plan_draft_profile_intent_goal():
+    from talent_angels.assistant.llm_plan import PlanDraft
+    draft = PlanDraft(target="connect", subject="data scientist", profile_intent="goal")
+    assert draft.profile_intent == "goal"
+
+
+def test_plan_draft_profile_intent_reject():
+    from talent_angels.assistant.llm_plan import PlanDraft
+    draft = PlanDraft(target="locate", subject="web developer", profile_intent="reject")
+    assert draft.profile_intent == "reject"
+
+
+def test_plan_draft_has_suite_override_field():
+    from talent_angels.assistant.llm_plan import PlanDraft
+    draft = PlanDraft(target="locate", subject="nurse")
+    assert draft.suite_override is None
+
+
+def test_plan_draft_suite_override_is_set():
+    from talent_angels.assistant.llm_plan import PlanDraft
+    draft = PlanDraft(target="locate", subject="nurse", suite_override="esco")
+    assert draft.suite_override == "esco"

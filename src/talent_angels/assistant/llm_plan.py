@@ -60,6 +60,28 @@ a X", "skills I need to become a X", "I want to be a X".
 Same locate shape for: "what is a X", "what does a X do", "where is X".
 Same pathfind shape for: "path from X to Y", "skill gap from X to Y",
 "how to become X from Y", "how do I move from X to Y".
+
+profile_intent rules:
+- Set "goal" when the user states a career destination:
+  "my goal is X", "I want to become X", "I am working toward X".
+  Set subject to ONLY the destination occupation name (e.g. "data scientist").
+  target must be "locate". Example:
+  "my goal is data scientist" →
+    {"target":"locate","subject":"data scientist","kind":"occupation","profile_intent":"goal"}
+- Set "reject" when user denies an occupational identity:
+  "I am not a X", "that's not my job", "I don't work as X".
+  Set subject to the rejected occupation name only.
+  target must be "locate".
+- Leave null for all other questions.
+
+suite_override rules:
+- Set suite_override to the suite name (lowercase: "onet", "esco") when the user asks to
+  see results on a specific taxonomy or switch the view to a different source.
+  Examples: "now show me the same on ESCO" → suite_override="esco",
+  "show me this on O*NET" → suite_override="onet",
+  "can I see the ESCO version?" → suite_override="esco",
+  "switch to O*NET" → suite_override="onet".
+- Leave null for all other requests.
 """
 
 _PLAN_RANK = {
@@ -83,6 +105,9 @@ class PlanDraft(BaseModel):
     rel_types: tuple[str, ...] | None = None
     relation_filter: str | None = None
     suites: tuple[str, ...] = Field(default=())
+
+    profile_intent: str | None = None
+    suite_override: str | None = None
 
     @field_validator("subject", "secondary_subject", "kind", "relation_filter", mode="before")
     @classmethod
@@ -114,6 +139,38 @@ class InterpretedPlan:
     draft: PlanDraft | None
     heuristic: bool
     stage: StageUsage | None
+
+
+_GOAL_RE = re.compile(
+    r"^(?:my\s+goal\s+is|i\s+want\s+to\s+become|i\s+am\s+working\s+toward)"
+    r"\s+(?:a\s+|an\s+)?(.+)$",
+    re.IGNORECASE,
+)
+_REJECT_RE = re.compile(
+    r"^(?:i\s+am\s+not\s+an?\s+|that(?:'s|'s|\s+is)\s+not\s+my\s+(?:job|occupation|role)\s*|i\s+don't\s+work\s+as\s+(?:an?\s+)?)(.+)$",
+    re.IGNORECASE,
+)
+
+
+def _profile_intent_heuristic(question: str) -> PlanDraft | None:
+    """Return a PlanDraft for goal/reject patterns when the LLM planner fails."""
+    m = _GOAL_RE.match(question.strip())
+    if m:
+        return PlanDraft(
+            target=CAPABILITY_LOCATE,
+            subject=m.group(1).strip(),
+            kind="occupation",
+            profile_intent="goal",
+        )
+    m = _REJECT_RE.match(question.strip())
+    if m:
+        return PlanDraft(
+            target=CAPABILITY_LOCATE,
+            subject=m.group(1).strip(),
+            kind="occupation",
+            profile_intent="reject",
+        )
+    return None
 
 
 def uses_llm_planner(client: LLMClient) -> bool:
@@ -180,6 +237,14 @@ def interpret_question(
             stage=None,
         )
     if not uses_llm_planner(llm_client):
+        heuristic_draft = _profile_intent_heuristic(question)
+        if heuristic_draft is not None:
+            return InterpretedPlan(
+                plan=build_plan_for_capability(heuristic_draft.target, suites=selected),
+                draft=heuristic_draft,
+                heuristic=True,
+                stage=None,
+            )
         return InterpretedPlan(
             plan=build_plan(question, suites=selected),
             draft=None,
@@ -210,6 +275,14 @@ def interpret_question(
         plan = build_plan_for_capability(draft.target, suites=selected)
         return InterpretedPlan(plan=plan, draft=draft, heuristic=False, stage=stage)
     except (ValueError, ValidationError, json.JSONDecodeError):
+        heuristic_draft = _profile_intent_heuristic(question)
+        if heuristic_draft is not None:
+            return InterpretedPlan(
+                plan=build_plan_for_capability(heuristic_draft.target, suites=selected),
+                draft=heuristic_draft,
+                heuristic=True,
+                stage=stage,
+            )
         return InterpretedPlan(
             plan=build_plan(question, suites=selected),
             draft=None,

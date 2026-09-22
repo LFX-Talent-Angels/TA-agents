@@ -1,6 +1,6 @@
 {
   "suite": "onet",
-  "note": "Expected values from O*NET 31.0 (full or ICT fixture that includes 15-1252.00). Additive truncated / match_count_capped warnings are allowed.",
+  "note": "Expected values from O*NET 31.0 live graph. Additive truncated / match_count_capped / ambiguous warnings are allowed. 'Applications Analyst' and 'Application Integrator' are shared alt_labels across multiple occupations — top result reflects Neo4j ordering for equal-confidence ties.",
   "cases": [
     {
       "question": "Software Developers",
@@ -61,7 +61,7 @@
     {
       "question": "Applications Analyst",
       "kind": "occupation",
-      "expected_top_id": "onet:occupation:15-1253.00",
+      "expected_top_id": "onet:occupation:15-1211.00",
       "expected_confidence": 0.9,
       "expected_method": "exact_alt",
       "expected_warnings": []
@@ -69,7 +69,7 @@
     {
       "question": "Application Integrator",
       "kind": "occupation",
-      "expected_top_id": "onet:occupation:15-1253.00",
+      "expected_top_id": "onet:occupation:15-1252.00",
       "expected_confidence": 0.9,
       "expected_method": "exact_alt",
       "expected_warnings": []

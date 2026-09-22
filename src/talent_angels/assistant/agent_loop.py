@@ -25,6 +25,7 @@ from talent_angels.runlog import StageUsage, ToolCall
 from talent_angels.skills.connect import connect
 from talent_angels.skills.connect.models import ConnectRequest
 from talent_angels.skills.locate import locate
+from talent_angels.skills.locate.rank import group_and_sort_locate
 from talent_angels.suites.measured import MeasuredSuite
 from talent_angels.suites.protocol import SuiteTools
 
@@ -125,11 +126,16 @@ def _execute_tool(
             raise ValueError("search_nodes requires text")
         kind = args.get("kind")
         kind_value = kind if isinstance(kind, str) else None
-        return locate(
+        search_text = _search_text_for(question, text, already_searched=already_searched)
+        result = locate(suite, suite_name, search_text, kind=kind_value)
+        schema = suite.suite_schema
+        return group_and_sort_locate(
             suite,
-            suite_name,
-            _search_text_for(question, text, already_searched=already_searched),
-            kind=kind_value,
+            result,
+            search_text,
+            suite_name=suite_name,
+            group_rel_type=schema.group_rel_type,
+            group_node_kinds=schema.group_node_kinds,
         )
 
     if invocation.name == "get_neighbors":

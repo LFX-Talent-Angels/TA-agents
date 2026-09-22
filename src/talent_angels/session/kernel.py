@@ -17,7 +17,12 @@ from talent_angels.assistant.turn import TurnOutcome
 from talent_angels.contracts import AgentResult, NodeRef
 from talent_angels.llm import LLMClient
 from talent_angels.memory.paths import MEMORY_MD, USER_MD
-from talent_angels.memory.profile import write_goal, write_rejected, write_standing
+from talent_angels.memory.profile import (
+    read_user_profile,
+    write_goal,
+    write_rejected,
+    write_standing,
+)
 from talent_angels.session.budget import model_view
 from talent_angels.session.catalog import FreeModel
 from talent_angels.session.commands import UnknownCommand, parse_command
@@ -162,6 +167,8 @@ def handle_line(
         return _handle_expand(state, text, runner=runner)
     if routed.kind == "show_suite":
         return _handle_show(state, text, routed.show_token or "")
+    if routed.kind == "chat":
+        return _handle_chat(state, text, llm_client=llm_client)
     mention = parse_skill_mention(text)
     stored = state.last_result
     if mention is None and stored is not None and can_expand_connect(stored):
@@ -625,6 +632,38 @@ def _handle_show(state: SessionState, text: str, token: str) -> ChatReply:
     message = _render_unique_block(match, question=token, llm_client=None, heading=heading)
     _record(state, "assistant", message)
     return _reply(state, message, source_note=heading)
+
+
+def _meta_chat_fallback(state: SessionState) -> str:
+    profile = read_user_profile().strip()
+    if not profile:
+        return (
+            "I don't have much about you yet. Name a job you're aiming for "
+            "and I'll note it, then we can look at what it takes."
+        )
+    return f"What I have on file for you:\n\n{profile}"
+
+
+def _handle_chat(
+    state: SessionState,
+    text: str,
+    *,
+    llm_client: LLMClient | None,
+) -> ChatReply:
+    """First-person meta queries answer from the profile, never from the map."""
+    said = phrase_chat(
+        llm_client,
+        user_text=model_view(state, text),
+        fallback=_meta_chat_fallback(state),
+        hint=(
+            "User asked about their profile or what you know about them. "
+            "Answer only from the profile card above. Do not call any graph "
+            "tool and do not invent facts about the user. If the profile is "
+            "empty, say you have not been told much yet and invite them to "
+            "name a goal occupation."
+        ),
+    )
+    return _finish(state, text, said)
 
 
 def _from_outcome(

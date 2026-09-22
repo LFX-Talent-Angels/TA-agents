@@ -21,6 +21,8 @@ from talent_angels.assistant.llm_call import measure_complete
 from talent_angels.assistant.planning import ExecutionPlan, build_plan_for_capability
 from talent_angels.contracts import AgentResult, NodeRef
 from talent_angels.llm import LLMClient, Message, ToolInvocation
+from talent_angels.memory.agent_notes import notes_prefix
+from talent_angels.memory.profile import profile_prefix
 from talent_angels.runlog import StageUsage, ToolCall
 from talent_angels.skills.connect import connect
 from talent_angels.skills.connect.models import ConnectRequest
@@ -146,11 +148,16 @@ def _execute_tool(
         if not isinstance(node_id, str) or not node_id.strip():
             raise ValueError("get_neighbors requires node_id")
         rel_raw = args.get("rel_types")
-        rel_types: tuple[str, ...]
+        supported = tuple(suite.suite_schema.skill_rel_types)
         if isinstance(rel_raw, list) and rel_raw:
-            rel_types = tuple(str(item) for item in rel_raw)
+            requested = tuple(str(item) for item in rel_raw)
+            # Drop rel types the suite does not expose (e.g. O*NET's USES_SOFTWARE
+            # sent to ESCO) — an unknown type makes the suite reject the whole
+            # get_neighbors call and report 0 edges (GAP A).
+            known = tuple(rt for rt in requested if rt in supported)
+            rel_types = known or supported
         else:
-            rel_types = tuple(suite.suite_schema.skill_rel_types)
+            rel_types = supported
         relation = args.get("relation_filter")
         relation_kind = relation if isinstance(relation, str) else None
         center = None
@@ -292,8 +299,16 @@ def run_tool_loop(
     user_content = question if kind is None else f"{question}\nkind={kind}"
     if bound_node is not None:
         user_content += f"\n[Currently bound: {bound_node.pref_label} ({bound_node.id})]"
+    rel_hint = (
+        "Supported rel_types for this suite: "
+        + (", ".join(measured.suite_schema.skill_rel_types) or "none")
+        + "."
+    )
     messages: list[Message] = [
-        Message(role="system", content=LOOP_SYSTEM),
+        Message(
+            role="system",
+            content=profile_prefix() + notes_prefix() + LOOP_SYSTEM + "\n" + rel_hint,
+        ),
         Message(role="user", content=user_content),
     ]
     stages: list[StageUsage] = []

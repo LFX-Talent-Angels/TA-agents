@@ -77,6 +77,19 @@ def test_parse_command_table() -> None:
         parse_command("/unknown")
 
 
+def test_router_classifies_self_and_profile_as_chat() -> None:
+    assert route_line("show me my profile").kind == "chat"
+    assert route_line("show my profile").kind == "chat"
+    assert route_line("describe my profile").kind == "chat"
+    assert route_line("whats my goal").kind == "chat"
+    assert route_line("what's my goal").kind == "chat"
+    assert route_line("what is my goal").kind == "chat"
+    assert route_line("who am i").kind == "chat"
+    assert route_line("tell me about myself").kind == "chat"
+    assert route_line("what do you know about me").kind == "chat"
+    assert route_line("what was my goal").kind == "map"
+
+
 def test_router_classifies_non_map_lines() -> None:
     assert route_line("hi").kind == "greet"
     assert route_line("Hello!").kind == "greet"

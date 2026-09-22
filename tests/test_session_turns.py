@@ -171,6 +171,9 @@ def _local_runtime(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
     monkeypatch.setenv("LLM_PROVIDER", "none")
     monkeypatch.setenv("LLM_MODEL", "stub")
     monkeypatch.setenv("ANSWER_MODE", "structured")
+    # Keep profile writes (write_standing/goal) out of the real ~/.ta-agents/USER.md.
+    monkeypatch.setattr("talent_angels.memory.profile.USER_MD", tmp_path / "USER.md")
+    monkeypatch.setattr("talent_angels.memory.profile.MEMORY_MD", tmp_path / "MEMORY.md")
 
 
 def test_numeric_pick_does_not_call_search_nodes(tmp_path: Path) -> None:
@@ -1185,3 +1188,111 @@ def test_what_does_bound_job_do_does_not_search() -> None:
     assert "O*NET" in (reply.source_note or "")
     typo = handle_line(state, "what does Urologitst do ?", runner=_boom)
     assert "Diagnose and treat" in typo.text
+
+
+def test_empty_label_connect_does_not_clobber_good_binding() -> None:
+    from talent_angels.assistant.planning import build_plan_for_capability
+    from talent_angels.assistant.turn import TurnOutcome
+    from talent_angels.contracts import AgentResult, NodeRef
+    from talent_angels.runlog import RunLogRecord
+    from talent_angels.session.kernel import _set_bind, handle_line
+
+    good = NodeRef(
+        id="esco:occupation:f2b15a0e",
+        suite="esco",
+        source="esco",
+        source_id="http://data.europa.eu/esco/occupation/f2b15a0e",
+        kind="Occupation",
+        pref_label="software developer",
+    )
+    blank = NodeRef(
+        id="esco:occupation:f2b15a0e",
+        suite="esco",
+        source="esco",
+        source_id="esco:occupation:some-graph-id",
+        kind="Occupation",
+        pref_label="",
+    )
+    state = new_session()
+    _set_bind(state, good)
+    assert state.binding is not None
+    assert state.binding.node.pref_label == "software developer"
+
+    connect = AgentResult(
+        capability="connect",
+        suite="esco",
+        nodes=[blank],
+        confidence=0.9,
+    )
+
+    def runner(question: str, **_kwargs: object) -> TurnOutcome:
+        return TurnOutcome(
+            capability="connect",
+            plan=build_plan_for_capability("connect", suites=("esco",)),
+            result=connect,
+            results=(connect,),
+            answer="On the attached maps this lines up with.",
+            record=RunLogRecord(suite="esco", plan=["connect"], question=question),
+        )
+
+    reply = handle_line(state, "what skills ?", runner=runner)
+    assert state.binding.node.pref_label == "software developer"
+    assert "software developer" in (reply.bound_label or "")
+
+
+def test_multi_suite_goal_writes_once_not_last_wins() -> None:
+    from unittest.mock import patch
+
+    from talent_angels.assistant.llm_plan import PlanDraft
+    from talent_angels.assistant.planning import build_plan_for_capability
+    from talent_angels.assistant.turn import TurnOutcome
+    from talent_angels.contracts import AgentResult, NodeRef
+    from talent_angels.runlog import RunLogRecord
+    from talent_angels.session.kernel import handle_line
+
+    esco_node = NodeRef(
+        id="esco:occupation:sw",
+        suite="esco",
+        source="esco",
+        source_id="http://data.europa.eu/esco/occupation/sw",
+        kind="Occupation",
+        pref_label="software developer",
+    )
+    onet_node = NodeRef(
+        id="onet:occupation:15-1252.00",
+        suite="onet",
+        source="onet",
+        source_id="15-1252.00",
+        kind="Occupation",
+        pref_label="Software Developers",
+    )
+    esco = AgentResult(capability="locate", suite="esco", nodes=[esco_node], confidence=0.95)
+    onet = AgentResult(
+        capability="locate",
+        suite="onet",
+        nodes=[onet_node],
+        confidence=0.9,
+    )
+    draft = PlanDraft(
+        target="locate",
+        subject="software developer",
+        kind="occupation",
+        profile_intent="goal",
+    )
+
+    def runner(question: str, **_kwargs: object) -> TurnOutcome:
+        return TurnOutcome(
+            capability="locate",
+            plan=build_plan_for_capability("locate", suites=("esco", "onet")),
+            result=esco,
+            results=(esco, onet),
+            answer="ignored",
+            plan_draft=draft,
+            record=RunLogRecord(suite="esco,onet", plan=["locate"], question=question),
+        )
+
+    with patch("talent_angels.session.kernel.write_goal") as mock_goal:
+        state = new_session()
+        handle_line(state, "set my goal to software developer", runner=runner)
+        assert mock_goal.call_count == 1
+        assert mock_goal.call_args.args[0].id == esco_node.id

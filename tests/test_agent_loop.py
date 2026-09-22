@@ -239,6 +239,74 @@ def test_tool_loop_runs_laguna_xml_get_neighbors() -> None:
     assert "<tool_call>" not in outcome.answer
 
 
+def test_get_neighbors_without_locate_resolves_center_from_bound_node() -> None:
+    occupation = _occupation()
+    skill = FakeNode(
+        id="esco:skill:fixture-2",
+        kind="Skill",
+        label="computer programming",
+        source="esco",
+        source_id="http://data.europa.eu/esco/skill/fixture-2",
+        properties={},
+    )
+    suite = FakeSuite(
+        FakeToolResult(warnings=["not_found"]),
+        FakeToolResult(
+            nodes=[occupation, skill],
+            edges=[
+                FakeEdge(
+                    type="HAS_SKILL",
+                    from_id=occupation.id,
+                    to_id=skill.id,
+                    properties={"relation_type": "essential"},
+                )
+            ],
+            evidence=[f"esco:neighbors:{occupation.id}"],
+        ),
+    )
+    bound = NodeRef(
+        id=occupation.id,
+        suite="esco",
+        source="esco",
+        source_id="http://data.europa.eu/esco/occupation/fixture-1",
+        kind="Occupation",
+        pref_label="software developer",
+    )
+    client = ScriptedToolClient(
+        [
+            LLMResult(
+                text=(
+                    '{"tool":"get_neighbors","node_id":"'
+                    + occupation.id
+                    + '","rel_types":["HAS_SKILL"]}'
+                ),
+                provider="litellm",
+                model="actual",
+                usage=LLMUsage(input_tokens=10, output_tokens=4),
+            ),
+            LLMResult(
+                text='{"final":"Bound software developer has computer programming."}',
+                provider="litellm",
+                model="actual",
+                usage=LLMUsage(input_tokens=20, output_tokens=8),
+            ),
+        ]
+    )
+
+    outcome = run_tool_loop(
+        question="A software developer needs what skills?",
+        suite=suite,
+        suite_name="esco",
+        llm_client=client,
+        bound_node=bound,
+    )
+
+    assert outcome.result.capability == "connect"
+    assert outcome.result.nodes[0].id == bound.id
+    assert outcome.result.nodes[0].pref_label == "software developer"
+    assert outcome.result.nodes[0].source_id == bound.source_id
+
+
 class ExplodingToolClient:
     provider = "litellm"
     model = "openrouter/nvidia/nemotron-3-ultra-550b-a55b:free"

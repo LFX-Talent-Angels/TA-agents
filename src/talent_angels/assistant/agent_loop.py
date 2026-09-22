@@ -21,10 +21,13 @@ from talent_angels.assistant.llm_call import measure_complete
 from talent_angels.assistant.planning import ExecutionPlan, build_plan_for_capability
 from talent_angels.contracts import AgentResult, NodeRef
 from talent_angels.llm import LLMClient, Message, ToolInvocation
+from talent_angels.memory.agent_notes import notes_prefix
+from talent_angels.memory.profile import profile_prefix
 from talent_angels.runlog import StageUsage, ToolCall
 from talent_angels.skills.connect import connect
 from talent_angels.skills.connect.models import ConnectRequest
 from talent_angels.skills.locate import locate
+from talent_angels.skills.locate.rank import group_and_sort_locate
 from talent_angels.suites.measured import MeasuredSuite
 from talent_angels.suites.protocol import SuiteTools
 
@@ -44,6 +47,7 @@ Or finish with the user-facing answer:
 
 Rules:
 - On your FIRST response you MUST call search_nodes. Never start with {"final":...}.
+- Always set kind to "occupation" when searching for job titles. Never omit kind.
 - Search the occupation or skill name from the question — not the full sentence.
 - For skills questions: search_nodes first, then get_neighbors once you have a unique node.
 - If TOOL_RESULT warnings include ambiguous or not_found, return {"final":...} and stop.
@@ -117,6 +121,7 @@ def _execute_tool(
     located: AgentResult | None,
     question: str,
     already_searched: bool,
+    bound_node: NodeRef | None = None,
 ) -> AgentResult:
     args = invocation.arguments
     if invocation.name == "search_nodes":
@@ -124,12 +129,19 @@ def _execute_tool(
         if not isinstance(text, str) or not text.strip():
             raise ValueError("search_nodes requires text")
         kind = args.get("kind")
-        kind_value = kind if isinstance(kind, str) else None
-        return locate(
+        # Default to "occupation" — without it, O*NET returns task nodes and ESCO returns skill
+        # nodes mixed with occupations, breaking ranking and causing spurious ambiguous results.
+        kind_value = kind if isinstance(kind, str) else "occupation"
+        search_text = _search_text_for(question, text, already_searched=already_searched)
+        result = locate(suite, suite_name, search_text, kind=kind_value)
+        schema = suite.suite_schema
+        return group_and_sort_locate(
             suite,
-            suite_name,
-            _search_text_for(question, text, already_searched=already_searched),
-            kind=kind_value,
+            result,
+            search_text,
+            suite_name=suite_name,
+            group_rel_type=schema.group_rel_type,
+            group_node_kinds=schema.group_node_kinds,
         )
 
     if invocation.name == "get_neighbors":
@@ -137,16 +149,23 @@ def _execute_tool(
         if not isinstance(node_id, str) or not node_id.strip():
             raise ValueError("get_neighbors requires node_id")
         rel_raw = args.get("rel_types")
-        rel_types: tuple[str, ...]
+        supported = tuple(suite.suite_schema.skill_rel_types)
         if isinstance(rel_raw, list) and rel_raw:
-            rel_types = tuple(str(item) for item in rel_raw)
+            requested = tuple(str(item) for item in rel_raw)
+            # Drop rel types the suite does not expose (e.g. O*NET's USES_SOFTWARE
+            # sent to ESCO) — an unknown type makes the suite reject the whole
+            # get_neighbors call and report 0 edges (GAP A).
+            known = tuple(rt for rt in requested if rt in supported)
+            rel_types = known or supported
         else:
-            rel_types = tuple(suite.suite_schema.skill_rel_types)
+            rel_types = supported
         relation = args.get("relation_filter")
         relation_kind = relation if isinstance(relation, str) else None
         center = None
         if located is not None:
             center = next((node for node in located.nodes if node.id == node_id), None)
+        if center is None and bound_node is not None and bound_node.id == node_id:
+            center = bound_node
         if center is None:
             center = NodeRef(
                 id=node_id,
@@ -283,8 +302,16 @@ def run_tool_loop(
     user_content = question if kind is None else f"{question}\nkind={kind}"
     if bound_node is not None:
         user_content += f"\n[Currently bound: {bound_node.pref_label} ({bound_node.id})]"
+    rel_hint = (
+        "Supported rel_types for this suite: "
+        + (", ".join(measured.suite_schema.skill_rel_types) or "none")
+        + "."
+    )
     messages: list[Message] = [
-        Message(role="system", content=LOOP_SYSTEM),
+        Message(
+            role="system",
+            content=profile_prefix() + notes_prefix() + LOOP_SYSTEM + "\n" + rel_hint,
+        ),
         Message(role="user", content=user_content),
     ]
     stages: list[StageUsage] = []
@@ -351,6 +378,7 @@ def run_tool_loop(
                             located=located,
                             question=question,
                             already_searched=bool(searched),
+                            bound_node=bound_node,
                         )
                         searched.add(key)
                 else:
@@ -361,6 +389,7 @@ def run_tool_loop(
                         located=located,
                         question=question,
                         already_searched=bool(searched),
+                        bound_node=bound_node,
                     )
                 if tool_result.capability == CAPABILITY_LOCATE:
                     located = tool_result

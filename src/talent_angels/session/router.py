@@ -7,7 +7,7 @@ from dataclasses import dataclass
 from typing import Literal
 
 LineKind = Literal[
-    "command", "greet", "help_plain", "advice", "catalogue", "pick", "show_suite", "map"
+    "command", "greet", "help_plain", "advice", "catalogue", "pick", "show_suite", "chat", "map"
 ]
 
 _GREET_RE = re.compile(
@@ -49,6 +49,22 @@ _CATALOGUE_RE = re.compile(
 
 _SHOW_RE = re.compile(
     r"^\s*show(?:\s+me)?\s+([^\s]+)\s*$",
+    re.IGNORECASE,
+)
+
+# First-person meta/self queries answer from the user profile (USER.md), not the map.
+_META_SELF_RE = re.compile(
+    r"^\s*("
+    r"what(?:\s+else)?\s+do\s+you\s+know(\s+about\s+me)?|"
+    r"what\s+have\s+you\s+(?:learned|noted)(\s+about\s+me)?|"
+    r"tell\s+me\s+about\s+myself|"
+    r"what(?:'?s|\s+is)\s+my\s+goal|"
+    r"who\s+am\s+i|"
+    r"what\s+do\s+you\s+remember(\s+about\s+me)?|"
+    r"(?:describe|show)\s+(?:(?:me\s+)?my\s+profile|me)|"
+    r"what\s+is\s+my\s+profile|"
+    r"what\s+about\s+me"
+    r")\s*[?.!]?\s*$",
     re.IGNORECASE,
 )
 
@@ -97,5 +113,8 @@ def route_line(text: str) -> RoutedLine:
     show = _SHOW_RE.match(stripped)
     if show:
         return RoutedLine(kind="show_suite", text=stripped, show_token=show.group(1).strip())
+
+    if _META_SELF_RE.match(stripped):
+        return RoutedLine(kind="chat", text=stripped)
 
     return RoutedLine(kind="map", text=stripped)

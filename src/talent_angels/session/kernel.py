@@ -16,7 +16,13 @@ from talent_angels.assistant.synthesize import synthesize
 from talent_angels.assistant.turn import TurnOutcome
 from talent_angels.contracts import AgentResult, NodeRef
 from talent_angels.llm import LLMClient
-from talent_angels.memory.profile import write_goal, write_rejected, write_standing
+from talent_angels.memory.paths import MEMORY_MD, USER_MD
+from talent_angels.memory.profile import (
+    read_user_profile,
+    write_goal,
+    write_rejected,
+    write_standing,
+)
 from talent_angels.session.budget import model_view
 from talent_angels.session.catalog import FreeModel
 from talent_angels.session.commands import UnknownCommand, parse_command
@@ -58,6 +64,7 @@ from talent_angels.session.store import (
     clear_conversation,
     load_last,
     load_session,
+    new_session,
     save_session,
     sessions_dir,
 )
@@ -160,6 +167,8 @@ def handle_line(
         return _handle_expand(state, text, runner=runner)
     if routed.kind == "show_suite":
         return _handle_show(state, text, routed.show_token or "")
+    if routed.kind == "chat":
+        return _handle_chat(state, text, llm_client=llm_client)
     mention = parse_skill_mention(text)
     stored = state.last_result
     if mention is None and stored is not None and can_expand_connect(stored):
@@ -178,6 +187,9 @@ def _record(state: SessionState, role: Literal["user", "assistant", "system"], t
 
 
 def _set_bind(state: SessionState, node: NodeRef) -> None:
+    label = (node.pref_label or "").strip()
+    if not label or label.casefold() == "none":
+        return
     state.bindings[node.suite] = node
     state.binding = LastBinding(node=node)
     write_standing(node)
@@ -259,6 +271,13 @@ def _handle_command(state: SessionState, text: str) -> ChatReply:
     if command.name == "clear":
         _copy_into(state, clear_conversation(state))
         return _finish(state, text, _CLEARED)
+    if command.name == "reset":
+        fresh = new_session()
+        _copy_into(state, clear_conversation(fresh))
+        for mem_path in (MEMORY_MD, USER_MD):
+            if mem_path.exists():
+                mem_path.unlink()
+        return _finish(state, text, "Memory and session cleared. Starting fresh.")
     if command.name == "model":
         if command.argument is None:
             _record(state, "user", text)
@@ -618,6 +637,38 @@ def _handle_show(state: SessionState, text: str, token: str) -> ChatReply:
     return _reply(state, message, source_note=heading)
 
 
+def _meta_chat_fallback(state: SessionState) -> str:
+    profile = read_user_profile().strip()
+    if not profile:
+        return (
+            "I don't have much about you yet. Name a job you're aiming for "
+            "and I'll note it, then we can look at what it takes."
+        )
+    return f"What I have on file for you:\n\n{profile}"
+
+
+def _handle_chat(
+    state: SessionState,
+    text: str,
+    *,
+    llm_client: LLMClient | None,
+) -> ChatReply:
+    """First-person meta queries answer from the profile, never from the map."""
+    said = phrase_chat(
+        llm_client,
+        user_text=model_view(state, text),
+        fallback=_meta_chat_fallback(state),
+        hint=(
+            "User asked about their profile or what you know about them. "
+            "Answer only from the profile card above. Do not call any graph "
+            "tool and do not invent facts about the user. If the profile is "
+            "empty, say you have not been told much yet and invite them to "
+            "name a goal occupation."
+        ),
+    )
+    return _finish(state, text, said)
+
+
 def _from_outcome(
     state: SessionState,
     outcome: TurnOutcome,
@@ -648,6 +699,7 @@ def _from_outcome(
     unique_bind: NodeRef | None = None
     any_hit = False
     all_miss = True
+    _draft = getattr(outcome, "plan_draft", None)
 
     for result in results:
         heading = suite_heading(result.suite) if result.suite else "Map"
@@ -689,17 +741,17 @@ def _from_outcome(
         all_miss = False
         any_hit = True
         _set_bind(state, result.nodes[0])
-        _draft = getattr(outcome, "plan_draft", None)
-        if _draft is not None:
-            if _draft.profile_intent == "goal":
-                write_goal(result.nodes[0])
-            elif _draft.profile_intent == "reject":
-                write_rejected(result.nodes[0])
         if unique_bind is None:
             unique_bind = result.nodes[0]
         unique_cards.append(
             _render_unique_block(result, question=question, llm_client=llm_client, heading=heading)
         )
+
+    if _draft is not None and unique_bind is not None:
+        if _draft.profile_intent == "goal":
+            write_goal(unique_bind)
+        elif _draft.profile_intent == "reject":
+            write_rejected(unique_bind)
 
     if pending_all:
         state.pending = pending_all
@@ -771,7 +823,7 @@ def _handle_expand(state: SessionState, text: str, *, runner: TurnRunner) -> Cha
         state.last_result = result
         if outcome.results:
             state.last_results = list(outcome.results)
-        if result.nodes:
+        if result.nodes and (result.nodes[0].pref_label or "").strip():
             state.binding = LastBinding(node=result.nodes[0])
     if not can_expand_connect(result):
         message = (

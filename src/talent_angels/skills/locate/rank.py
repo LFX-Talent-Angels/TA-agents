@@ -129,9 +129,7 @@ def group_and_sort_locate(
     second_tier = lexical_rank(query, ordered[1])[0]
     # Exact preferred label (0) or exact alias (3) that beats the next hit
     # is unique enough — extra full-text noise is not a picker.
-    unique_enough = (
-        top_tier in {0, 3} or _near_pref_label(query, ordered[0])
-    ) and top_tier < second_tier
+    unique_enough = top_tier < second_tier
     if unique_enough:
         extra = len(ordered) - 1
         winner = ordered[0]

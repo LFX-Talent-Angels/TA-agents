@@ -58,10 +58,10 @@ _META_SELF_RE = re.compile(
     r"what(?:\s+else)?\s+do\s+you\s+know(\s+about\s+me)?|"
     r"what\s+have\s+you\s+(?:learned|noted)(\s+about\s+me)?|"
     r"tell\s+me\s+about\s+myself|"
-    r"what(?:'s|\s+is)\s+my\s+goal|"
+    r"what(?:'?s|\s+is)\s+my\s+goal|"
     r"who\s+am\s+i|"
     r"what\s+do\s+you\s+remember(\s+about\s+me)?|"
-    r"(?:describe|show)\s+(?:me|my\s+profile)|"
+    r"(?:describe|show)\s+(?:(?:me\s+)?my\s+profile|me)|"
     r"what\s+is\s+my\s+profile|"
     r"what\s+about\s+me"
     r")\s*[?.!]?\s*$",

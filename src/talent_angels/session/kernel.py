@@ -187,6 +187,9 @@ def _record(state: SessionState, role: Literal["user", "assistant", "system"], t
 
 
 def _set_bind(state: SessionState, node: NodeRef) -> None:
+    label = (node.pref_label or "").strip()
+    if not label or label.casefold() == "none":
+        return
     state.bindings[node.suite] = node
     state.binding = LastBinding(node=node)
     write_standing(node)
@@ -696,6 +699,7 @@ def _from_outcome(
     unique_bind: NodeRef | None = None
     any_hit = False
     all_miss = True
+    _draft = getattr(outcome, "plan_draft", None)
 
     for result in results:
         heading = suite_heading(result.suite) if result.suite else "Map"
@@ -737,17 +741,17 @@ def _from_outcome(
         all_miss = False
         any_hit = True
         _set_bind(state, result.nodes[0])
-        _draft = getattr(outcome, "plan_draft", None)
-        if _draft is not None:
-            if _draft.profile_intent == "goal":
-                write_goal(result.nodes[0])
-            elif _draft.profile_intent == "reject":
-                write_rejected(result.nodes[0])
         if unique_bind is None:
             unique_bind = result.nodes[0]
         unique_cards.append(
             _render_unique_block(result, question=question, llm_client=llm_client, heading=heading)
         )
+
+    if _draft is not None and unique_bind is not None:
+        if _draft.profile_intent == "goal":
+            write_goal(unique_bind)
+        elif _draft.profile_intent == "reject":
+            write_rejected(unique_bind)
 
     if pending_all:
         state.pending = pending_all
@@ -819,7 +823,7 @@ def _handle_expand(state: SessionState, text: str, *, runner: TurnRunner) -> Cha
         state.last_result = result
         if outcome.results:
             state.last_results = list(outcome.results)
-        if result.nodes:
+        if result.nodes and (result.nodes[0].pref_label or "").strip():
             state.binding = LastBinding(node=result.nodes[0])
     if not can_expand_connect(result):
         message = (

@@ -121,6 +121,7 @@ def _execute_tool(
     located: AgentResult | None,
     question: str,
     already_searched: bool,
+    bound_node: NodeRef | None = None,
 ) -> AgentResult:
     args = invocation.arguments
     if invocation.name == "search_nodes":
@@ -163,6 +164,8 @@ def _execute_tool(
         center = None
         if located is not None:
             center = next((node for node in located.nodes if node.id == node_id), None)
+        if center is None and bound_node is not None and bound_node.id == node_id:
+            center = bound_node
         if center is None:
             center = NodeRef(
                 id=node_id,
@@ -375,6 +378,7 @@ def run_tool_loop(
                             located=located,
                             question=question,
                             already_searched=bool(searched),
+                            bound_node=bound_node,
                         )
                         searched.add(key)
                 else:
@@ -385,6 +389,7 @@ def run_tool_loop(
                         located=located,
                         question=question,
                         already_searched=bool(searched),
+                        bound_node=bound_node,
                     )
                 if tool_result.capability == CAPABILITY_LOCATE:
                     located = tool_result

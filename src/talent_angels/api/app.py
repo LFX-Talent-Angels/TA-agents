@@ -66,6 +66,9 @@ def _apply_outcome_bindings(state: SessionState, outcome: object) -> None:
         warnings = getattr(result, "warnings", [])
         if nodes and "ambiguous" not in warnings and len(nodes) == 1:
             node: NodeRef = nodes[0]
+            label = (node.pref_label or "").strip()
+            if not label or label.casefold() == "none":
+                continue
             state.bindings[node.suite] = node
             state.binding = LastBinding(node=node)
 

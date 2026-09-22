@@ -12,6 +12,7 @@ from contextlib import contextmanager
 from typing import Any
 
 from talent_angels.suites import SuiteRegistry, SuiteRuntime
+from talent_angels.suites.schema import SuiteSchema
 from tests.fakes.taxonomy import (
     FakeCandidate,
     FakeEdge,
@@ -47,10 +48,22 @@ HAS_PYTHON = FakeEdge(
 )
 
 
+_DEFAULT_SCHEMA = SuiteSchema(
+    skill_rel_types=("HAS_SKILL", "USES_SOFTWARE"),
+    optional_rel_values=frozenset({"optional", "transferable"}),
+    group_rel_type="CLASSIFIED_UNDER",
+    group_node_kinds=frozenset({"ISCOGroup", "isco group"}),
+)
+
+
 class FakeSuite:
     """Implements all four contract tools."""
 
     name = SUITE_NAME
+
+    @property
+    def suite_schema(self) -> SuiteSchema:
+        return _DEFAULT_SCHEMA
 
     def search_nodes(self, text: str, kind: str | None = None) -> FakeToolResult:
         if text == "software developer":
@@ -112,6 +125,10 @@ class LocateOnlySuite:
     """A suite that stops at the Locate/Connect slice, as the registry allows."""
 
     name = "locate_only"
+
+    @property
+    def suite_schema(self) -> SuiteSchema:
+        return _DEFAULT_SCHEMA
 
     def search_nodes(self, text: str, kind: str | None = None) -> FakeToolResult:
         return FakeToolResult(warnings=["not_found"])

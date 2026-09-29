@@ -3,8 +3,9 @@
 from __future__ import annotations
 
 import re
+from collections.abc import Sequence
 
-from talent_angels.contracts import AgentResult, NodeRef
+from talent_angels.contracts import AgentResult, EdgeRef, NodeRef
 
 _BARE_YES = re.compile(r"^\s*yes\s*[.!]?\s*$", re.IGNORECASE)
 
@@ -99,6 +100,29 @@ def can_expand_locate(result: AgentResult | None) -> bool:
     return "ambiguous" in result.warnings and bool(result.nodes)
 
 
+# Relation types the suite contract exposes with no essential/optional signal.
+# Checked: O*NET's USES_SOFTWARE always has relation_type=None (it is a
+# tool/software link, not a skill-importance link) — that is a real absence of
+# signal, not a missing value, so it gets its own tag rather than a blank cell
+# sitting next to ESCO's essential/optional column in the same table.
+_UNTAGGED_REL_KIND = {"USES_SOFTWARE": "tool"}
+
+
+def relation_tags(edges: Sequence[EdgeRef], center_id: str) -> dict[str, str]:
+    """Map neighbor node id -> a one-word tag, for the numbered list suffix."""
+    tags: dict[str, str] = {}
+    for edge in edges:
+        other_id = edge.target_node_id if edge.source_node_id == center_id else edge.source_node_id
+        rel = edge.properties.get("relation_type")
+        if rel:
+            tags[other_id] = str(rel)
+            continue
+        fallback = _UNTAGGED_REL_KIND.get(edge.type)
+        if fallback:
+            tags.setdefault(other_id, fallback)
+    return tags
+
+
 def render_connect_list(result: AgentResult, *, cap: int = CONNECT_LIST_CAP) -> str:
     """Deterministic full-ish neighbor list. Not a model-authored curriculum."""
     if not result.nodes:
@@ -111,15 +135,7 @@ def render_connect_list(result: AgentResult, *, cap: int = CONNECT_LIST_CAP) -> 
         f"**{center.pref_label}** — {len(neighbors)} skills on the map:",
         "",
     ]
-    relations = {}
-    for edge in result.edges:
-        rel = edge.properties.get("relation_type")
-        if not rel:
-            continue
-        if edge.target_node_id != center.id:
-            relations[edge.target_node_id] = str(rel)
-        if edge.source_node_id != center.id:
-            relations[edge.source_node_id] = str(rel)
+    relations = relation_tags(result.edges, center.id)
     for index, node in enumerate(shown, start=1):
         tag = relations.get(node.id)
         suffix = f" ({tag})" if tag else ""

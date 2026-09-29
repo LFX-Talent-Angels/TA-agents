@@ -2,9 +2,11 @@
 
 from __future__ import annotations
 
+import sqlite3
+from pathlib import Path
 from typing import cast
 
-from langgraph.checkpoint.memory import MemorySaver
+from langgraph.checkpoint.sqlite import SqliteSaver
 from langgraph.graph import END, StateGraph
 from langgraph.graph.state import CompiledStateGraph
 
@@ -29,6 +31,7 @@ from talent_angels.assistant.llm_plan import (
 from talent_angels.assistant.state import AssistantState
 from talent_angels.contracts import AgentResult, NodeRef
 from talent_angels.llm import LLMClient
+from talent_angels.memory.paths import CHECKPOINT_DB_PATH
 from talent_angels.runlog import usage_from_stage
 from talent_angels.session.phrase import uses_chat_phrasing
 from talent_angels.skills.connect import connect
@@ -36,6 +39,39 @@ from talent_angels.skills.locate import ESCO_SUITE_NAME, locate
 from talent_angels.skills.locate.rank import group_and_sort_locate
 from talent_angels.suites.measured import MeasuredSuite
 from talent_angels.suites.protocol import SuiteTools
+
+
+def checkpoint_db_path() -> Path:
+    """Where the durable checkpointer writes. The single resolver for this store.
+
+    Exists so ``memory.erase`` reaches this path through the module that owns
+    the saver rather than re-deriving it, which is the bug that once left 656
+    query dumps on disk while ``/reset-all`` answered "Forgotten." (see that
+    module's docstring). The constant is bound at import, exactly as
+    ``episodes_db_path``/``cache_db_path`` do, so the test fixture can redirect
+    it per test.
+    """
+    return CHECKPOINT_DB_PATH
+
+
+def _build_checkpointer() -> SqliteSaver:
+    """A checkpointer whose state outlives this process.
+
+    ``MemorySaver`` — the obvious choice, and what this was — keeps the graph
+    state in a dict on the instance. ``api/app.py`` builds a fresh graph on
+    every request, so each ``thread_id`` started every turn blank: the state was
+    written and then unreachable, and nothing survived a restart.
+
+    The connection is opened per ``build_graph`` call and owned by the returned
+    saver, so its lifetime is the graph's. That is the same lifetime the
+    ``MemorySaver`` had; nothing is cached across turns, and the file is the
+    only thing that carries state forward. ``check_same_thread=False`` because
+    the API serves these endpoints on a threadpool, and the saver takes its own
+    lock around writes.
+    """
+    path = checkpoint_db_path()
+    path.parent.mkdir(parents=True, exist_ok=True)
+    return SqliteSaver(sqlite3.connect(path, check_same_thread=False))
 
 
 def _interpret_intent(
@@ -303,5 +339,5 @@ def build_graph(
     graph.add_edge("interpret_intent", "dispatch_plan")
     graph.add_edge("dispatch_plan", "answer")
     graph.add_edge("answer", END)
-    checkpointer = MemorySaver() if thread_id is not None else None
+    checkpointer = _build_checkpointer() if thread_id is not None else None
     return graph.compile(checkpointer=checkpointer)

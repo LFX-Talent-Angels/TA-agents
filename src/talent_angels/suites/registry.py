@@ -78,14 +78,49 @@ def _open_default_onet() -> Iterator[SuiteRuntime]:
         yield runtime
 
 
-def default_suite_registry() -> SuiteRegistry:
+def with_neighbor_cache(factory: SuiteFactory) -> SuiteFactory:
+    """Wrap one suite factory so every open() serves get_neighbors from SQLite.
+
+    Applied in ``default_suite_registry`` — the single place the TUI, API, MCP
+    edge, and CLI all build their registry — rather than inside each edge. A
+    per-edge opt-in is exactly the shape of bug this closes: the cache layer
+    existed, was tested, and never fired for a real user because no edge
+    remembered to pass it. Here it cannot be forgotten.
+    """
+
+    @contextmanager
+    def _open() -> Iterator[SuiteRuntime]:
+        from talent_angels.memory.cache import CachedSuite
+
+        with factory() as runtime:
+            yield SuiteRuntime(
+                name=runtime.name,
+                suite=CachedSuite(runtime.suite),
+                health_check=runtime.health_check,
+            )
+
+    return _open
+
+
+def default_suite_registry(*, neighbor_cache: bool = True) -> SuiteRegistry:
     """Build the registry; constructing it performs no database work.
 
     Every attached suite is available to the assistant. ``open(name)`` is the
     debug override (CLI ``--suite`` / API ``suite``). Omit the override to
     search all attached taxonomies. Suites stay separate graphs.
+
+    ``neighbor_cache=True`` (the default) wraps each suite in ``CachedSuite``,
+    so repeated Connect queries for the same occupation are served from
+    ``memory.db`` instead of re-querying Neo4j — Sprint 6's "no repeated graph
+    queries". Pass ``False`` where a cache would corrupt the measurement or the
+    expectation: the ``bench`` command exists to measure cache effect, and
+    ``quality`` scores live answers whose golden values assume current graph
+    data. Tests that construct ``SuiteRegistry`` directly are unaffected.
     """
-    return SuiteRegistry(
-        {"esco": _open_default_esco, "onet": _open_default_onet},
-        default="esco",
-    )
+    factories: dict[str, SuiteFactory] = {
+        "esco": _open_default_esco,
+        "onet": _open_default_onet,
+    }
+    if neighbor_cache:
+        factories = {name: with_neighbor_cache(factory) for name, factory in factories.items()}
+    return SuiteRegistry(factories, default="esco")

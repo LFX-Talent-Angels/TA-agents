@@ -173,6 +173,31 @@ NEO4J_PASSWORD=taxonomies-dev
 Any OpenRouter model slug works as `openrouter/<vendor>/<model>`. The CLI
 reads `.env` by itself; you do not need `source .env`.
 
+"We covered this before" recall is on by default (`TA_RECALL=hybrid`): keyword
+recall over your past turns, backed by SQLite FTS5, with meaning-based recall
+consulted only when keyword finds nothing. Set `TA_RECALL=off` to disable it
+entirely, or `TA_RECALL=lexical` for keyword only with no network calls at all.
+It used to default to `off`; the table below is why that changed.
+`TA_RECALL=hybrid` adds meaning-based recall *only when keyword finds nothing*,
+and is now the best-measured mode:
+
+| mode | unanswered | p@1 | irrelevant hits | embeddings |
+|---|---|---|---|---|
+| `lexical` | 2/36 | 0.917 | 0 | 0 |
+| `vector` (no floor) | 0/36 | 0.889 | **210** | 1 |
+| `vector` + floor | 0/36 | 0.889 | 0 | 1 |
+| `hybrid` | **0/36** | **0.917** | **0** | 0 on the common path |
+
+`vector` alone is **not recommended**, and the reason is structural rather than
+the model's: a dense retriever cannot say "nothing here is relevant", so it
+answered every question with its nearest turns. A calibrated relevance floor
+gives it that ability, and the ladder stops it being consulted at all when
+keyword already has an answer. Build the index with
+`python -m talent_angels.cli recall-rebuild --vector` and read the comparison
+with `python -m talent_angels.evals.recall --vector`.
+Recall adds a small block to the system prompt only —
+`src/talent_angels/memory/retrieval.py` owns both the seam and the budget.
+
 Offline tests still use `LLM_PROVIDER=none` (pytest sets that).
 
 ---

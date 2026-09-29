@@ -39,6 +39,20 @@ These are graph neighbors, not a study plan.
     assert "graph neighbors" in parsed.footer
 
 
+def test_parse_skill_list_recognises_the_tool_tag() -> None:
+    """GAP C: O*NET software-tool rows carry a (tool) tag, not a blank cell."""
+    text = """**software developer** — 2 skills on the map:
+
+1. reading comprehension (essential)
+2. JavaScript (tool)
+
+These are graph neighbors, not a study plan.
+"""
+    parsed = parse_list_reply(text)
+    assert parsed.rows[0][2] == "essential"
+    assert parsed.rows[1] == ("2", "JavaScript", "tool", "")
+
+
 def test_two_suite_pickers_stay_separate_tables() -> None:
     text = """ESCO has several matches; O*NET has several matches.
 

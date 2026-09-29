@@ -15,7 +15,7 @@ from rich.text import Text
 from talent_angels.session.kernel import ChatReply
 
 _NUMBERED = re.compile(
-    r"^(\d+)\.\s+(.+?)(?:\s+\((essential|optional)\))?\s*$",
+    r"^(\d+)\.\s+(.+?)(?:\s+\((essential|optional|tool)\))?\s*$",
     re.IGNORECASE,
 )
 _GROUP = re.compile(r"^\*\*(.+?)\*\*\s*$")
@@ -79,6 +79,8 @@ def _tag_style(tag: str) -> str:
         return "green"
     if tag == "optional":
         return "yellow"
+    if tag == "tool":
+        return "cyan"
     return "dim"
 
 

@@ -14,6 +14,7 @@ from talent_angels.env import load_local_dotenv
 from talent_angels.llm import LLMClient
 from talent_angels.llm.factory import get_llm_client
 from talent_angels.memory.agent_notes import append_note
+from talent_angels.memory.episodes import record_episode
 from talent_angels.memory.paths import MEMORY_MD
 from talent_angels.query_details import write_query_details
 from talent_angels.runlog import append_record
@@ -26,6 +27,7 @@ from talent_angels.session.credentials import (
     verify,
 )
 from talent_angels.session.kernel import handle_line
+from talent_angels.session.models import SessionState
 from talent_angels.session.router import route_line
 from talent_angels.session.store import load_last, new_session, save_session, sessions_dir
 from talent_angels.session.switch import SwitchError, apply, current_choice, load_catalogue, resolve
@@ -140,6 +142,22 @@ def _seed_memory_if_new() -> None:
             append_note(note)
 
 
+def _sync_runlog_path(state: SessionState, previous_key: str) -> str:
+    """Keep ``RUNLOG_PATH`` pointing at the session that is actually live.
+
+    ``/reset`` and ``/reset-all`` delete the old session directory and hand back
+    a fresh ``session_id``. ``RUNLOG_PATH`` is read from the environment on every
+    write, so without this the next turn would recreate the directory just erased
+    and log a conversation the user discarded — the erase would undo itself.
+
+    Returns the key to pass in next time.
+    """
+    current_key = state.name or state.session_id
+    if current_key != previous_key:
+        os.environ["RUNLOG_PATH"] = str(sessions_dir() / current_key / "runlog.jsonl")
+    return current_key
+
+
 def main(argv: Sequence[str] | None = None, *, registry: SuiteRegistry | None = None) -> int:
     del argv
     load_local_dotenv()
@@ -153,6 +171,7 @@ def main(argv: Sequence[str] | None = None, *, registry: SuiteRegistry | None = 
     except Exception:
         state = new_session()
     os.environ["RUNLOG_PATH"] = str(sessions_dir() / state.session_id / "runlog.jsonl")
+    runlog_key = state.name or state.session_id
     attached = " · ".join(
         "O*NET" if name == "onet" else name.upper() for name in selected.available
     )
@@ -227,8 +246,20 @@ def main(argv: Sequence[str] | None = None, *, registry: SuiteRegistry | None = 
                 continue
         state = turn_state
         save_session(state)
+        runlog_key = _sync_runlog_path(state, runlog_key)
         for outcome, question in turn_outcomes:
             append_record(outcome.record)
+            # run_turn(persist=False) above deliberately skips its own
+            # append_record/record_episode — that flag exists so a cancelled
+            # (Esc'd) turn never gets persisted (skipped turns never reach
+            # this loop; see the `except Cancelled: continue` above). This
+            # loop is where the TUI has always taken over the run-log side of
+            # that deferred write; record_episode belongs on the same call,
+            # not to run_turn's own flag — otherwise it silently never fires
+            # for the one interface a person actually types into. Confirmed
+            # live: persist=True records an episode, persist=False (this
+            # path, until now) recorded zero, ever.
+            record_episode(outcome.record)
             write_query_details(outcome, question=question)
         if reply.new_llm_client is not None:
             llm_client = reply.new_llm_client

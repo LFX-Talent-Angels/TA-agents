@@ -22,8 +22,8 @@ COMMANDS_BLOCK = (
     "- `/login` — store an OpenRouter key (input hidden)\n"
     "- `/save [name]` — save this session\n"
     "- `/resume [name]` — resume a saved session (default: last)\n"
-    "- `/clear` — clear transcript and binding (keeps memory profile)\n"
-    "- `/reset` — clear everything: transcript, binding, and memory profile\n"
+    "- `/reset` — forget this conversation (your profile and history stay)\n"
+    "- `/reset-all` — forget everything: conversation, profile, and history\n"
     "- `/quit` or `/exit` — leave\n"
     "\n"
     "Press `esc` while a question is running to stop waiting for it."
@@ -56,3 +56,8 @@ PATHFIND_REDIRECT = (
 )
 
 MAP_NEXT_STEP = "You can ask for essential skills, optional skills, or pick another number."
+
+# GAP F: the initial connect answer previews CONNECT_PREVIEW_CAP skills; beyond
+# that, the only way to see the rest was an undocumented "say list all skills"
+# follow-up. Say the words that actually work.
+CONNECT_MORE_HINT = 'Ask "show more skills" to see the rest.'

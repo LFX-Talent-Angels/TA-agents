@@ -96,6 +96,52 @@ the measurement below, not a hunch.
   and report what was dropped as a count.
 - Load skills progressively; pick suites per plan, don't fan out by default.
 
+## Memory and recall
+
+`memory/` is the only place the user's words are persisted (episodes, the
+profile card, the notes) and the only place that is erased. Its one boundary
+worth knowing before adding to it is the **retrieval seam**:
+
+- `memory/retrieval.py` — the contract. `EpisodeHit`, the `Retriever`
+  protocol, `NullRetriever`, and `recall_prefix()`, which renders the block for
+  the system prompt. It knows nothing about FTS5, embeddings, or storage. A
+  caller that imports a backend instead of this module has coupled itself to one
+  particular answer.
+- `memory/fts_retriever.py` — the lexical implementation (SQLite FTS5). The
+  query design behind it is measured by `evals/recall.py`, not asserted.
+- `env.py` — `TA_RECALL=off|lexical|vector` picks the backend, default `off`.
+  A new backend is a branch here, never a decision repeated at a call site.
+  `vector` is implemented but **measured as not worth defaulting to**: over the
+  `evals/recall.py` corpus it fixed 1 query and broke 2 (p@1 0.889 vs 0.917),
+  because a dense retriever always returns its `k` nearest turns and so never
+  returns nothing — 210 irrelevant hits against lexical's 0. It is kept because
+  the comparison is the artefact, and a shipped alternative is what makes
+  "we measured it" checkable rather than a claim.
+
+Prompt sites import `env.episode_retriever()`, never a backend. Four call sites
+exist (`session/phrase.py` twice, `assistant/agent_loop.py`,
+`assistant/synthesize.py`) and the count is asserted in
+`tests/test_fts_retriever.py`, because a fifth site nobody tests is how this
+goes stale.
+
+Two prompt sites deliberately **omit** recall, and the two omissions are not
+the same omission: `assistant/llm_plan.py` (recall would bias intent
+classification towards what the user asked before) and `assistant/answer.py`
+(it has no `question` parameter, because that is the one prompt that restates
+the user's own words back to them). Both are recorded in the docstrings, and the
+`answer.py` signature is asserted so neither can be "fixed" by accident.
+
+The block is hard-bounded — at most 3 episodes, 120 characters per line, 437
+characters total — so recall cannot crowd the profile card out of a shared
+system prompt as the corpus grows. The dominant block in that prompt is
+`notes_prefix()`, not recall.
+
+Recall is personal history, not telemetry, so `/reset-all` clears the episodes
+*and* the FTS index, and vacuums: `DELETE` alone leaves the question text
+readable in free pages. See `memory/erase.py` and `tests/test_erase_scopes.py`,
+which assert at the byte level because that is the only level the original bug
+was visible at.
+
 ## Contracts
 
 ```python
@@ -156,6 +202,7 @@ src/talent_angels/
 ├── skills/
 │   ├── locate/    connect/    pathfind/    evaluate/
 ├── contracts/     # AgentResult + typed refs (Pydantic v2)
+├── memory/        # episodes, profile, notes, neighbour cache, erase, recall seam
 ├── runlog/        # structured per-turn record
 ├── api/           # FastAPI edge (thin; no reasoning here)
 └── mcp/           # MCP stdio edge — the suite contract, for a foreign client

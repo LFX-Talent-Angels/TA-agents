@@ -14,6 +14,11 @@ from talent_angels.runlog import StageUsage
 
 AMBIGUOUS_CHOICE_LIMIT = 3
 
+# GAP F: 5 undercounted real connect results (O*NET occupations routinely have
+# 20-260+ skill edges). One constant so the summary (here) and the LLM-facing
+# fact card (session.phrase.connect_card) preview the same number of skills.
+CONNECT_PREVIEW_CAP = 15
+
 
 def is_terminal_locate(result: AgentResult) -> bool:
     """Search finished: ask the user or stop. Do not search again."""
@@ -41,7 +46,7 @@ def summarize_result(result: AgentResult) -> str:
     if result.capability == "connect":
         center = result.nodes[0]
         neighbors = result.nodes[1:]
-        shown = neighbors[:5]
+        shown = neighbors[:CONNECT_PREVIEW_CAP]
         rendered = "; ".join(node.pref_label for node in shown)
         extra = len(neighbors) - len(shown)
         remainder = f"; {extra} more" if extra else ""
@@ -67,11 +72,32 @@ def summarize_result(result: AgentResult) -> str:
 def build_answer(
     result: AgentResult, *, llm_client: LLMClient, mode: str = "structured"
 ) -> tuple[str, StageUsage | None]:
-    """Returns (answer text, answer-stage usage). Stage is None when no LLM call ran."""
+    """Returns (answer text, answer-stage usage). Stage is None when no LLM call ran.
+
+    **No recall block here, deliberately, and the signature is part of why.**
+    Every other system-prompt site takes the question and appends the block built
+    by ``memory.retrieval`` beside the profile and the notes. This one has no
+    ``question`` parameter, so it cannot — and that is the design, not an
+    omission to fix by passing one in. This is the single prompt that hands the
+    user's own words back to the user: its whole job is to rephrase an
+    already-resolved ``AgentResult``, and the recall block is a list of *past*
+    questions. Feeding it here would put the user's earlier text in front of a
+    model whose only instruction is "rephrase the following taxonomy result",
+    where the cheapest way to be useful is to start answering the past questions
+    instead. Intent classification omits recall for a different and equally
+    deliberate reason (``llm_plan.interpret_question``): recall there would bias
+    the plan towards the topics the user happened to ask about before.
+
+    So the two omissions are not one omission, and neither is an oversight. The
+    cost is that "we covered this last Thursday" has to be earned elsewhere.
+    """
     summary = summarize_result(result)
     if is_terminal_locate(result) or not result.nodes:
         return summary, None
-    # Many neighbors: keep the counted summary. Do not let the model invent pagination.
+    # Many neighbors: keep the counted summary. Do not let the model invent
+    # pagination. Deliberately a tighter gate than CONNECT_PREVIEW_CAP above —
+    # this decides whether a natural-mode rephrase is safe at all, not how many
+    # skills the (always-shown) summary previews.
     if result.capability == "connect" and len(result.edges) > 5:
         return summary, None
 

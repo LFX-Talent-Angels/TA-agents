@@ -3,20 +3,22 @@
 from __future__ import annotations
 
 import json
+from collections.abc import Sequence
 from dataclasses import dataclass
 from datetime import UTC, datetime
+from pathlib import Path
 from typing import Literal, Protocol
 
-from talent_angels.assistant.answer import summarize_result
+from talent_angels.assistant.answer import CONNECT_PREVIEW_CAP, summarize_result
 from talent_angels.assistant.connect_request import followup_connect_request, is_describe_followup
 from talent_angels.assistant.intent import CAPABILITY_CONNECT
 from talent_angels.assistant.merge import suite_heading
 from talent_angels.assistant.suite_select import resolve_show_token
-from talent_angels.assistant.synthesize import synthesize
+from talent_angels.assistant.synthesize import synthesize, synthesize_structured
 from talent_angels.assistant.turn import TurnOutcome
 from talent_angels.contracts import AgentResult, NodeRef
 from talent_angels.llm import LLMClient
-from talent_angels.memory.paths import MEMORY_MD, USER_MD
+from talent_angels.memory.erase import erase_all, erase_session, erase_summary
 from talent_angels.memory.profile import (
     read_user_profile,
     write_goal,
@@ -30,6 +32,7 @@ from talent_angels.session.copy import (
     ADVICE_REFUSE,
     CATALOGUE_REFUSE,
     COMMANDS_BLOCK,
+    CONNECT_MORE_HINT,
     GREETING,
     HELP_INTRO,
     HELP_TEXT,
@@ -73,10 +76,19 @@ from talent_angels.session.switch import SwitchError, apply, load_catalogue, res
 _NO_PENDING = "There's no numbered list to pick from. Type a job title first."
 _BAD_PICK = "That number isn't in the list. Reply with a number from the options."
 _BAD_SKILL = "There's no skill {number} in that list. Use a number from the skills I just listed."
-_CLEARED = "Conversation cleared."
 _PICKER_EVENTS = "picker-events.jsonl"
 _PAYLOAD_CLAUSE = "full list is in the result payload"
 _DETAILS_CLAUSE = "full list is in query details"
+
+
+def _session_dir_for(state: SessionState) -> Path:
+    """Where this session's files live — the same key save_session() writes to.
+
+    Resolved before the state is replaced by a fresh session, so a reset
+    deletes the files of the conversation being discarded rather than the new
+    empty one's, which does not exist on disk yet.
+    """
+    return sessions_dir() / (state.name or state.session_id)
 
 
 @dataclass(frozen=True)
@@ -268,16 +280,25 @@ def _handle_command(state: SessionState, text: str) -> ChatReply:
         _copy_into(state, loaded)
         message = f"Resumed session {state.name or state.session_id}."
         return _finish(state, text, message)
-    if command.name == "clear":
-        _copy_into(state, clear_conversation(state))
-        return _finish(state, text, _CLEARED)
     if command.name == "reset":
+        # Session scope: forget the conversation, keep who the user is. The
+        # session's own files go too — the transcript is the largest store of
+        # the user's own words and previously survived every reset, since
+        # erase_person() only covered the profile and the episode table.
+        old_dir = _session_dir_for(state)
         fresh = new_session()
         _copy_into(state, clear_conversation(fresh))
-        for mem_path in (MEMORY_MD, USER_MD):
-            if mem_path.exists():
-                mem_path.unlink()
-        return _finish(state, text, "Memory and session cleared. Starting fresh.")
+        erased = erase_session(old_dir)
+        return _finish(state, text, f"{erase_summary(erased)} Starting a fresh conversation.")
+    if command.name == "reset-all":
+        # Full scope: conversation, profile, episode history, any externally
+        # configured run-log, and a VACUUM so the bytes leave the file. A mentee
+        # who asks to be forgotten must actually be.
+        old_dir = _session_dir_for(state)
+        fresh = new_session()
+        _copy_into(state, clear_conversation(fresh))
+        erased = erase_all(session_dir=old_dir)
+        return _finish(state, text, f"{erase_summary(erased)} Forgotten.")
     if command.name == "model":
         if command.argument is None:
             _record(state, "user", text)
@@ -469,6 +490,53 @@ def _source_note_for(results: tuple[AgentResult, ...]) -> str | None:
     return " · ".join(names) if names else None
 
 
+def _connect_bridge_intro(results: Sequence[AgentResult]) -> str:
+    """GAP B: frame stacked per-suite connect blocks as one answer, not two.
+
+    Skills never merge across suites here — ARCHITECTURE.md is explicit that
+    node ids are suite-scoped and there is no cross-suite identity without an
+    explicit crosswalk, so pretending ESCO's and O*NET's skill lists are "the
+    same list" would be a real correctness bug, not a formatting nicety. This
+    only adds one framing sentence above the full, still-separate per-suite
+    cards that follow — no information is dropped or merged.
+
+    Deterministic, no LLM call: the framing is fixed prose, and the team is
+    already watching latency, so this does not add a network round trip to
+    every multi-suite connect turn.
+    """
+    hits = [r for r in results if r.capability == "connect" and r.nodes]
+    headings: list[str] = []
+    for result in hits:
+        heading = suite_heading(result.suite) if result.suite else "Map"
+        if heading not in headings:
+            headings.append(heading)
+    if len(headings) < 2:
+        return ""
+    if len(headings) == 2:
+        joined = f"{headings[0]} and {headings[1]}"
+    else:
+        joined = ", ".join(headings[:-1]) + f", and {headings[-1]}"
+    return (
+        f"{joined} both answer this — separate official records, not one shared id. "
+        "Here is what each map's skills say:"
+    )
+
+
+def _connect_more_hint(result: AgentResult) -> str:
+    """GAP F: name the words that actually widen a truncated skill list.
+
+    ``connect_card``/``summarize_result`` already preview CONNECT_PREVIEW_CAP
+    skills; beyond that, ``is_expand_list`` already understands "show more
+    skills" (session.followup) — the gap was that nothing ever told the user
+    those words work. Returns "" when there is nothing left to expand to.
+    """
+    if result.capability != "connect" or not result.nodes:
+        return ""
+    if len(result.nodes) - 1 <= CONNECT_PREVIEW_CAP:
+        return ""
+    return CONNECT_MORE_HINT
+
+
 def _renumber_pending(choices: list[PendingChoice], *, start: int) -> list[PendingChoice]:
     return [
         PendingChoice(number=start + index, node=choice.node, group_label=choice.group_label)
@@ -492,6 +560,9 @@ def _render_unique_block(
             fallback=fallback,
             card=connect_card(result),
         )
+        hint = _connect_more_hint(result)
+        if hint and hint not in body:
+            body = f"{body}\n\n{hint}"
     else:
         record = fallback
         phrased = phrase_map(
@@ -581,6 +652,9 @@ def _from_single_outcome(
             fallback=fallback,
             card=connect_card(result),
         )
+        hint = _connect_more_hint(result)
+        if hint and hint not in text:
+            text = f"{text}\n\n{hint}"
     elif any(w.startswith("capability_not_implemented") for w in result.warnings):
         text = PATHFIND_REDIRECT
     else:
@@ -764,7 +838,20 @@ def _from_outcome(
         ):
             state.pending = []
 
-    if all_miss and not any_hit:
+    not_implemented = any(
+        w.startswith("capability_not_implemented") for result in results for w in result.warnings
+    )
+    if not_implemented and not any_hit and not pending_all:
+        # GAP-PF (multi-suite): every attached suite classifies the SAME question
+        # to the SAME capability, so "not implemented" here is never partial —
+        # if one suite says it, all of them do. Show the honest redirect instead
+        # of falling through to synthesize(), which cannot tell "not implemented"
+        # apart from a genuine search miss: both are zero-nodes results, and
+        # _hit_phrase() treats any zero-nodes result as "no hit" (GAP-PF was
+        # closed for the tool loop and the single-suite reply in agent_loop.py /
+        # _from_single_outcome; this merge path had the same bug independently).
+        text = PATHFIND_REDIRECT
+    elif all_miss and not any_hit:
         text = phrase_chat(
             llm_client,
             user_text=question,
@@ -777,7 +864,18 @@ def _from_outcome(
             mode="miss",
         )
     elif pending_all:
-        text = synthesize(results, question=question, llm_client=llm_client)
+        # Deterministic, never the free-form synthesize() LLM narrative: an
+        # ambiguous locate result's fact card has only candidate occupation
+        # titles, no skill data (Connect never ran — there was no unique node
+        # to hop from). Live testing against a real model found it invent a
+        # specific skill list for one candidate it picked unprompted anyway,
+        # in 1 of 5 identical runs, presented as graph fact, then still asked
+        # the user to choose among all candidates in the very next paragraph.
+        # synthesize_structured() produces the same safe framing
+        # (`_hit_phrase` already says "<suite> has several matches" for an
+        # ambiguous hit) with no model call, so there is nothing left to
+        # hallucinate.
+        text = synthesize_structured(results)
         extras = [*unique_cards]
         picker_blocks = [
             block for block in blocks if "I won't pick" in block or "Which one" in block
@@ -789,6 +887,9 @@ def _from_outcome(
         has_connect = any(r.capability == "connect" and r.nodes for r in results)
         if has_connect and unique_cards:
             text = "\n\n---\n\n".join(unique_cards)
+            intro = _connect_bridge_intro(results)
+            if intro:
+                text = f"{intro}\n\n{text}"
         else:
             text = synthesize(results, question=question, llm_client=llm_client)
         if unique_bind is not None and MAP_NEXT_STEP not in text:

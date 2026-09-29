@@ -25,6 +25,9 @@ uv.lock
 
 # Data (taxonomy dumps, caches) — keep large data out of git
 /data/
+
+# Runtime memory home (SQLite stores, USER.md, MEMORY.md, checkpoints)
+.ta-agents/
 *.parquet
 runlog.jsonl
 

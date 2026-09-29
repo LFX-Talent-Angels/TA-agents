@@ -11,7 +11,7 @@ import pytest
 from talent_angels.assistant.turn import run_turn
 from talent_angels.llm.stub_client import StubLLMClient
 from talent_angels.session.models import LastBinding, PendingChoice
-from talent_angels.session.store import new_session, save_session
+from talent_angels.session.store import new_session, save_session, sessions_dir
 from talent_angels.suites import SuiteRegistry, SuiteRuntime
 from talent_angels.suites.schema import SuiteSchema
 from tests.fakes.taxonomy import FakeCandidate, FakeEdge, FakeNode, FakeToolResult
@@ -171,9 +171,7 @@ def _local_runtime(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
     monkeypatch.setenv("LLM_PROVIDER", "none")
     monkeypatch.setenv("LLM_MODEL", "stub")
     monkeypatch.setenv("ANSWER_MODE", "structured")
-    # Keep profile writes (write_standing/goal) out of the real ~/.ta-agents/USER.md.
-    monkeypatch.setattr("talent_angels.memory.profile.USER_MD", tmp_path / "USER.md")
-    monkeypatch.setattr("talent_angels.memory.profile.MEMORY_MD", tmp_path / "MEMORY.md")
+    # USER.md / MEMORY.md / memory.db isolation is owned by tests/conftest.py.
 
 
 def test_numeric_pick_does_not_call_search_nodes(tmp_path: Path) -> None:
@@ -383,11 +381,118 @@ def test_save_and_clear_mutate_state(tmp_path: Path) -> None:
 
     state.transcript.append(TranscriptLine(role="user", text="keep?", ts="t0"))
     state.binding = LastBinding(node=_node_ref_occ("nurse"))
+    # `/clear` is an alias for the session-scoped `/reset`.
     cleared = handle_line(state, "/clear", runner=_boom)
     assert state.binding is None
     assert state.pending == []
     assert state.session_id
-    assert "clear" in cleared.text.lower() or "cleared" in cleared.text.lower()
+    assert "fresh conversation" in cleared.text.lower()
+
+
+def test_reset_keeps_the_profile_and_erases_the_conversation(memory_home) -> None:
+    """`/reset` is session-scoped: forget the conversation, keep who they are.
+
+    The scope split is deliberate. Most turns of `/reset` want a clean slate
+    without losing the agent's knowledge of the user, so wiping USER.md and the
+    episode index here would be a regression. The full purge moved to
+    `/reset-all` (covered separately). What `/reset` *does* own is the
+    conversation — including the transcript on disk, which previously survived
+    every reset because erase_person() only covered the profile and the table.
+    """
+    from talent_angels.memory.episodes import recent_episodes, record_episode
+    from talent_angels.runlog.models import ResultSummary, RunLogRecord
+    from talent_angels.session.kernel import handle_line
+    from talent_angels.session.models import TranscriptLine
+
+    memory_home.user_md.write_text("STANDING[esco]: Nurse  [esco:nurse]\n")
+    memory_home.memory_md.write_text("- asks short questions\n")
+    record_episode(
+        RunLogRecord(
+            run_id="run-private",
+            ts="2026-01-01T00:00:00+00:00",
+            suite="esco",
+            plan=["locate", "connect"],
+            question="what skills does a nurse need?",
+            result=ResultSummary(
+                node_ids=["esco:occupation:nurse"],
+                node_labels=["nurse"],
+                warnings=[],
+            ),
+        )
+    )
+
+    state = new_session()
+    state.transcript.append(TranscriptLine(role="user", text="?", ts="t0"))
+    state.binding = LastBinding(node=_node_ref_occ("nurse"))
+    save_session(state)
+
+    reply = handle_line(state, "/reset", runner=_boom)
+
+    # Session state is fresh.
+    assert state.binding is None
+    assert state.pending == []
+    assert "?" not in [line.text for line in state.transcript]
+
+    # The profile and the long-term history deliberately survive.
+    assert memory_home.user_md.exists(), "/reset must not forget who the user is"
+    assert memory_home.memory_md.exists()
+    assert len(recent_episodes()) == 1
+
+    # The transcript is gone from disk, which is the part that used to leak.
+    session_dir = sessions_dir() / "current"
+    assert not (session_dir / "transcript.jsonl").exists()
+
+    # And the message says what was kept, so nobody is misled about being forgotten.
+    assert "kept" in reply.text.lower()
+    assert "profile" in reply.text.lower()
+
+
+def test_reset_all_erases_profile_notes_and_episode_history(memory_home) -> None:
+    """`/reset-all` is the full purge: conversation, profile, and history.
+
+    Regression for the original bug: the command inlined the unlink of
+    USER.md/MEMORY.md and left memory.db alone, so the person's questions and
+    the node ids cited for them outlived the "Memory and session cleared"
+    message.
+    """
+    from talent_angels.memory.episodes import recent_episodes, record_episode
+    from talent_angels.runlog.models import ResultSummary, RunLogRecord
+    from talent_angels.session.kernel import handle_line
+    from talent_angels.session.models import TranscriptLine
+
+    memory_home.user_md.write_text("STANDING[esco]: Nurse  [esco:nurse]\n")
+    memory_home.memory_md.write_text("- asks short questions\n")
+    record_episode(
+        RunLogRecord(
+            run_id="run-private",
+            ts="2026-01-01T00:00:00+00:00",
+            suite="esco",
+            plan=["locate", "connect"],
+            question="what skills does a nurse need?",
+            result=ResultSummary(
+                node_ids=["esco:occupation:nurse"],
+                node_labels=["nurse"],
+                warnings=[],
+            ),
+        )
+    )
+
+    state = new_session()
+    state.transcript.append(TranscriptLine(role="user", text="?", ts="t0"))
+    state.binding = LastBinding(node=_node_ref_occ("nurse"))
+    save_session(state)
+
+    reply = handle_line(state, "/reset-all", runner=_boom)
+
+    assert not memory_home.user_md.exists()
+    assert not memory_home.memory_md.exists()
+    assert recent_episodes() == []
+    assert state.binding is None
+    assert state.pending == []
+    assert "?" not in [line.text for line in state.transcript]
+    assert not (sessions_dir() / "current" / "transcript.jsonl").exists()
+    # The message must not claim more than it erased.
+    assert "1 recorded turn" in reply.text
 
 
 def test_picker_main_markdown_omits_node_ids() -> None:
@@ -481,6 +586,7 @@ def test_unique_locate_phrasing_omits_raw_id_line() -> None:
 
 
 def test_connect_truncation_points_at_query_details() -> None:
+    """Truncation now kicks in past CONNECT_PREVIEW_CAP (GAP F raised it from 5)."""
     from talent_angels.session.kernel import handle_line
 
     class ManyNeighborSuite(RecordingFakeSuite):
@@ -498,7 +604,7 @@ def test_connect_truncation_points_at_query_details() -> None:
                     source_id=f"test-skill-{i}",
                     properties={},
                 )
-                for i in range(1, 9)
+                for i in range(1, 22)
             ]
             return FakeToolResult(
                 nodes=[center, *skills],
@@ -524,6 +630,70 @@ def test_connect_truncation_points_at_query_details() -> None:
     assert "You can ask for essential skills, optional skills, or pick another number." in (
         follow.text
     )
+
+
+def _skills_suite(count: int) -> RecordingFakeSuite:
+    class ManyNeighborSuite(RecordingFakeSuite):
+        def get_neighbors(self, node_id: str, rel_types: list[str] | None = None) -> FakeToolResult:
+            self.neighbor_ids.append(node_id)
+            center = self._nodes_by_id.get(node_id) or FakeNode(
+                node_id, "Occupation", "unknown", "test", "src"
+            )
+            skills = [
+                FakeNode(
+                    id=f"test:skill:{i}",
+                    kind="Skill",
+                    label=f"skill {i}",
+                    source="test",
+                    source_id=f"test-skill-{i}",
+                    properties={},
+                )
+                for i in range(1, count + 1)
+            ]
+            return FakeToolResult(
+                nodes=[center, *skills],
+                edges=[
+                    FakeEdge(
+                        type="HAS_SKILL",
+                        from_id=node_id,
+                        to_id=skill.id,
+                        properties={"relation_type": "essential"},
+                    )
+                    for skill in skills
+                ],
+                evidence=[f"test:neighbors:{node_id}"],
+            )
+
+    return ManyNeighborSuite(unique_nodes=[_occ(1, "software developer")])
+
+
+def test_connect_answer_names_show_more_skills_when_truncated() -> None:
+    """GAP F: the hint must name the exact follow-up words that already work."""
+    from talent_angels.session.kernel import handle_line
+
+    suite = _skills_suite(21)  # past CONNECT_PREVIEW_CAP (15)
+    state = new_session()
+    runner = _runner_for(suite)
+    handle_line(state, "software developer", runner=runner)
+    follow = handle_line(state, "essential skills", runner=runner)
+
+    assert 'Ask "show more skills" to see the rest.' in follow.text
+    # And the words it names must actually work, end to end.
+    listed = handle_line(state, "show more skills", runner=runner)
+    assert "skill 21" in listed.text
+
+
+def test_connect_answer_has_no_more_hint_when_everything_is_already_shown() -> None:
+    """Fewer skills than the preview cap: nothing truncated, nothing to hint at."""
+    from talent_angels.session.kernel import handle_line
+
+    suite = _skills_suite(4)  # under CONNECT_PREVIEW_CAP (15)
+    state = new_session()
+    runner = _runner_for(suite)
+    handle_line(state, "software developer", runner=runner)
+    follow = handle_line(state, "essential skills", runner=runner)
+
+    assert "show more skills" not in follow.text.lower()
 
 
 def test_complete_list_followup_uses_last_connect_without_search() -> None:
@@ -1238,6 +1408,326 @@ def test_empty_label_connect_does_not_clobber_good_binding() -> None:
     reply = handle_line(state, "what skills ?", runner=runner)
     assert state.binding.node.pref_label == "software developer"
     assert "software developer" in (reply.bound_label or "")
+
+
+def test_ambiguous_multi_suite_connect_never_calls_the_llm_narrative() -> None:
+    """Regression, found live against a real model: when locate is ambiguous
+    (Connect never ran — no unique node to hop from), the fact card handed to
+    synthesize() has occupation titles only, zero skill data. In 1 of 5
+    identical live runs the model invented a specific skill list for one
+    candidate it picked unprompted, presented as graph fact, while the very
+    next paragraph of the same reply still asked the user to pick among all
+    candidates. Fixed by never calling the free-form synthesize() LLM
+    narrative for this branch — synthesize_structured() produces the same
+    safe framing with no model call and nothing left to hallucinate.
+    """
+    from talent_angels.assistant.planning import build_plan_for_capability
+    from talent_angels.assistant.turn import TurnOutcome
+    from talent_angels.contracts import AgentResult, NodeRef
+    from talent_angels.runlog import RunLogRecord
+    from talent_angels.session.kernel import handle_line
+
+    class _RecordingClient:
+        """Answers the picker's own (already-safe) one-sentence intro call, but
+        records every system prompt so the test can assert that synthesize()'s
+        free-form narrative system prompt specifically was never sent."""
+
+        provider = "litellm"
+        model = "test"
+
+        def __init__(self) -> None:
+            self.system_prompts: list[str] = []
+
+        def complete(self, messages, **_kwargs):  # noqa: ANN001, ANN003
+            self.system_prompts.append(messages[0].content)
+            from talent_angels.llm.protocol import LLMResult, LLMUsage
+
+            return LLMResult(
+                text="Several matches came up. Which one did you mean?",
+                provider=self.provider,
+                model=self.model,
+                usage=LLMUsage(),
+            )
+
+    esco_miss = AgentResult(capability="connect", suite="esco", warnings=["not_found"])
+    onet_candidates = [
+        NodeRef(
+            id=f"onet:occupation:{i}",
+            suite="onet",
+            source="onet",
+            source_id=f"29-114{i}.00",
+            kind="Occupation",
+            pref_label=f"Nurse Kind {i}",
+        )
+        for i in range(25)
+    ]
+    onet_ambiguous = AgentResult(
+        capability="connect",
+        suite="onet",
+        nodes=onet_candidates,
+        warnings=["ambiguous", "truncated"],
+    )
+
+    def runner(question: str, **_kwargs: object) -> TurnOutcome:
+        return TurnOutcome(
+            capability="connect",
+            plan=build_plan_for_capability("connect", suites=("esco", "onet")),
+            result=esco_miss,
+            results=(esco_miss, onet_ambiguous),
+            answer="ignored",
+            record=RunLogRecord(suite="esco,onet", plan=["locate", "connect"], question=question),
+        )
+
+    state = new_session()
+    client = _RecordingClient()
+    reply = handle_line(state, "what skills does a nurse need", runner=runner, llm_client=client)
+
+    # synthesize()'s free-form narrative system prompt was never sent — only
+    # the picker's own tightly-scoped, already-safe intro call fired.
+    assert not any("phrase taxonomy map facts" in prompt for prompt in client.system_prompts)
+    # The safe, deterministic sentence is exactly synthesize_structured()'s output.
+    assert "On the attached maps this lines up with O*NET has several matches." in reply.text
+    # The picker itself still renders every candidate.
+    assert "Nurse Kind 0" in reply.text
+    assert "I won't pick for you" in reply.text
+    # None of the fabricated terms from the live repro can appear — there is
+    # no code path left that could produce them.
+    for invented in ("Active Listening", "Critical Thinking", "Monitoring"):
+        assert invented not in reply.text
+
+
+def test_multi_suite_pathfind_shows_redirect_not_a_generic_miss() -> None:
+    """Regression, found via a live run against real Neo4j: when every attached
+    suite classifies a question as pathfind (the same capability, uniformly —
+    that classification never differs per suite for one question), each
+    suite's AgentResult carries zero nodes and a `capability_not_implemented`
+    warning. The merge path treated that identically to a genuine search miss
+    (`_hit_phrase`/`synthesize_structured` cannot tell "not implemented" apart
+    from "not found" — both are just zero nodes) and showed "No node for that
+    phrase with today's search", which actively misleads a user into thinking
+    their search failed rather than that the capability doesn't exist yet.
+    """
+    from talent_angels.assistant.planning import build_plan_for_capability
+    from talent_angels.assistant.turn import TurnOutcome
+    from talent_angels.contracts import AgentResult
+    from talent_angels.runlog import RunLogRecord
+    from talent_angels.session.copy import PATHFIND_REDIRECT
+    from talent_angels.session.kernel import handle_line
+
+    esco = AgentResult(
+        capability="pathfind",
+        suite="esco",
+        warnings=["capability_not_implemented:pathfind"],
+    )
+    onet = AgentResult(
+        capability="pathfind",
+        suite="onet",
+        warnings=["capability_not_implemented:pathfind"],
+    )
+
+    def runner(question: str, **_kwargs: object) -> TurnOutcome:
+        return TurnOutcome(
+            capability="pathfind",
+            plan=build_plan_for_capability("pathfind", suites=("esco", "onet")),
+            result=esco,
+            results=(esco, onet),
+            answer="ignored",
+            record=RunLogRecord(suite="esco,onet", plan=["pathfind"], question=question),
+        )
+
+    state = new_session()
+    reply = handle_line(state, "how do I get from nurse to software developer", runner=runner)
+
+    assert reply.text == PATHFIND_REDIRECT
+    assert "No node for that phrase" not in reply.text
+
+
+def test_connect_bridge_intro_needs_at_least_two_suites_with_hits() -> None:
+    from talent_angels.contracts import AgentResult
+    from talent_angels.session.kernel import _connect_bridge_intro
+
+    hit = AgentResult(capability="connect", suite="esco", nodes=[_node_ref_occ("nurse")], edges=[])
+    miss = AgentResult(
+        capability="connect", suite="onet", nodes=[], warnings=["not_found"], edges=[]
+    )
+    assert _connect_bridge_intro([hit]) == ""
+    assert _connect_bridge_intro([hit, miss]) == ""
+
+
+def test_connect_bridge_intro_names_two_suites() -> None:
+    from talent_angels.contracts import AgentResult
+    from talent_angels.session.kernel import _connect_bridge_intro
+
+    esco = AgentResult(
+        capability="connect", suite="esco", nodes=[_node_ref_occ("nurse", 1)], edges=[]
+    )
+    onet = AgentResult(
+        capability="connect", suite="onet", nodes=[_node_ref_occ("nurse", 2)], edges=[]
+    )
+    intro = _connect_bridge_intro([esco, onet])
+    assert intro.startswith("ESCO and O*NET both answer this")
+    assert "not one shared id" in intro
+
+
+def test_multi_suite_connect_reads_as_one_answer_not_two_blocks() -> None:
+    """GAP B: a bridging sentence frames both suites' cards as one turn.
+
+    Skills must NOT merge across suites (no cross-suite identity without a
+    crosswalk) — both full per-suite cards must still be present, in their
+    own `---`-separated blocks (so the TUI still renders two tables), just
+    introduced by one sentence instead of appearing as two disconnected
+    replies.
+    """
+    from talent_angels.assistant.planning import build_plan_for_capability
+    from talent_angels.assistant.turn import TurnOutcome
+    from talent_angels.contracts import AgentResult, EdgeRef, NodeRef
+    from talent_angels.runlog import RunLogRecord
+    from talent_angels.session.kernel import handle_line
+
+    esco_center = NodeRef(
+        id="esco:occupation:nurse",
+        suite="esco",
+        source="esco",
+        source_id="n1",
+        kind="Occupation",
+        pref_label="nurse",
+    )
+    esco_skill = NodeRef(
+        id="esco:skill:care",
+        suite="esco",
+        source="esco",
+        source_id="s1",
+        kind="Skill",
+        pref_label="patient care",
+    )
+    onet_center = NodeRef(
+        id="onet:occupation:29-1141.00",
+        suite="onet",
+        source="onet",
+        source_id="29-1141.00",
+        kind="Occupation",
+        pref_label="Registered Nurses",
+    )
+    onet_skill = NodeRef(
+        id="onet:skill:med",
+        suite="onet",
+        source="onet",
+        source_id="sk1",
+        kind="Skill",
+        pref_label="medicine and dentistry",
+    )
+    esco = AgentResult(
+        capability="connect",
+        suite="esco",
+        nodes=[esco_center, esco_skill],
+        edges=[
+            EdgeRef(
+                type="HAS_SKILL",
+                suite="esco",
+                source_node_id=esco_center.id,
+                target_node_id=esco_skill.id,
+                properties={"relation_type": "essential"},
+            )
+        ],
+        confidence=0.9,
+    )
+    onet = AgentResult(
+        capability="connect",
+        suite="onet",
+        nodes=[onet_center, onet_skill],
+        edges=[
+            EdgeRef(
+                type="HAS_SKILL",
+                suite="onet",
+                source_node_id=onet_center.id,
+                target_node_id=onet_skill.id,
+                properties={"relation_type": "essential"},
+            )
+        ],
+        confidence=0.85,
+    )
+
+    def runner(question: str, **_kwargs: object) -> TurnOutcome:
+        return TurnOutcome(
+            capability="connect",
+            plan=build_plan_for_capability("connect", suites=("esco", "onet")),
+            result=esco,
+            results=(esco, onet),
+            answer="ignored",
+            record=RunLogRecord(suite="esco,onet", plan=["connect"], question=question),
+        )
+
+    state = new_session()
+    reply = handle_line(state, "what skills does a nurse need", runner=runner)
+
+    # One bridging sentence, ahead of both blocks.
+    assert reply.text.index("ESCO and O*NET both answer this") < reply.text.index("## ESCO")
+    assert "not one shared id" in reply.text
+    # Both full per-suite cards survive, still `---`-separated (two TUI tables).
+    assert "## ESCO" in reply.text
+    assert "## O*NET" in reply.text
+    assert "patient care" in reply.text
+    assert "medicine and dentistry" in reply.text
+    assert "\n\n---\n\n" in reply.text
+    # No cross-suite merging: each suite's skill only appears under its own heading.
+    esco_block, _, onet_block = reply.text.partition("## O*NET")
+    assert "medicine and dentistry" not in esco_block
+    assert "patient care" not in onet_block
+
+
+def test_single_suite_connect_has_no_bridge_sentence() -> None:
+    """The bridge is a multi-suite-only concept; one suite must render exactly as before."""
+    from talent_angels.assistant.planning import build_plan_for_capability
+    from talent_angels.assistant.turn import TurnOutcome
+    from talent_angels.contracts import AgentResult, EdgeRef, NodeRef
+    from talent_angels.runlog import RunLogRecord
+    from talent_angels.session.kernel import handle_line
+
+    center = NodeRef(
+        id="esco:occupation:nurse",
+        suite="esco",
+        source="esco",
+        source_id="n1",
+        kind="Occupation",
+        pref_label="nurse",
+    )
+    skill = NodeRef(
+        id="esco:skill:care",
+        suite="esco",
+        source="esco",
+        source_id="s1",
+        kind="Skill",
+        pref_label="patient care",
+    )
+    esco = AgentResult(
+        capability="connect",
+        suite="esco",
+        nodes=[center, skill],
+        edges=[
+            EdgeRef(
+                type="HAS_SKILL",
+                suite="esco",
+                source_node_id=center.id,
+                target_node_id=skill.id,
+                properties={"relation_type": "essential"},
+            )
+        ],
+        confidence=0.9,
+    )
+
+    def runner(question: str, **_kwargs: object) -> TurnOutcome:
+        return TurnOutcome(
+            capability="connect",
+            plan=build_plan_for_capability("connect", suites=("esco",)),
+            result=esco,
+            results=(esco,),
+            answer="ignored",
+            record=RunLogRecord(suite="esco", plan=["connect"], question=question),
+        )
+
+    state = new_session()
+    reply = handle_line(state, "what skills does a nurse need", runner=runner)
+    assert "both answer this" not in reply.text
 
 
 def test_multi_suite_goal_writes_once_not_last_wins() -> None:

@@ -5,7 +5,7 @@ from __future__ import annotations
 from pathlib import Path
 from unittest.mock import patch
 
-from talent_angels.contracts import AgentResult, NodeRef
+from talent_angels.contracts import AgentResult, EdgeRef, NodeRef
 from talent_angels.llm.protocol import LLMResult, LLMUsage, Message
 from talent_angels.llm.stub_client import StubLLMClient
 from talent_angels.session.phrase import (
@@ -178,6 +178,92 @@ def test_connect_card_counts_omitted_skills() -> None:
     card = connect_card(result, shown=5)
     assert "software developer" in card
     assert "3 more skills" in card
+
+
+def test_connect_card_shows_essential_and_optional_tags() -> None:
+    """The card must carry real tag data, not just an unbacked instruction."""
+    center = _occ()
+    essential = NodeRef(
+        id="esco:skill:essential",
+        suite="esco",
+        source="esco",
+        source_id="e1",
+        kind="Skill",
+        pref_label="python",
+    )
+    optional = NodeRef(
+        id="esco:skill:optional",
+        suite="esco",
+        source="esco",
+        source_id="e2",
+        kind="Skill",
+        pref_label="sql",
+    )
+    result = AgentResult(
+        capability="connect",
+        suite="esco",
+        nodes=[center, essential, optional],
+        edges=[
+            EdgeRef(
+                type="HAS_SKILL",
+                suite="esco",
+                source_node_id=center.id,
+                target_node_id=essential.id,
+                properties={"relation_type": "essential"},
+            ),
+            EdgeRef(
+                type="HAS_SKILL",
+                suite="esco",
+                source_node_id=center.id,
+                target_node_id=optional.id,
+                properties={"relation_type": "optional"},
+            ),
+        ],
+    )
+    card = connect_card(result, shown=5)
+    assert "python (essential)" in card
+    assert "sql (optional)" in card
+
+
+def test_connect_card_tags_untagged_software_edges_as_tool() -> None:
+    """GAP C: O*NET USES_SOFTWARE edges carry no relation_type — must not go blank.
+
+    Without this fallback, a tool skill sits in the same list as ESCO's tagged
+    essential/optional skills with nothing after its name, which reads as a
+    missing value rather than "this is a different kind of link".
+    """
+    center = NodeRef(
+        id="onet:occupation:1",
+        suite="onet",
+        source="onet",
+        source_id="15-1252.00",
+        kind="Occupation",
+        pref_label="software developer",
+    )
+    tool = NodeRef(
+        id="onet:tool:javascript",
+        suite="onet",
+        source="onet",
+        source_id="javascript",
+        kind="Skill",
+        pref_label="JavaScript",
+    )
+    result = AgentResult(
+        capability="connect",
+        suite="onet",
+        nodes=[center, tool],
+        edges=[
+            EdgeRef(
+                type="USES_SOFTWARE",
+                suite="onet",
+                source_node_id=center.id,
+                target_node_id=tool.id,
+                properties={},  # relation_type is always absent on this edge type
+            ),
+        ],
+    )
+    card = connect_card(result, shown=5)
+    assert "JavaScript (tool)" in card
 
 
 # --- Profile injection tests ---

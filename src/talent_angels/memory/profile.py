@@ -9,7 +9,7 @@ from __future__ import annotations
 from datetime import date
 
 from talent_angels.contracts.models import NodeRef
-from talent_angels.memory.paths import MEMORY_MD, USER_MD
+from talent_angels.memory.paths import USER_MD
 
 
 def _node_id_str(node: NodeRef) -> str:
@@ -167,11 +167,3 @@ def profile_prefix() -> str:
     lines = content.splitlines()[:5]
     card = "\n".join(lines)
     return f"[User profile — confirmed by user, not from taxonomy]\n{card}\n\n"
-
-
-def erase_person() -> None:
-    """Deletes USER.md and MEMORY.md. Does not touch memory.db."""
-    if USER_MD.exists():
-        USER_MD.unlink()
-    if MEMORY_MD.exists():
-        MEMORY_MD.unlink()

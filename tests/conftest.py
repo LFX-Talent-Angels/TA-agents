@@ -2,7 +2,7 @@
 
 The memory layer resolves its paths to module-level constants at import time
 (``USER_MD``, ``MEMORY_MD``, ``DB_PATH``), defaulting to the real
-``~/.ta-agents/`` home. Without isolation, any test that writes or erases
+project-local home (``<repo>/.ta-agents``). Without isolation, any test that writes or erases
 memory touches the developer's actual profile and the actual ``memory.db`` —
 and with ``/reset`` now purging episodes, a stray test call would silently
 delete real history.
@@ -38,7 +38,7 @@ import pytest
 
 @dataclass(frozen=True, slots=True)
 class MemoryHome:
-    """The per-test stand-in for ``~/.ta-agents/``.
+    """The per-test stand-in for the real memory home (``<repo>/.ta-agents``).
 
     Tests must seed files through these attributes, not through
     ``memory.paths`` — the store modules bind the constants into their own

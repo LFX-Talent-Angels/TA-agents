@@ -92,6 +92,68 @@ def test_parse_loop_turn_reads_laguna_xml_tool_call() -> None:
     assert invocations[0].arguments["relation_filter"] == "essential"
 
 
+class _BoomClient:
+    """Any call proves the pathfind guard didn't fire before touching the model."""
+
+    provider = "litellm"
+    model = "should-never-be-called"
+
+    def complete(self, messages: list[Message], **_kwargs: object) -> LLMResult:
+        raise AssertionError("run_tool_loop must not call the model for a pathfind question")
+
+
+class _BoomSuite:
+    """Any call proves the pathfind guard didn't fire before touching the suite."""
+
+    @property
+    def suite_schema(self) -> SuiteSchema:
+        return _DEFAULT_SCHEMA
+
+    def search_nodes(self, text: str, kind: str | None = None) -> FakeToolResult:
+        raise AssertionError("run_tool_loop must not search for a pathfind question")
+
+    def get_neighbors(self, node_id: str, rel_types: list[str] | None = None) -> FakeToolResult:
+        raise AssertionError("run_tool_loop must not fetch neighbors for a pathfind question")
+
+
+def test_tool_loop_gates_pathfind_intent_before_touching_model_or_suite() -> None:
+    """Regression: the tool loop used to fall through to get_neighbors on a
+    pathfind-intent question and return a plain skills list. _dispatch_heuristic
+    (assistant/graph.py) already guarded this; run_tool_loop did not."""
+    outcome = run_tool_loop(
+        question="What is the career path from nurse to software developer?",
+        suite=_BoomSuite(),
+        suite_name="esco",
+        llm_client=_BoomClient(),
+    )
+
+    assert outcome.result.capability == "pathfind"
+    assert outcome.result.warnings == ["capability_not_implemented:pathfind"]
+    assert outcome.result.nodes == []
+    assert outcome.stages == []
+    assert outcome.tool_calls == []
+    assert outcome.plan.capabilities == ("pathfind",)
+
+
+def test_tool_loop_pathfind_gate_matches_heuristic_dispatch_shape() -> None:
+    """Both dispatch paths (heuristic and tool-loop) must produce the same
+    typed result for the same question, so kernel/API/MCP see one contract."""
+    from talent_angels.assistant.graph import _dispatch_heuristic
+    from talent_angels.assistant.planning import build_plan_for_capability
+
+    question = "skill path from nurse to data scientist"
+    plan = build_plan_for_capability("pathfind", suites=("esco",))
+    heuristic_state = {"question": question, "plan": plan}
+    heuristic_out = _dispatch_heuristic(heuristic_state, suite=_BoomSuite(), suite_name="esco")
+
+    loop_out = run_tool_loop(
+        question=question, suite=_BoomSuite(), suite_name="esco", llm_client=_BoomClient()
+    )
+
+    assert heuristic_out["result"].warnings == loop_out.result.warnings
+    assert heuristic_out["result"].capability == loop_out.result.capability
+
+
 def test_tool_loop_executes_xml_get_neighbors_after_search() -> None:
     occupation = _occupation()
     skill = FakeNode(

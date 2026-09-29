@@ -8,10 +8,14 @@ from __future__ import annotations
 
 import re
 
+from talent_angels.assistant.answer import CONNECT_PREVIEW_CAP
 from talent_angels.contracts import AgentResult, NodeRef
+from talent_angels.env import episode_retriever
 from talent_angels.llm import LLMClient, Message
 from talent_angels.memory.agent_notes import notes_prefix
 from talent_angels.memory.profile import profile_prefix
+from talent_angels.memory.retrieval import recall_prefix
+from talent_angels.session.followup import relation_tags
 
 _CHAT_SYSTEM = """You are LFX Talent Angels, a concise assistant in a terminal.
 Warm and useful. You look up occupations and skills on a taxonomy map.
@@ -53,7 +57,18 @@ def phrase_chat(
     messages = [
         Message(
             role="system",
-            content=profile_prefix() + notes_prefix() + _CHAT_SYSTEM + "\n" + hint,
+            # Recall sits between the memory blocks and the instructions: it is
+            # context about the user, like the profile and the notes, and not
+            # part of the brief. `""` unless a retriever is configured, so the
+            # prompt is byte-identical to before for everyone not opted in.
+            content=(
+                profile_prefix()
+                + notes_prefix()
+                + recall_prefix(user_text, retriever=episode_retriever())
+                + _CHAT_SYSTEM
+                + "\n"
+                + hint
+            ),
         ),
         Message(role="user", content=user_text),
     ]
@@ -83,7 +98,15 @@ def phrase_map(
         return fallback
     assert client is not None
     messages = [
-        Message(role="system", content=profile_prefix() + notes_prefix() + _MAP_SYSTEM),
+        Message(
+            role="system",
+            content=(
+                profile_prefix()
+                + notes_prefix()
+                + recall_prefix(question, retriever=episode_retriever())
+                + _MAP_SYSTEM
+            ),
+        ),
         Message(role="user", content=f"User: {question}\n\nFACT CARD:\n{card}"),
     ]
     try:
@@ -118,11 +141,16 @@ def locate_card(result: AgentResult) -> str:
     return "\n".join(lines)
 
 
-def connect_card(result: AgentResult, *, shown: int = 5) -> str:
+def connect_card(result: AgentResult, *, shown: int = CONNECT_PREVIEW_CAP) -> str:
     if not result.nodes:
         return "no neighbors"
     center = result.nodes[0]
-    skills = [node.pref_label for node in result.nodes[1 : shown + 1]]
+    neighbors = result.nodes[1 : shown + 1]
+    tags = relation_tags(result.edges, center.id)
+    skills = [
+        f"{node.pref_label} ({tags[node.id]})" if node.id in tags else node.pref_label
+        for node in neighbors
+    ]
     extra = max(0, len(result.nodes) - 1 - shown)
     lines = [
         f"occupation: {center.pref_label}",
@@ -133,7 +161,8 @@ def connect_card(result: AgentResult, *, shown: int = 5) -> str:
     lines.extend(
         [
             "shown skills: " + "; ".join(skills) if skills else "shown skills: none",
-            "tag each skill essential or optional when known",
+            "tags in parentheses (essential/optional/tool) come from the graph — "
+            "repeat them as given, do not invent a tag for a skill that has none",
         ]
     )
     if extra:

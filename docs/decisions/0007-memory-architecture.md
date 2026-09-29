@@ -29,11 +29,14 @@ branch carried the code.
 **The agent's memory is a single directory under the user's home, and its
 facts are SQLite-backed, typed, and node-ID-only.** Concretely:
 
-**1. `~/.ta-agents/` is the only memory home.** `USER.md` (the human profile,
+**1. The memory home is project-local, with an env override.** `.ta-agents/`
+at the repository root is the default home; `USER.md` (the human profile,
 explicit-confirm), `MEMORY.md` (agent notes), and `memory.db` (cache + the
-episode record) all live there. No second default (`TA_MEMORY_DIR`,
-`data/local/memory`) exists; only explicit env override for testing points
-elsewhere.
+episode record) all live there, gitignored alongside sessions and the run-log.
+`TA_AGENTS_HOME` re-points the home (dedicated volume, shared host) — it is
+honoured first and is the only supported way to leave the project. *(Amended
+2026-09-30: the previous default was `~/.ta-agents/`; see the alternatives
+entry below for why.)*
 
 **2. `memory.db` (SQLite) is the queryable store.** Two tables of records:
 
@@ -118,10 +121,12 @@ data actually points at.
 - **Rewrite the SQLite layer from scratch.** Pros: clean history. Cons:
   duplicates finished, notebook-backed work. **Rejected** — adopt, review, and
   reconcile instead.
-- **`data/local/memory` as default.** Cons: memory follows the repo, not the
-  user; breaks when the repo moves or is cloned. **Rejected** —
-  `~/.ta-agents/` matches phase-1 files and survives clones (hosting plan
-  ADR-0005).
+- **Project-local default (`.ta-agents/`, amended 2026-09-30).** The earlier
+  rationale rejected a repo-following default because the home would break
+  when the repo moves or is cloned. Operating practice said otherwise: a
+  memory buried in `~` was undiscoverable for the developer and unmanaged by
+  the repo, so the default became `.ta-agents/` inside the repo, and the
+  "repo moves / clone / host" escape hatch is now the `TA_AGENTS_HOME` override.
 
 ## Consequences
 

@@ -5,6 +5,7 @@ python -m talent_angels.cli locate "software developer" --kind occupation
 python -m talent_angels.cli bench
 python -m talent_angels.cli report --last 20
 python -m talent_angels.cli quality
+python -m talent_angels.cli recall-rebuild
 """
 
 from __future__ import annotations
@@ -121,13 +122,48 @@ def _build_parser() -> argparse.ArgumentParser:
         help="Do not print per-case progress (final JSON still goes to stdout).",
     )
 
+    rebuild_parser = sub.add_parser(
+        "recall-rebuild",
+        help="Rebuild the recall indexes from the recorded episodes.",
+    )
+    rebuild_parser.add_argument(
+        "--db",
+        default=None,
+        help="Path to the episode database. Defaults to the configured memory home.",
+    )
+    rebuild_parser.add_argument(
+        "--vector",
+        action="store_true",
+        help=(
+            "Also embed every episode into the vector index. This calls an embedding "
+            "provider, costs a small amount, and fails on its own without failing the "
+            "lexical rebuild."
+        ),
+    )
+    rebuild_parser.add_argument(
+        "--vacuum",
+        action="store_true",
+        help="Rewrite the database afterwards, so freed pages leave the file too.",
+    )
+
     return parser
 
 
 def main(argv: Sequence[str] | None = None, *, registry: SuiteRegistry | None = None) -> int:
     load_local_dotenv()
     args = _build_parser().parse_args(argv)
-    selected_registry = registry or default_suite_registry()
+    if registry is not None:
+        selected_registry = registry
+    elif args.command in {"bench", "quality"}:
+        # Both must bypass the persistent neighbor cache that the TUI/API/MCP
+        # edges run with. `bench` exists to measure what caching saves, so a
+        # warm SQLite cache underneath would flatter the baseline and make the
+        # reported saving a fiction; `quality` scores live answers whose golden
+        # values assume current graph data, and a stale row would silently
+        # invalidate them.
+        selected_registry = default_suite_registry(neighbor_cache=False)
+    else:
+        selected_registry = default_suite_registry()
 
     if args.command == "bench":
         return _run_bench(selected_registry)
@@ -136,6 +172,8 @@ def main(argv: Sequence[str] | None = None, *, registry: SuiteRegistry | None = 
         return 0
     if args.command == "quality":
         return _run_quality(args, selected_registry)
+    if args.command == "recall-rebuild":
+        return _run_recall_rebuild(args)
 
     if args.command in {"query", "locate", "connect"}:
         routed = route_line(args.question)
@@ -396,6 +434,98 @@ def _run_quality(args: argparse.Namespace, registry: SuiteRegistry) -> int:
         )
     )
     return 0 if summary["failed"] == 0 else 1
+
+
+def _run_recall_rebuild(args: argparse.Namespace) -> int:
+    """``recall-rebuild`` — the reachable entry point to ``sync_fts``.
+
+    Two jobs, and the second is why this is a subcommand rather than a note in a
+    docstring. First, it is the documented remedy for the drift warning
+    ``Fts5EpisodeRetriever`` now emits: a database written before the lexical
+    index existed, whose first post-upgrade turn created an empty index and made
+    every later query succeed while recalling nothing. Until there was a command
+    for it, ``sync_fts`` had zero non-test callers and the warning told the
+    reader to do something they had no way to do.
+
+    Second, it is a **manual scrub**. It drops and recreates the index, so it
+    removes the tokenised residue of a database written by a build whose erase
+    path only unindexed the rows — which is what `--vacuum` then makes true of
+    the file as well. Run it after upgrading from such a build if you care that
+    an old question is not merely unfindable but actually absent.
+    """
+    from talent_angels.memory.episodes import episodes_db_path, sync_fts, vacuum_db
+
+    db_path = Path(args.db) if args.db else episodes_db_path()
+    if not db_path.exists():
+        print(
+            f"no episode database at {db_path}; nothing to rebuild",
+            file=sys.stderr,
+        )
+        return 1
+    indexed = sync_fts(db_path=db_path)
+    vacuumed = vacuum_db(db_path=db_path) if args.vacuum else False
+    report: dict[str, Any] = {
+        "database": str(db_path),
+        "indexed": indexed,
+        "vacuumed": vacuumed,
+    }
+
+    if args.vector:
+        report.update(_rebuild_vector_index(db_path))
+        if args.vacuum:
+            # The vector table is written after the vacuum above, so the
+            # database has free pages again. Vacuuming once more is what makes
+            # `--vacuum` mean "no freed pages left" rather than "no freed pages
+            # left as of before the last write".
+            report["vacuumed"] = vacuum_db(db_path=db_path) or report["vacuumed"]
+
+    print(json.dumps(report, indent=2))
+    return 0 if not report.get("vector_error") else 1
+
+
+def _rebuild_vector_index(db_path: Path) -> dict[str, Any]:
+    """Embed every recorded episode into the vector index.
+
+    Separate from ``sync_fts`` because it is the only part of ``recall-rebuild``
+    that costs money and the only part that can fail for reasons that have
+    nothing to do with the database: no API key, a provider that is overloaded, a
+    model that was retired. The lexical rebuild is a local file operation and
+    always succeeds, and folding a network call into it would mean a user
+    repairing a broken index gets a failure that looks like corruption.
+
+    Reports rather than raises. A rebuild that cannot reach a provider has still
+    repaired the lexical index, and the exit code is what tells a script the
+    vector half did not happen.
+    """
+    from talent_angels.memory.episodes import recent_episodes
+    from talent_angels.memory.vector_retriever import episode_text
+
+    try:
+        from talent_angels.memory.embeddings import LiteLLMEmbedder
+        from talent_angels.memory.vector_index import SqliteVecIndex
+    except ImportError as exc:  # pragma: no cover - import guard
+        return {"vector_error": f"vector support is unavailable: {exc}"}
+
+    episodes = recent_episodes(limit=1_000_000, db_path=db_path)
+    if not episodes:
+        return {"vector_indexed": 0, "vector_dimensions": None}
+
+    embedder = LiteLLMEmbedder()
+    try:
+        vectors = embedder.embed([episode_text(e.question, e.node_labels) for e in episodes])
+    except Exception as exc:
+        return {"vector_error": f"{type(exc).__name__}: {exc}"}
+
+    dimensions = embedder.dimensions
+    index = SqliteVecIndex(dimensions=dimensions, db_path=db_path)
+    index.clear()
+    for episode, vector in zip(episodes, vectors, strict=True):
+        index.add(episode.run_id, vector)
+    return {
+        "vector_indexed": index.count(),
+        "vector_dimensions": dimensions,
+        "vector_model": embedder._model,  # noqa: SLF001 - reported, not wrapped
+    }
 
 
 if __name__ == "__main__":

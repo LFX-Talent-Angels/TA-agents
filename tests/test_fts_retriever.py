@@ -1907,3 +1907,10 @@ def test_every_recall_call_site_is_known_and_counted() -> None:
         "assistant/synthesize": 1,
         "session/phrase": 2,
     }, f"the call sites changed; update this file's header and the tests for them: {sites}"
+
+
+def test_intent_verbs_do_not_make_unrelated_turns_match() -> None:
+    """Live: "I want to learn Python" recalled "I want to become a doctor"."""
+    from talent_angels.memory.fts_retriever import _STOPWORDS
+
+    assert {"want", "wants", "wanted"} <= _STOPWORDS

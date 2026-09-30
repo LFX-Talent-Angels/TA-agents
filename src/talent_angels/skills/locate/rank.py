@@ -19,6 +19,10 @@ def _near_pref_label(query: str, node: NodeRef) -> bool:
     return False
 
 
+#: Highest lexical tier that may be auto-selected (3 = exact alternative label).
+_MAX_AUTO_SELECT_TIER = 3
+
+
 def lexical_rank(query: str, node: NodeRef) -> tuple[int, int, str]:
     """Lower is better: exact pref, pref token, pref substring, exact alt, alt substring."""
     q = query.casefold().strip()
@@ -127,9 +131,12 @@ def group_and_sort_locate(
     )
     top_tier = lexical_rank(query, ordered[0])[0]
     second_tier = lexical_rank(query, ordered[1])[0]
-    # Exact preferred label (0) or exact alias (3) that beats the next hit
-    # is unique enough — extra full-text noise is not a picker.
-    unique_enough = top_tier < second_tier
+    # A hit that names the query in its preferred label (tiers 0-2) or as an
+    # exact alias (3), and beats the next hit's tier, is unique enough — extra
+    # full-text noise is not a picker. An alias *substring* (4) or a hit with no
+    # lexical match at all (5) is never auto-selected: "nurse" must not resolve
+    # to "chief executive officer" because one alias is "senior nurse manager".
+    unique_enough = top_tier <= _MAX_AUTO_SELECT_TIER and top_tier < second_tier
     if unique_enough:
         extra = len(ordered) - 1
         winner = ordered[0]

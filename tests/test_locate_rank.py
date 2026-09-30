@@ -132,3 +132,23 @@ def test_unique_locate_is_not_regrouped() -> None:
             raise AssertionError("unique locate must not hop CLASSIFIED_UNDER")
 
     assert group_and_sort_locate(Boom(), result, "software developer", suite_name="esco") is result
+
+
+class _NoGroups:
+    def get_neighbors(self, node_id: str, rel_types: list[str] | None = None) -> FakeToolResult:
+        return FakeToolResult()
+
+
+def test_alias_substring_is_never_auto_selected() -> None:
+    """Live repro: "nurse" resolved to CEO via the alias "senior nurse manager"."""
+    ceo = _occ("chief executive officer", 1, alts=["senior nurse manager"])
+    other = _occ("hospital porter", 2)
+    result = AgentResult(capability="locate", suite="esco", nodes=[ceo, other], confidence=0.7)
+
+    ranked = group_and_sort_locate(
+        _NoGroups(), result, "nurse", suite_name="esco", group_rel_type=None
+    )
+
+    assert "ambiguous" in ranked.warnings
+    assert ranked.confidence == 0.7
+    assert len(ranked.nodes) == 2

@@ -1,10 +1,14 @@
-"""Time one LLM completion and record it as a run-log stage."""
+"""Time one LLM completion and record it as a run-log stage.
+
+The single entry point for model calls: every call is metered here, and every
+provider failure leaves here as :class:`~talent_angels.llm.LLMError`.
+"""
 
 from __future__ import annotations
 
 from time import perf_counter
 
-from talent_angels.llm import LLMClient, LLMResult, Message
+from talent_angels.llm import LLMClient, LLMError, LLMResult, Message
 from talent_angels.runlog import StageUsage
 
 
@@ -16,10 +20,15 @@ def measure_complete(
     tools: list[dict[str, object]] | None = None,
 ) -> tuple[LLMResult, StageUsage]:
     started = perf_counter()
-    if tools is None:
-        result = client.complete(messages)
-    else:
-        result = client.complete(messages, tools=tools)
+    try:
+        if tools is None:
+            result = client.complete(messages)
+        else:
+            result = client.complete(messages, tools=tools)
+    except LLMError:
+        raise
+    except Exception as exc:  # noqa: BLE001 — every provider failure becomes one type
+        raise LLMError(f"{stage}: {type(exc).__name__}: {exc}") from exc
     latency_ms = (perf_counter() - started) * 1000
     usage = result.usage
     return result, StageUsage(

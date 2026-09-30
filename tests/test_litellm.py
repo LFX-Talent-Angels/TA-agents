@@ -11,11 +11,11 @@ from typing import Any
 
 import pytest
 
-from talent_angels.llm import Message
+from talent_angels.llm import LLMError, Message
 from talent_angels.llm.litellm_client import (
     LOCAL_MODEL_COST_MAP_ENV,
     LiteLLMClient,
-    _MuteThread,
+    _quiet_stdio,
     ensure_local_model_cost_map,
 )
 from talent_angels.runlog import estimate_llm_cost_usd
@@ -23,44 +23,70 @@ from talent_angels.runlog import estimate_llm_cost_usd
 MODEL = "openrouter/nvidia/nemotron-3-ultra-550b-a55b:free"
 
 
-def test_mute_thread_preserves_terminal_shape_for_other_threads() -> None:
-    class Terminal:
-        encoding = "utf-8"
+class _Terminal:
+    encoding = "utf-8"
 
-        def __init__(self) -> None:
-            self.text = ""
+    def __init__(self) -> None:
+        self.text = ""
 
-        def write(self, text: str) -> int:
-            self.text += text
-            return len(text)
+    def write(self, text: str) -> int:
+        self.text += text
+        return len(text)
 
-        def flush(self) -> None:
-            return None
+    def flush(self) -> None:
+        return None
 
-        def isatty(self) -> bool:
-            return True
+    def isatty(self) -> bool:
+        return True
 
-        def fileno(self) -> int:
-            return 1
+    def fileno(self) -> int:
+        return 1
 
-    target = Terminal()
-    muted = _MuteThread(target, threading.get_ident())
-    muted.write("hidden")
-    assert target.text == ""
-    assert muted.isatty() is True
-    assert muted.fileno() == 1
-    assert muted.encoding == "utf-8"
 
+def test_mute_hides_only_the_calling_thread(monkeypatch: pytest.MonkeyPatch) -> None:
+    target = _Terminal()
+    monkeypatch.setattr(sys, "stdout", target)
     other_result: list[int] = []
 
-    def write_from_other_thread() -> None:
-        other_result.append(muted.write("visible"))
+    with _quiet_stdio():
+        sys.stdout.write("hidden")
+        assert sys.stdout.isatty() is True
+        assert sys.stdout.fileno() == 1
+        assert sys.stdout.encoding == "utf-8"
+        thread = threading.Thread(target=lambda: other_result.append(sys.stdout.write("visible")))
+        thread.start()
+        thread.join()
 
-    thread = threading.Thread(target=write_from_other_thread)
-    thread.start()
-    thread.join()
     assert other_result == [7]
     assert target.text == "visible"
+    assert sys.stdout is target
+
+
+def test_overlapping_calls_restore_the_real_stream(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Two in-flight completions used to leave a stale wrapper installed forever."""
+    target = _Terminal()
+    monkeypatch.setattr(sys, "stdout", target)
+    a_in, b_in, a_out = threading.Event(), threading.Event(), threading.Event()
+
+    def call_a() -> None:
+        with _quiet_stdio():
+            a_in.set()
+            b_in.wait()
+        a_out.set()
+
+    def call_b() -> None:
+        a_in.wait()
+        with _quiet_stdio():
+            b_in.set()
+            a_out.wait()
+
+    threads = [threading.Thread(target=call_a), threading.Thread(target=call_b)]
+    for t in threads:
+        t.start()
+    for t in threads:
+        t.join()
+
+    assert sys.stdout is target
 
 
 def test_litellm_maps_request_text_and_exclusive_usage_buckets() -> None:
@@ -105,6 +131,8 @@ def test_litellm_maps_request_text_and_exclusive_usage_buckets() -> None:
             {"role": "user", "content": "Find software developer."},
         ],
         "max_tokens": 1024,
+        "timeout": 60.0,
+        "num_retries": 1,
         "extra_body": {"reasoning": {"enabled": True}},
     }
     assert result.text == "Found it."
@@ -249,7 +277,7 @@ def test_litellm_rejects_provider_error_choice() -> None:
 def test_litellm_rejects_malformed_measurement_response(
     response: dict[str, object],
 ) -> None:
-    with pytest.raises(ValueError, match="LiteLLM response"):
+    with pytest.raises(LLMError, match="LiteLLM response"):
         LiteLLMClient(model=MODEL, completion_fn=lambda **_kwargs: response).complete(
             [Message(role="user", content="hello")]
         )
@@ -282,7 +310,7 @@ def test_litellm_rejects_cache_tokens_exceeding_prompt() -> None:
             },
         }
 
-    with pytest.raises(ValueError, match="cache token"):
+    with pytest.raises(LLMError, match="cache token"):
         LiteLLMClient(model=MODEL, completion_fn=complete).complete(
             [Message(role="user", content="hello")]
         )

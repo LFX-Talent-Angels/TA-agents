@@ -159,17 +159,14 @@ def _execute_tool(
         node_id = args.get("node_id")
         if not isinstance(node_id, str) or not node_id.strip():
             raise ValueError("get_neighbors requires node_id")
-        rel_raw = args.get("rel_types")
-        supported = tuple(suite.suite_schema.skill_rel_types)
-        if isinstance(rel_raw, list) and rel_raw:
-            requested = tuple(str(item) for item in rel_raw)
-            # Drop rel types the suite does not expose (e.g. O*NET's USES_SOFTWARE
-            # sent to ESCO) — an unknown type makes the suite reject the whole
-            # get_neighbors call and report 0 edges (GAP A).
-            known = tuple(rt for rt in requested if rt in supported)
-            rel_types = known or supported
-        else:
-            rel_types = supported
+        # Which relations to walk is decided in code, from the suite schema — not
+        # by the model (ARCHITECTURE: determinism is pushed down). Live, the
+        # same question returned 10 O*NET skills or 251 tools depending on
+        # whether the model happened to list USES_SOFTWARE; the answer layer
+        # splits skills from tools, so fetching the full set is always right.
+        # The model's rel_types argument is ignored; relation_filter
+        # (essential/optional) is kept because it comes from the user's words.
+        rel_types = tuple(suite.suite_schema.skill_rel_types)
         relation = args.get("relation_filter")
         relation_kind = relation if isinstance(relation, str) else None
         center = None

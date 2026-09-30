@@ -559,6 +559,28 @@ def _renumber_pending(choices: list[PendingChoice], *, start: int) -> list[Pendi
     ]
 
 
+def _prose_then_facts(phrased: str, fallback: str, facts: str) -> str:
+    """Model prose may introduce the facts; it never replaces them.
+
+    With a real model the phrased text used to *replace* the deterministic list,
+    so a connect turn showed no skill names at all (the prompt forbids numbered
+    lists) and a locate turn lost its id/confidence line although the prompt
+    promised it is "printed under your text".
+    """
+    if phrased.strip() == fallback.strip():
+        return fallback
+    return f"{phrased}\n\n{facts}"
+
+
+def _locate_fact_line(result: AgentResult) -> str:
+    """The graph facts under a phrased locate answer — no raw ids in user text."""
+    if not result.nodes:
+        return ""
+    top = result.nodes[0]
+    confidence = f", confidence {result.confidence:.0%}" if result.confidence is not None else ""
+    return f"Map record: **{top.pref_label}** ({top.kind}{confidence})"
+
+
 def _render_unique_block(
     result: AgentResult,
     *,
@@ -568,29 +590,28 @@ def _render_unique_block(
 ) -> str:
     fallback = _map_answer(summarize_result(result))
     if result.capability == "connect" and result.nodes:
-        body = phrase_map(
+        phrased = phrase_map(
             llm_client,
             question=question,
             result=result,
             fallback=fallback,
             card=connect_card(result),
         )
+        body = _prose_then_facts(
+            phrased, fallback, render_connect_list(result, cap=CONNECT_PREVIEW_CAP)
+        )
         hint = _connect_more_hint(result)
         if hint and hint not in body:
             body = f"{body}\n\n{hint}"
     else:
-        record = fallback
         phrased = phrase_map(
             llm_client,
             question=question,
             result=result,
-            fallback=record,
+            fallback=fallback,
             card=locate_card(result),
         )
-        if uses_chat_phrasing(llm_client) and phrased.strip() != record.strip():
-            body = phrased
-        else:
-            body = phrased
+        body = _prose_then_facts(phrased, fallback, _locate_fact_line(result))
     if heading:
         # Plain ATX heading — TUI treats **bold** lines as picker group names.
         return f"## {heading}\n\n{body}"
@@ -652,7 +673,7 @@ def _from_single_outcome(
             card=locate_card(result),
         )
         if uses_chat_phrasing(llm_client) and phrased.strip() != record.strip():
-            text = f"{phrased}\n\n{MAP_NEXT_STEP}"
+            text = f"{phrased}\n\n{_locate_fact_line(result)}\n\n{MAP_NEXT_STEP}"
         else:
             text = record
     elif result.capability == "connect" and result.nodes:
@@ -660,12 +681,15 @@ def _from_single_outcome(
         fallback = _map_answer(outcome.answer)
         if not uses_chat_phrasing(llm_client):
             fallback = f"{fallback}\n\n{MAP_NEXT_STEP}"
-        text = phrase_map(
+        phrased = phrase_map(
             llm_client,
             question=question,
             result=result,
             fallback=fallback,
             card=connect_card(result),
+        )
+        text = _prose_then_facts(
+            phrased, fallback, render_connect_list(result, cap=CONNECT_PREVIEW_CAP)
         )
         hint = _connect_more_hint(result)
         if hint and hint not in text:
@@ -783,6 +807,10 @@ def _from_outcome(
     state.last_result = preferred
 
     blocks: list[str] = []
+    #: Per-suite "no match" / "not available" blocks. Kept separately so they
+    #: are shown whatever the other suites returned — they used to be dropped
+    #: whenever another suite hit, while the footer still named both suites.
+    miss_blocks: list[str] = []
     unique_cards: list[str] = []
     pending_all: list[PendingChoice] = []
     unique_bind: NodeRef | None = None
@@ -826,6 +854,7 @@ def _from_outcome(
             continue
         if not result.nodes or "not_found" in result.warnings:
             blocks.append(f"## {heading}\n\n{LOCATE_MISS}")
+            miss_blocks.append(f"## {heading}\n\n{LOCATE_MISS}")
             continue
         all_miss = False
         any_hit = True
@@ -896,6 +925,7 @@ def _from_outcome(
             block for block in blocks if "I won't pick" in block or "Which one" in block
         ]
         extras.extend(picker_blocks)
+        extras.extend(miss_blocks)
         if extras:
             text = text + "\n\n---\n\n" + "\n\n---\n\n".join(extras)
     else:
@@ -907,6 +937,8 @@ def _from_outcome(
                 text = f"{intro}\n\n{text}"
         else:
             text = synthesize(results, question=question, llm_client=llm_client)
+        if has_connect and unique_cards and miss_blocks:
+            text = text + "\n\n---\n\n" + "\n\n---\n\n".join(miss_blocks)
         if unique_bind is not None and MAP_NEXT_STEP not in text:
             text = f"{text}\n\n{MAP_NEXT_STEP}"
 
@@ -917,16 +949,28 @@ def _handle_expand(state: SessionState, text: str, *, runner: TurnRunner) -> Cha
     """Replay the last Connect list, or widen the last occupation picker."""
     _record(state, "user", text)
     result = state.last_result
-    if can_expand_locate(result):
+    pickers = [r for r in state.last_results if can_expand_locate(r)]
+    if not pickers and can_expand_locate(result):
         assert result is not None
-        pending = choices_from_result(result, limit=len(result.nodes))
-        omitted = max(0, len(result.nodes) - len(pending))
-        state.pending = pending
+        pickers = [result]
+    if pickers:
+        # Every suite's picker, numbered continuously: widening only one suite
+        # (and renumbering it from 1) broke the other suite's numbers.
         query = _last_map_query(state) or text
-        message = render_picker(query, pending, omitted=omitted)
+        pending: list[PendingChoice] = []
+        picker_blocks: list[str] = []
+        for item in pickers:
+            choices = _renumber_pending(
+                choices_from_result(item, limit=len(item.nodes)), start=len(pending) + 1
+            )
+            pending.extend(choices)
+            picker = render_picker(query, choices, omitted=0, include_source=False)
+            heading = suite_heading(item.suite) if item.suite else "Map"
+            picker_blocks.append(f"## {heading}\n\n{picker}" if len(pickers) > 1 else picker)
+        state.pending = pending
+        message = "\n\n---\n\n".join(picker_blocks)
         _record(state, "assistant", message)
-        source = result.suite.upper() if result.suite else None
-        return _reply(state, message, source_note=source)
+        return _reply(state, message, source_note=_source_note_for(tuple(pickers)))
     if not can_expand_connect(result) and state.binding is not None:
         bn = dict(state.bindings) if len(state.bindings) > 1 else None
         outcome = runner(
@@ -949,10 +993,21 @@ def _handle_expand(state: SessionState, text: str, *, runner: TurnRunner) -> Cha
         _record(state, "assistant", message)
         return _reply(state, message)
     assert result is not None
-    message = render_connect_list(result)
+    # The bound suite's list first ("skill N" follow-ups index into it), then
+    # every other suite's list — "show more" used to list only one suite.
+    lists = [
+        result,
+        *(r for r in state.last_results if r.suite != result.suite and can_expand_connect(r)),
+    ]
+    if len(lists) == 1:
+        message = render_connect_list(result)
+    else:
+        message = "\n\n---\n\n".join(
+            f"## {suite_heading(r.suite) if r.suite else 'Map'}\n\n{render_connect_list(r)}"
+            for r in lists
+        )
     _record(state, "assistant", message)
-    source = result.suite.upper() if result.suite else None
-    return _reply(state, message, source_note=source)
+    return _reply(state, message, source_note=_source_note_for(tuple(lists)))
 
 
 def _describe_bound(

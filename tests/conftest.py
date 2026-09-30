@@ -10,10 +10,17 @@ and saved sessions — ``/reset-all`` deliberately sweeps all of them.
 
 from __future__ import annotations
 
+import os
+from collections.abc import Iterator
 from dataclasses import dataclass
 from pathlib import Path
 
 import pytest
+
+# Checkpointed channels must only hold types registered in
+# assistant/checkpoint.py; strict mode turns a missing registration (today a
+# deprecation warning, later a hard failure in production) into a test failure.
+os.environ.setdefault("LANGGRAPH_STRICT_MSGPACK", "true")
 
 
 @dataclass(frozen=True, slots=True)
@@ -78,3 +85,12 @@ def _isolate_memory_home(
 def memory_home(_isolate_memory_home: MemoryHome) -> MemoryHome:
     """Request this to seed a memory file; isolation is already applied."""
     return _isolate_memory_home
+
+
+@pytest.fixture(autouse=True)
+def _close_checkpoint_savers() -> Iterator[None]:
+    """The durable saver is cached per home; each test has its own home."""
+    yield
+    from talent_angels.assistant.checkpoint import release_all
+
+    release_all()

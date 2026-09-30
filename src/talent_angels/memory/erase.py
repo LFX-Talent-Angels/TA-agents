@@ -107,10 +107,16 @@ def _purge_checkpoint_store() -> int:
 
     Returns the number of files removed, so the receipt agrees with the disk.
     """
+    from talent_angels.assistant.checkpoint import release
     from talent_angels.assistant.graph import checkpoint_db_path
 
     db = checkpoint_db_path()
-    return sum(_unlink(path) for path in (db, _sidecar(db, "-wal"), _sidecar(db, "-shm")))
+    removed = sum(_unlink(path) for path in (db, _sidecar(db, "-wal"), _sidecar(db, "-shm")))
+    # The process-wide saver still holds a connection to the unlinked inode.
+    # Close it so the next conversation opens a fresh file instead of writing
+    # into one nobody can reach (and nobody can erase).
+    release(db)
+    return removed
 
 
 def _sidecar(db: Path, suffix: str) -> Path:

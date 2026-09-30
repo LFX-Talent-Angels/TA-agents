@@ -10,23 +10,27 @@ from __future__ import annotations
 import logging
 import os
 import sqlite3
+import uuid
 from dataclasses import dataclass, field
 
-from talent_angels.assistant.answer import build_answer
+from talent_angels.assistant.answer import NO_SUBJECT, build_answer
 from talent_angels.assistant.cache import ResultCache
-from talent_angels.assistant.graph import build_graph, dispatch_plan
-from talent_angels.assistant.honesty import honesty_warnings
-from talent_angels.assistant.intent import CAPABILITY_CONNECT, CAPABILITY_LOCATE, Capability
-from talent_angels.assistant.llm_plan import PlanDraft, interpret_question
-from talent_angels.assistant.merge import merge_answers
+from talent_angels.assistant.graph import build_graph, fresh_state_input
+from talent_angels.assistant.intent import CAPABILITY_LOCATE, Capability
+from talent_angels.assistant.llm_plan import PlanDraft
 from talent_angels.assistant.planning import (
     ExecutionPlan,
     build_plan_for_capability,
 )
-from talent_angels.assistant.suite_select import named_unattached, select_suites
+from talent_angels.assistant.turn_graph import (
+    TurnRuntime,
+    build_turn_graph,
+    fresh_turn_input,
+    locate_one,
+    thread_config,
+)
 from talent_angels.contracts import AgentResult, NodeRef
 from talent_angels.llm import LLMClient, LLMUsage
-from talent_angels.memory.cache import CachedSuite
 from talent_angels.memory.episodes import record_episode
 from talent_angels.runlog import (
     EfficiencyInfo,
@@ -40,9 +44,7 @@ from talent_angels.runlog import (
     estimate_turn_cost_usd,
     usage_from_stage,
 )
-from talent_angels.skills.locate import ESCO_SUITE_NAME, locate
-from talent_angels.skills.locate.rank import group_and_sort_locate
-from talent_angels.suites.measured import MeasuredSuite
+from talent_angels.skills.locate import ESCO_SUITE_NAME
 from talent_angels.suites.protocol import SuiteTools
 from talent_angels.suites.registry import SuiteRegistry, UnknownSuiteError
 
@@ -53,10 +55,7 @@ logger = logging.getLogger(__name__)
 #: never be sent whole to every prompt and to full-text search.
 MAX_QUESTION_CHARS = 1000
 
-NO_SUBJECT_ANSWER = (
-    "Which occupation or skill do you mean? For example: "
-    "“What skills does a nurse need?” or “Where is data scientist?”"
-)
+NO_SUBJECT_ANSWER = NO_SUBJECT
 
 
 def normalize_question(question: str) -> tuple[str, list[str]]:
@@ -114,37 +113,6 @@ def _bound_for_suite(
     return None
 
 
-def _served_from_cache(suite: object) -> bool:
-    """True when this suite's turn read from the persistent neighbor cache.
-
-    Reports memory.cache.CachedSuite into the run-log's existing
-    ``result_cache_hit`` field so ``ta-agent report`` shows the cache working.
-    Without this the cache is invisible: a wrapper that silently stopped
-    matching would look exactly like a cold one — which is how a fully tested
-    cache layer went a whole sprint without ever firing in production.
-    """
-    return isinstance(suite, CachedSuite) and suite.hits > 0
-
-
-def _locate_one(
-    suite: SuiteTools,
-    suite_name: str,
-    question: str,
-    *,
-    kind: str | None,
-    cache: ResultCache | None,
-) -> tuple[AgentResult, list[ToolCall], bool]:
-    cached = cache.get(suite_name, CAPABILITY_LOCATE, question) if cache else None
-    if cached is not None:
-        return cached, [], True
-    measured = MeasuredSuite(suite)
-    result = locate(measured, suite_name, question, kind=kind)
-    result = group_and_sort_locate(measured, result, question, suite_name=suite_name)
-    if cache is not None:
-        cache.set(suite_name, CAPABILITY_LOCATE, question, result)
-    return result, measured.tool_calls, False
-
-
 def _dispatch_opened(
     *,
     suite: SuiteTools,
@@ -170,7 +138,7 @@ def _dispatch_opened(
 ]:
     cache_hit = False
     if force_locate:
-        result, tools, cache_hit = _locate_one(suite, suite_name, question, kind=kind, cache=cache)
+        result, tools, cache_hit = locate_one(suite, suite_name, question, kind=kind, cache=cache)
         answer, answer_stage = build_answer(result, llm_client=llm_client, mode=answer_mode)
         stages = [answer_stage] if answer_stage is not None else []
         plan = build_plan_for_capability(CAPABILITY_LOCATE, suites=(suite_name,))
@@ -186,7 +154,7 @@ def _dispatch_opened(
     )
     config = {"configurable": {"thread_id": thread_id}} if thread_id else {}
     final_state = graph.invoke(  # type: ignore[call-overload]
-        {"question": question, "kind": kind, "bound_node": bound_node}, config=config
+        fresh_state_input(question=question, kind=kind, bound_node=bound_node), config=config
     )
     return (
         final_state["capability"],
@@ -212,6 +180,7 @@ def _record_turn(
     cache_hit: bool,
     heuristic_intent: bool,
     persist: bool,
+    run_id: str | None = None,
 ) -> RunLogRecord:
     usage = _usage_from_stages(stages)
     model = os.environ.get("LLM_MODEL", "").strip() or "stub"
@@ -252,6 +221,8 @@ def _record_turn(
             warnings=all_warnings,
         ),
     )
+    if run_id:
+        record = record.model_copy(update={"run_id": run_id})
     if persist:
         persist_turn_record(record)
     return record
@@ -477,158 +448,49 @@ def _run_turn_checked(
             results=(result,),
         )
 
-    selected = select_suites(
-        available=registry.available,
-        override=suite_override,
-        question=question,
-    )
-    extra_warnings: list[str] = [
-        *input_warnings,
-        *(f"suite_not_attached:{name}" for name in named_unattached(question, registry.available)),
-    ]
-    collected: list[AgentResult] = []
-    tools = []
-    stages = []
-    cache_hit = False
-    selected_force = CAPABILITY_LOCATE if force_locate else force_capability
+    from talent_angels.assistant.checkpoint import shared_checkpointer
 
-    interpreted = interpret_question(
-        question,
-        suites=selected,
-        llm_client=llm_client,
-        forced_capability=selected_force,
+    run_id = str(uuid.uuid4())
+    runtime = TurnRuntime(
+        registry=registry, llm_client=llm_client, answer_mode=answer_mode, cache=cache
     )
-    if interpreted.stage is not None:
-        stages.append(interpreted.stage)
-    plan = interpreted.plan
-    capability = plan.intent.target
-    draft = interpreted.draft
-    if (
-        not interpreted.heuristic
-        and draft is not None
-        and not draft.subject
-        and capability in (CAPABILITY_LOCATE, CAPABILITY_CONNECT)
-        and selected_force is None
-        and not _has_bound(bound_node, bound_nodes)
-    ):
-        # The planner found no occupation or skill to look up (a greeting, an
-        # instruction to the assistant, noise). Querying the graph anyway is how
-        # a prompt example once became a confident, cited, unrelated answer.
-        return _early_turn(
-            capability=capability,
-            suite_name=selected[0] if selected else registry.default,
+    graph = build_turn_graph(runtime, checkpointer=shared_checkpointer() if thread_id else None)
+    final = graph.invoke(  # type: ignore[call-overload]
+        fresh_turn_input(
+            run_id=run_id,
             question=question,
-            warnings=["no_subject", *extra_warnings],
-            answer=NO_SUBJECT_ANSWER,
-            persist=persist,
-            stages=stages,
-            plan_draft=draft,
-            heuristic_intent=False,
-        )
-    seed_state = {
-        "question": question,
-        "kind": kind,
-        "bound_node": bound_node,
-        "capability": capability,
-        "plan": plan,
-        "plan_draft": interpreted.draft,
-        "heuristic_intent": interpreted.heuristic,
-        "llm_stages": stages,
-    }
-    # dispatch_plan returns the *accumulated* llm_stages (shared seed + its own).
-    # Slice from the baseline taken right before each suite so we only append the
-    # stages that suite actually added — never re-append earlier suites' stages.
-    for name in selected:
-        prior_stages_len = len(stages)
-        per_state = {
-            **seed_state,
-            "bound_node": _bound_for_suite(name, bound_node, bound_nodes),
-        }
-        try:
-            with registry.open(name) as runtime:
-                if force_locate:
-                    one, one_tools, one_hit = _locate_one(
-                        runtime.suite, name, question, kind=kind, cache=cache
-                    )
-                    cache_hit = cache_hit or one_hit
-                    collected.append(one)
-                    tools.extend(one_tools)
-                    continue
-                dispatched = dispatch_plan(
-                    per_state,  # type: ignore[arg-type]
-                    suite=runtime.suite,
-                    suite_name=name,
-                    llm_client=llm_client,
-                    bound_node=_bound_for_suite(name, bound_node, bound_nodes),
-                    # The merged answer below is written in code; the model's own
-                    # final phrasing round would be billed and then discarded.
-                    need_answer=False,
-                )
-                cache_hit = cache_hit or _served_from_cache(runtime.suite)
-                collected.append(dispatched["result"])
-                tools.extend(dispatched.get("tool_calls") or [])
-                stages.extend((dispatched.get("llm_stages") or [])[prior_stages_len:])
-        except UnknownSuiteError:
-            raise
-        except Exception:  # noqa: BLE001 — a down suite must not fail the turn
-            logger.warning("suite %s unavailable", name, exc_info=True)
-            extra_warnings.append(f"suite_unavailable:{name}")
-
-    result_tuple = tuple(collected)
-    extra_warnings.extend(honesty_warnings(result_tuple))
-    if not result_tuple:
-        # Warnings go on the placeholder once — they are not appended again below.
-        primary = AgentResult(
-            capability=capability,
-            suite=selected[0] if selected else suite_name,
-            warnings=extra_warnings or ["not_found"],
-        )
-        result_tuple = (primary,)
-        answer = merge_answers((), extra_warnings=extra_warnings)
-        answer_stage = None
-        extra_warnings = []
-    elif (
-        len(result_tuple) == 1
-        and not extra_warnings
-        and answer_mode == "natural"
-        and result_tuple[0].nodes
-        and not result_tuple[0].warnings
-    ):
-        # Only a clean single-suite hit is worth a natural-language rephrase;
-        # everything else gets the same deterministic answer as a multi-suite turn.
-        answer, answer_stage = build_answer(
-            result_tuple[0], llm_client=llm_client, mode=answer_mode
-        )
-    else:
-        answer = merge_answers(result_tuple, extra_warnings=extra_warnings)
-        answer_stage = None
-
-    if answer_stage is not None:
-        stages.append(answer_stage)
-
+            kind=kind,
+            bound_node=bound_node,
+            bound_nodes=bound_nodes,
+            force_capability=force_capability,
+            force_locate=force_locate,
+            suite_override=suite_override,
+            input_warnings=input_warnings,
+        ),
+        config=thread_config(thread_id) if thread_id else {},
+    )
+    final_plan: ExecutionPlan = final["plan"]
+    result_tuple = tuple(final["results"])
     primary = result_tuple[0]
-    if extra_warnings:
-        primary = primary.model_copy(update={"warnings": [*primary.warnings, *extra_warnings]})
-        result_tuple = (primary, *result_tuple[1:])
-
     record = _record_turn(
         suite_label=",".join(item.suite for item in result_tuple),
-        plan=plan,
+        plan=final_plan,
         question=question,
         result=primary,
         results=result_tuple,
-        stages=stages,
-        tools=tools,
-        cache_hit=cache_hit,
-        heuristic_intent=interpreted.heuristic,
+        stages=list(final.get("stages") or []),
+        tools=list(final.get("tools") or []),
+        cache_hit=bool(final.get("cache_hit")),
+        heuristic_intent=bool(final.get("heuristic_intent", True)),
         persist=persist,
+        run_id=run_id,
     )
     return TurnOutcome(
-        capability=capability,
-        plan=plan,
+        capability=final_plan.intent.target,
+        plan=final_plan,
         result=primary,
-        answer=answer,
+        answer=final["answer"],
         record=record,
         results=result_tuple,
-        plan_draft=interpreted.draft,
+        plan_draft=final.get("plan_draft"),
     )

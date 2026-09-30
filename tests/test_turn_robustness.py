@@ -98,12 +98,12 @@ def test_provider_errors_of_any_type_degrade_and_are_logged(exc: Exception) -> N
 
 
 def test_an_unexpected_failure_still_returns_and_logs(monkeypatch: pytest.MonkeyPatch) -> None:
-    from talent_angels.assistant import turn
+    from talent_angels.assistant import turn_graph
 
     def boom(*_a: object, **_k: object) -> None:
         raise KeyError("bug")
 
-    monkeypatch.setattr(turn, "select_suites", boom)
+    monkeypatch.setattr(turn_graph, "select_suites", boom)
     outcome = run_turn(registry=fake_registry(), llm_client=StubLLMClient(), question="nurse")
 
     assert outcome.result.warnings == ["turn_failed:KeyError"]

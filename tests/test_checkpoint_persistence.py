@@ -304,6 +304,10 @@ def test_reset_all_takes_the_checkpoint_store_with_it(
         "precondition: the checkpoint store holds nothing to erase, so this "
         "test would pass over a sweep that missed it entirely"
     )
+    # The saver is shared and stays open (as on a live server), so the WAL
+    # sidecars may exist: the receipt must count exactly what was on disk.
+    db = memory_home.root / "checkpoints.db"
+    on_disk = sum(p.exists() for p in (db, Path(f"{db}-wal"), Path(f"{db}-shm")))
 
     result = erase_all()
 
@@ -311,7 +315,7 @@ def test_reset_all_takes_the_checkpoint_store_with_it(
         "the conversation is still readable in the memory home after a full "
         "forget — the checkpoint database is out of the erase path"
     )
-    assert result.checkpoint_files_removed == 1, (
+    assert result.checkpoint_files_removed == on_disk >= 1, (
         f"the receipt does not name the store it deleted: {erase_summary(result)!r} — "
         f"a user asking to be forgotten has to be able to tell what the promise covered"
     )
@@ -439,3 +443,128 @@ def test_erase_session_scope_leaves_the_thread_store_alone(
     assert (memory_home.root / "checkpoints.db").exists(), (
         "/reset deleted the shared checkpoint store, taking every other thread's state with it"
     )
+
+
+# --- the production path (registry turns) ------------------------------------
+
+
+def _registry_turn(question: str, thread_id: str | None):
+    from talent_angels.assistant import run_turn
+    from tests.fakes.suite import fake_registry
+
+    return run_turn(
+        registry=fake_registry(),
+        llm_client=StubLLMClient(),
+        question=question,
+        thread_id=thread_id,
+    )
+
+
+def test_the_api_path_keeps_a_bounded_history_per_thread() -> None:
+    """The checkpointer used to be dead on the registry path the API uses."""
+    from talent_angels.assistant.turn_graph import conversation_history
+
+    first = _registry_turn("where is software developer", "session-a")
+    second = _registry_turn("where is nobody-matches-this", "session-a")
+    _registry_turn("where is software developer", "session-b")
+
+    history = conversation_history("session-a")
+    assert [memo.question for memo in history] == [
+        "where is software developer",
+        "where is nobody-matches-this",
+    ]
+    assert history[0].run_id == first.record.run_id
+    assert history[1].run_id == second.record.run_id
+    assert len(conversation_history("session-b")) == 1
+    assert conversation_history("never-used") == []
+
+
+def test_a_second_turn_never_returns_the_first_turns_answer() -> None:
+    """Live repro: turn 2 on a thread answered with turn 1's node."""
+    first = _registry_turn("where is software developer", "t")
+    second = _registry_turn("where is nobody-matches-this", "t")
+
+    assert first.result.nodes
+    assert first.answer != second.answer
+    assert second.result.nodes == [] or second.result.nodes[0].id != first.result.nodes[0].id
+
+    graph = build_graph(
+        suite=_suite(), llm_client=StubLLMClient(), suite_name="esco", thread_id="single"
+    )
+    graph.invoke({"question": "software developer"}, _thread("single"))
+    from talent_angels.assistant.graph import fresh_state_input
+
+    again = graph.invoke(fresh_state_input(question="zzz"), _thread("single"))
+    assert again["answer"] != "", "the second turn produced its own answer"
+    assert "software developer" not in again["answer"] or again["result"].nodes
+
+
+def test_forgetting_one_thread_keeps_the_others() -> None:
+    from talent_angels.assistant.checkpoint import forget_thread
+    from talent_angels.assistant.turn_graph import conversation_history
+
+    _registry_turn("where is software developer", "keep")
+    _registry_turn("where is software developer", "drop")
+
+    assert forget_thread("drop") is True
+    assert conversation_history("drop") == []
+    assert len(conversation_history("keep")) == 1
+
+
+def test_a_conversation_after_reset_all_is_written_to_a_fresh_store(memory_home) -> None:
+    from talent_angels.assistant.turn_graph import conversation_history
+    from talent_angels.memory.erase import erase_all
+
+    _registry_turn("where is software developer", "s")
+    erase_all()
+    assert not (memory_home.root / "checkpoints.db").exists()
+
+    _registry_turn("where is software developer", "s")
+    assert (memory_home.root / "checkpoints.db").exists()
+    assert len(conversation_history("s")) == 1
+
+
+def test_every_checkpointed_channel_round_trips_as_its_real_type() -> None:
+    """Unregistered types come back as plain dicts under strict msgpack.
+
+    Driven through a turn with a real (scripted) planner so PlanDraft and
+    StageUsage are in state, not only the stub path's subset.
+    """
+    from talent_angels.assistant import run_turn
+    from talent_angels.assistant.checkpoint import shared_checkpointer
+    from talent_angels.assistant.llm_plan import PlanDraft
+    from talent_angels.assistant.memo import TurnMemo
+    from talent_angels.assistant.planning import ExecutionPlan
+    from talent_angels.assistant.turn_graph import TurnRuntime, build_turn_graph, thread_config
+    from talent_angels.contracts import AgentResult
+    from talent_angels.llm import LLMResult
+    from talent_angels.runlog import StageUsage, ToolCall
+    from tests.fakes.suite import fake_registry
+    from tests.test_turn_robustness import _Scripted
+
+    client = _Scripted(
+        [
+            '{"target":"locate","subject":"software developer","kind":"occupation"}',
+            '{"tool":"search_nodes","text":"software developer","kind":"occupation"}',
+        ]
+    )
+    assert isinstance(LLMResult, type)
+    run_turn(
+        registry=fake_registry(),
+        llm_client=client,
+        question="where is software developer",
+        thread_id="types",
+    )
+
+    graph = build_turn_graph(
+        TurnRuntime(registry=fake_registry(), llm_client=StubLLMClient()),
+        checkpointer=shared_checkpointer(),
+    )
+    values = graph.get_state(thread_config("types")).values
+
+    assert isinstance(values["plan"], ExecutionPlan)
+    assert isinstance(values["plan_draft"], PlanDraft)
+    assert all(isinstance(r, AgentResult) for r in values["results"])
+    assert values["stages"] and all(isinstance(s, StageUsage) for s in values["stages"])
+    assert values["tools"] and all(isinstance(t, ToolCall) for t in values["tools"])
+    assert all(isinstance(m, TurnMemo) for m in values["history"])

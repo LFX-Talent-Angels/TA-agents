@@ -139,6 +139,23 @@ MATCH (n:Occupation) WHERE toLower(n.pref_label) CONTAINS 'nurse'
 RETURN n.pref_label LIMIT 10;
 ```
 
+### Build the vector indexes (once, free, ~1 minute)
+
+Tier-5 search (natural-language job descriptions with no keyword match) needs
+the label embeddings. The model runs locally; no key is needed.
+
+```bash
+pip install sentence-transformers
+export NEO4J_URI=bolt://localhost:7687 NEO4J_USER=neo4j NEO4J_PASSWORD=taxonomies-dev
+python -m ta_taxonomies.suites.esco.embed
+python -m ta_taxonomies.suites.onet.embed
+```
+
+Check that every node is embedded (ESCO 18,237; O*NET 31,942):
+`MATCH (n:EscoNode) RETURN count(n), count(n.label_embedding)`. Taxonomies
+before the keyset-pagination fix embedded only about half — re-run to fill the
+gaps.
+
 **Keep the graph:** never `--mode fixture` and never `pytest tests/suites/esco`
 against this Bolt URL (those tests reload the fixture and wipe full data).
 
@@ -174,27 +191,27 @@ Any OpenRouter model slug works as `openrouter/<vendor>/<model>`. The CLI
 reads `.env` by itself; you do not need `source .env`.
 
 "We covered this before" recall is on by default (`TA_RECALL=hybrid`): keyword
-recall over your past turns, backed by SQLite FTS5, with meaning-based recall
-consulted only when keyword finds nothing. Set `TA_RECALL=off` to disable it
-entirely, or `TA_RECALL=lexical` for keyword only with no network calls at all.
-It used to default to `off`; the table below is why that changed.
-`TA_RECALL=hybrid` adds meaning-based recall *only when keyword finds nothing*,
-and is now the best-measured mode:
+recall over your past turns (SQLite FTS5), with meaning-based recall consulted
+only when keyword finds nothing. Meaning-based recall uses a **free, local**
+model (`all-MiniLM-L6-v2`, the same one the taxonomy vector indexes use):
 
-| mode | unanswered | p@1 | irrelevant hits | embeddings |
-|---|---|---|---|---|
-| `lexical` | 2/36 | 0.917 | 0 | 0 |
-| `vector` (no floor) | 0/36 | 0.889 | **210** | 1 |
-| `vector` + floor | 0/36 | 0.889 | 0 | 1 |
-| `hybrid` | **0/36** | **0.917** | **0** | 0 on the common path |
+```bash
+pip install -e ".[local-embed]"   # optional; without it recall is keyword-only
+```
 
-`vector` alone is **not recommended**, and the reason is structural rather than
-the model's: a dense retriever cannot say "nothing here is relevant", so it
-answered every question with its nearest turns. A calibrated relevance floor
-gives it that ability, and the ladder stops it being consulted at all when
-keyword already has an answer. Build the index with
-`python -m talent_angels.cli recall-rebuild --vector` and read the comparison
-with `python -m talent_angels.evals.recall --vector`.
+Turns are indexed as they are recorded — no rebuild, no API key, and your
+questions never leave the machine. `TA_RECALL=lexical` is keyword only;
+`TA_RECALL=off` disables recall. Measured on the 43-query recall corpus with
+the local model:
+
+| mode | unanswered | p@1 | irrelevant hits |
+|---|---|---|---|
+| `lexical` | 2/36 | 0.917 | 0 |
+| `hybrid` (default) | **1/36** | **0.917** | **0** |
+
+Reproduce with `python -m talent_angels.evals.recall --vector --calibrate`
+(prints the score bands the relevance floor separates). `vector` alone is not
+recommended: a dense retriever never says "nothing here is relevant".
 Recall adds a small block to the system prompt only —
 `src/talent_angels/memory/retrieval.py` owns both the seam and the budget.
 
@@ -232,6 +249,12 @@ Expect JSON with `plan`, `answer`, `tools`, `tokens`, `cost_usd`.
 ```bash
 uvicorn talent_angels.api.app:app --reload
 ```
+
+Endpoints: `GET /v1/health` (per suite + LLM), `POST /v1/query`,
+`POST /v1/sessions` → `session_id` (pass it in later queries for follow-ups
+like "what skills does it need?"), `GET /v1/sessions/{id}/history`,
+`DELETE /v1/sessions/{id}` (forget one conversation). Set `TA_CORS_ORIGINS` for
+a browser UI.
 
 Open http://127.0.0.1:8000/docs and `POST /v1/query` with
 `{"question": "What essential skills does a software developer need?"}`

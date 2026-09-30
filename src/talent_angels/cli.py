@@ -501,7 +501,7 @@ def _rebuild_vector_index(db_path: Path) -> dict[str, Any]:
     from talent_angels.memory.vector_retriever import episode_text
 
     try:
-        from talent_angels.memory.embeddings import LiteLLMEmbedder
+        from talent_angels.memory.embeddings import default_embedder
         from talent_angels.memory.vector_index import SqliteVecIndex
     except ImportError as exc:  # pragma: no cover - import guard
         return {"vector_error": f"vector support is unavailable: {exc}"}
@@ -510,7 +510,7 @@ def _rebuild_vector_index(db_path: Path) -> dict[str, Any]:
     if not episodes:
         return {"vector_indexed": 0, "vector_dimensions": None}
 
-    embedder = LiteLLMEmbedder()
+    embedder = default_embedder()
     try:
         vectors = embedder.embed([episode_text(e.question, e.node_labels) for e in episodes])
     except Exception as exc:
@@ -524,7 +524,7 @@ def _rebuild_vector_index(db_path: Path) -> dict[str, Any]:
     return {
         "vector_indexed": index.count(),
         "vector_dimensions": dimensions,
-        "vector_model": embedder._model,  # noqa: SLF001 - reported, not wrapped
+        "vector_model": str(getattr(embedder, "_model", "unknown")),
     }
 
 

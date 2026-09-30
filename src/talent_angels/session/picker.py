@@ -55,6 +55,11 @@ def render_picker(
         for choice in pending:
             if choice.group_label and choice.group_label != current_group:
                 current_group = choice.group_label
+                # A blank line first: right after a list item, Markdown would
+                # otherwise fold the heading into that item ("1 web developer
+                # Software developers").
+                if lines[-1] != "":
+                    lines.append("")
                 lines.append(f"**{choice.group_label}**")
             lines.append(f"{choice.number}. {choice.node.pref_label}")
         lines.append("")
@@ -66,12 +71,17 @@ def render_picker(
             hint = f"I won't pick for you — reply with {first}–{last}."
         lines.append(hint)
 
+    # Separate paragraphs: single newlines are soft wraps in Markdown and ran
+    # the hint, the count and the source together on one line.
     if omitted > 0:
-        lines.append(
-            f"Showing {len(pending)} of {len(pending) + omitted} "
-            f"({omitted} more). The full list is in query details."
+        lines.extend(
+            [
+                "",
+                f"Showing {len(pending)} of {len(pending) + omitted} "
+                f"({omitted} more). The full list is in query details.",
+            ]
         )
 
     if include_source:
-        lines.append(f"source: {suite}")
+        lines.extend(["", f"source: {suite}"])
     return "\n".join(lines)

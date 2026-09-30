@@ -7,25 +7,32 @@ client of the same assistant).
 
 from __future__ import annotations
 
+import logging
 import os
+import sqlite3
+import uuid
 from dataclasses import dataclass, field
 
-from talent_angels.assistant.answer import build_answer
+from talent_angels.assistant.answer import NO_SUBJECT, build_answer
 from talent_angels.assistant.cache import ResultCache
-from talent_angels.assistant.graph import build_graph, dispatch_plan
-from talent_angels.assistant.honesty import honesty_warnings
+from talent_angels.assistant.graph import build_graph, fresh_state_input
 from talent_angels.assistant.intent import CAPABILITY_LOCATE, Capability
-from talent_angels.assistant.llm_plan import PlanDraft, interpret_question
-from talent_angels.assistant.merge import merge_answers
+from talent_angels.assistant.llm_plan import PlanDraft
 from talent_angels.assistant.planning import (
     ExecutionPlan,
     build_plan_for_capability,
 )
-from talent_angels.assistant.suite_select import named_unattached, select_suites
+from talent_angels.assistant.turn_graph import (
+    TurnRuntime,
+    build_turn_graph,
+    fresh_turn_input,
+    locate_one,
+    thread_config,
+)
 from talent_angels.contracts import AgentResult, NodeRef
 from talent_angels.llm import LLMClient, LLMUsage
-from talent_angels.memory.cache import CachedSuite
-from talent_angels.memory.episodes import record_episode
+from talent_angels.memory.episodes import record_episode, suite_satisfied
+from talent_angels.memory.vector_retriever import MAX_TOPIC_LABELS, index_episode
 from talent_angels.runlog import (
     EfficiencyInfo,
     GenAIUsage,
@@ -38,11 +45,26 @@ from talent_angels.runlog import (
     estimate_turn_cost_usd,
     usage_from_stage,
 )
-from talent_angels.skills.locate import ESCO_SUITE_NAME, locate
-from talent_angels.skills.locate.rank import group_and_sort_locate
-from talent_angels.suites.measured import MeasuredSuite
+from talent_angels.skills.locate import ESCO_SUITE_NAME
 from talent_angels.suites.protocol import SuiteTools
 from talent_angels.suites.registry import SuiteRegistry, UnknownSuiteError
+
+logger = logging.getLogger(__name__)
+
+#: Hard cap on the question the runtime will process. The API rejects longer
+#: input; other callers are truncated (with a warning) so a pasted document can
+#: never be sent whole to every prompt and to full-text search.
+MAX_QUESTION_CHARS = 1000
+
+NO_SUBJECT_ANSWER = NO_SUBJECT
+
+
+def normalize_question(question: str) -> tuple[str, list[str]]:
+    """Strip and bound the question. Returns the text and any warnings."""
+    text = " ".join(question.split())
+    if len(text) > MAX_QUESTION_CHARS:
+        return text[:MAX_QUESTION_CHARS].rstrip(), ["question_truncated"]
+    return text, []
 
 
 def _usage_from_stages(stages: list[StageUsage]) -> LLMUsage:
@@ -92,37 +114,6 @@ def _bound_for_suite(
     return None
 
 
-def _served_from_cache(suite: object) -> bool:
-    """True when this suite's turn read from the persistent neighbor cache.
-
-    Reports memory.cache.CachedSuite into the run-log's existing
-    ``result_cache_hit`` field so ``ta-agent report`` shows the cache working.
-    Without this the cache is invisible: a wrapper that silently stopped
-    matching would look exactly like a cold one — which is how a fully tested
-    cache layer went a whole sprint without ever firing in production.
-    """
-    return isinstance(suite, CachedSuite) and suite.hits > 0
-
-
-def _locate_one(
-    suite: SuiteTools,
-    suite_name: str,
-    question: str,
-    *,
-    kind: str | None,
-    cache: ResultCache | None,
-) -> tuple[AgentResult, list[ToolCall], bool]:
-    cached = cache.get(suite_name, CAPABILITY_LOCATE, question) if cache else None
-    if cached is not None:
-        return cached, [], True
-    measured = MeasuredSuite(suite)
-    result = locate(measured, suite_name, question, kind=kind)
-    result = group_and_sort_locate(measured, result, question, suite_name=suite_name)
-    if cache is not None:
-        cache.set(suite_name, CAPABILITY_LOCATE, question, result)
-    return result, measured.tool_calls, False
-
-
 def _dispatch_opened(
     *,
     suite: SuiteTools,
@@ -148,7 +139,7 @@ def _dispatch_opened(
 ]:
     cache_hit = False
     if force_locate:
-        result, tools, cache_hit = _locate_one(suite, suite_name, question, kind=kind, cache=cache)
+        result, tools, cache_hit = locate_one(suite, suite_name, question, kind=kind, cache=cache)
         answer, answer_stage = build_answer(result, llm_client=llm_client, mode=answer_mode)
         stages = [answer_stage] if answer_stage is not None else []
         plan = build_plan_for_capability(CAPABILITY_LOCATE, suites=(suite_name,))
@@ -164,7 +155,7 @@ def _dispatch_opened(
     )
     config = {"configurable": {"thread_id": thread_id}} if thread_id else {}
     final_state = graph.invoke(  # type: ignore[call-overload]
-        {"question": question, "kind": kind, "bound_node": bound_node}, config=config
+        fresh_state_input(question=question, kind=kind, bound_node=bound_node), config=config
     )
     return (
         final_state["capability"],
@@ -190,6 +181,7 @@ def _record_turn(
     cache_hit: bool,
     heuristic_intent: bool,
     persist: bool,
+    run_id: str | None = None,
 ) -> RunLogRecord:
     usage = _usage_from_stages(stages)
     model = os.environ.get("LLM_MODEL", "").strip() or "stub"
@@ -207,6 +199,13 @@ def _record_turn(
     )
     all_nodes = [node for item in results for node in item.nodes]
     all_warnings = [warning for item in results for warning in item.warnings]
+    topic: list[str] = []
+    for item in results:
+        # Connect: the centre node. Locate: the unique hit, or the top candidates.
+        wanted = 1 if item.capability == "connect" or "ambiguous" not in item.warnings else 2
+        for node in item.nodes[:wanted]:
+            if node.pref_label and node.pref_label not in topic:
+                topic.append(node.pref_label)
     record = RunLogRecord(
         suite=suite_label,
         plan=list(plan.capabilities),
@@ -228,12 +227,104 @@ def _record_turn(
             node_ids=[node.id for node in all_nodes],
             node_labels=[node.pref_label for node in all_nodes],
             warnings=all_warnings,
+            topic_labels=topic[:MAX_TOPIC_LABELS],
+            satisfied=any(suite_satisfied(item) for item in results),
         ),
     )
+    if run_id:
+        record = record.model_copy(update={"run_id": run_id})
     if persist:
-        append_record(record)
-        record_episode(record)
+        persist_turn_record(record)
     return record
+
+
+def with_extra_stages(record: RunLogRecord, extra: list[StageUsage]) -> RunLogRecord:
+    """The same record with LLM calls made after it was built (TUI phrasing).
+
+    Tokens, call count and cost are recomputed from the combined stages, so the
+    run-log totals match what the provider billed.
+    """
+    if not extra:
+        return record
+    stages = [*record.gen_ai.stages, *extra]
+    usage = _usage_from_stages(stages)
+    gen_ai = record.gen_ai.model_copy(
+        update={
+            "input_tokens": usage.input_tokens,
+            "output_tokens": usage.output_tokens,
+            "reasoning_tokens": usage.reasoning_tokens,
+            "cache_read_input_tokens": usage.cache_read_input_tokens,
+            "cache_creation_input_tokens": usage.cache_creation_input_tokens,
+            "calls": sum(stage.calls for stage in stages),
+            "stages": stages,
+        }
+    )
+    cost = estimate_turn_cost_usd(stages, record.gen_ai.request_model)
+    return record.model_copy(update={"gen_ai": gen_ai, "cost_usd": cost})
+
+
+def persist_turn_record(record: RunLogRecord) -> None:
+    """Append the run-log line and the episode. Never fails the turn.
+
+    The answer has already been computed; a locked, corrupt or read-only store
+    must degrade to a logged warning, not turn a good answer into a 500.
+    """
+    try:
+        append_record(record)
+    except OSError:
+        logger.warning("run-log append failed", exc_info=True)
+    try:
+        record_episode(record)
+    except (sqlite3.Error, OSError):
+        logger.warning("episode record failed", exc_info=True)
+        return
+    index_episode(
+        record.run_id,
+        record.question,
+        record.result.topic_labels or record.result.node_labels,
+    )
+
+
+def _early_turn(
+    *,
+    capability: Capability,
+    suite_name: str,
+    question: str,
+    warnings: list[str],
+    answer: str,
+    persist: bool,
+    stages: list[StageUsage] | None = None,
+    plan_draft: PlanDraft | None = None,
+    heuristic_intent: bool = True,
+) -> TurnOutcome:
+    """A turn that stops before any suite is queried — still logged (rule 7)."""
+    result = AgentResult(capability=capability, suite=suite_name, warnings=warnings)
+    plan = build_plan_for_capability(capability, suites=(suite_name,))
+    record = _record_turn(
+        suite_label=suite_name,
+        plan=plan,
+        question=question,
+        result=result,
+        results=(result,),
+        stages=list(stages or []),
+        tools=[],
+        cache_hit=False,
+        heuristic_intent=heuristic_intent,
+        persist=persist,
+    )
+    return TurnOutcome(
+        capability=capability,
+        plan=plan,
+        result=result,
+        answer=answer,
+        record=record,
+        results=(result,),
+        plan_draft=plan_draft,
+    )
+
+
+def _has_bound(bound_node: NodeRef | None, bound_nodes: dict[str, NodeRef] | None) -> bool:
+    return bound_node is not None or bool(bound_nodes)
 
 
 def run_turn(
@@ -265,9 +356,93 @@ def run_turn(
     capability cost measurement (MVP plan Sec 2.3). `cache`, when given, is
     only consulted on the `force_locate` path — the efficiency A/B experiment
     (MVP plan Sec 2.7) targets Locate specifically.
+
+    Robustness contract: every turn returns a typed outcome and writes a
+    run-log record. An empty question is answered without any model call; an
+    unexpected failure degrades to a ``turn_failed:<Type>`` warning instead of
+    raising. Only ``UnknownSuiteError`` (a caller error) propagates.
     """
     if force_locate and force_capability not in (None, CAPABILITY_LOCATE):
         raise ValueError("force_locate cannot be combined with another forced capability")
+    if registry is None and suite is None:
+        raise ValueError("run_turn requires registry or suite")
+    question, input_warnings = normalize_question(question)
+    default_suite = registry.default if registry is not None else suite_name
+    if not question:
+        return _early_turn(
+            capability=force_capability or CAPABILITY_LOCATE,
+            suite_name=default_suite,
+            question=question,
+            warnings=["no_subject"],
+            answer=NO_SUBJECT_ANSWER,
+            persist=persist,
+        )
+    try:
+        outcome = _run_turn_checked(
+            llm_client=llm_client,
+            question=question,
+            suite=suite,
+            suite_name=suite_name,
+            registry=registry,
+            suite_override=suite_override,
+            kind=kind,
+            answer_mode=answer_mode,
+            force_locate=force_locate,
+            force_capability=force_capability,
+            cache=cache,
+            bound_node=bound_node,
+            bound_nodes=bound_nodes,
+            persist=persist,
+            thread_id=thread_id,
+            input_warnings=input_warnings,
+        )
+    except UnknownSuiteError:
+        raise
+    except Exception as exc:  # noqa: BLE001 — a turn must degrade, never crash the edge
+        logger.exception("turn failed")
+        return _failed_turn(exc, question, default_suite, force_capability, persist)
+    return outcome
+
+
+def _failed_turn(
+    exc: Exception,
+    question: str,
+    suite_name: str,
+    force_capability: Capability | None,
+    persist: bool,
+) -> TurnOutcome:
+    return _early_turn(
+        capability=force_capability or CAPABILITY_LOCATE,
+        suite_name=suite_name,
+        question=question,
+        warnings=[f"turn_failed:{type(exc).__name__}"],
+        answer=(
+            "Something went wrong while answering that, and nothing was looked up. "
+            "Please try again; if it keeps happening, the run log has the details."
+        ),
+        persist=persist,
+    )
+
+
+def _run_turn_checked(
+    *,
+    llm_client: LLMClient,
+    question: str,
+    suite: SuiteTools | None,
+    suite_name: str,
+    registry: SuiteRegistry | None,
+    suite_override: str | None,
+    kind: str | None,
+    answer_mode: str,
+    force_locate: bool,
+    force_capability: Capability | None,
+    cache: ResultCache | None,
+    bound_node: NodeRef | None,
+    bound_nodes: dict[str, NodeRef] | None,
+    persist: bool,
+    thread_id: str | None,
+    input_warnings: list[str],
+) -> TurnOutcome:
     if registry is None:
         if suite is None:
             raise ValueError("run_turn requires registry or suite")
@@ -314,120 +489,49 @@ def run_turn(
             results=(result,),
         )
 
-    selected = select_suites(
-        available=registry.available,
-        override=suite_override,
-        question=question,
+    from talent_angels.assistant.checkpoint import shared_checkpointer
+
+    run_id = str(uuid.uuid4())
+    runtime = TurnRuntime(
+        registry=registry, llm_client=llm_client, answer_mode=answer_mode, cache=cache
     )
-    extra_warnings: list[str] = [
-        f"suite_not_attached:{name}" for name in named_unattached(question, registry.available)
-    ]
-    collected: list[AgentResult] = []
-    tools = []
-    stages = []
-    cache_hit = False
-    selected_force = CAPABILITY_LOCATE if force_locate else force_capability
-
-    interpreted = interpret_question(
-        question,
-        suites=selected,
-        llm_client=llm_client,
-        forced_capability=selected_force,
+    graph = build_turn_graph(runtime, checkpointer=shared_checkpointer() if thread_id else None)
+    final = graph.invoke(  # type: ignore[call-overload]
+        fresh_turn_input(
+            run_id=run_id,
+            question=question,
+            kind=kind,
+            bound_node=bound_node,
+            bound_nodes=bound_nodes,
+            force_capability=force_capability,
+            force_locate=force_locate,
+            suite_override=suite_override,
+            input_warnings=input_warnings,
+        ),
+        config=thread_config(thread_id) if thread_id else {},
     )
-    if interpreted.stage is not None:
-        stages.append(interpreted.stage)
-    plan = interpreted.plan
-    capability = plan.intent.target
-    seed_state = {
-        "question": question,
-        "kind": kind,
-        "bound_node": bound_node,
-        "capability": capability,
-        "plan": plan,
-        "plan_draft": interpreted.draft,
-        "heuristic_intent": interpreted.heuristic,
-        "llm_stages": stages,
-    }
-    # dispatch_plan returns the *accumulated* llm_stages (shared seed + its own).
-    # Slice from the baseline taken right before each suite so we only append the
-    # stages that suite actually added — never re-append earlier suites' stages.
-    for name in selected:
-        prior_stages_len = len(stages)
-        per_state = {
-            **seed_state,
-            "bound_node": _bound_for_suite(name, bound_node, bound_nodes),
-        }
-        try:
-            with registry.open(name) as runtime:
-                if force_locate:
-                    one, one_tools, one_hit = _locate_one(
-                        runtime.suite, name, question, kind=kind, cache=cache
-                    )
-                    cache_hit = cache_hit or one_hit
-                    collected.append(one)
-                    tools.extend(one_tools)
-                    continue
-                dispatched = dispatch_plan(
-                    per_state,  # type: ignore[arg-type]
-                    suite=runtime.suite,
-                    suite_name=name,
-                    llm_client=llm_client,
-                    bound_node=_bound_for_suite(name, bound_node, bound_nodes),
-                )
-                cache_hit = cache_hit or _served_from_cache(runtime.suite)
-                collected.append(dispatched["result"])
-                tools.extend(dispatched.get("tool_calls") or [])
-                stages.extend((dispatched.get("llm_stages") or [])[prior_stages_len:])
-        except UnknownSuiteError:
-            raise
-        except Exception:  # noqa: BLE001 — a down suite must not fail the turn
-            extra_warnings.append(f"suite_unavailable:{name}")
-
-    result_tuple = tuple(collected)
-    extra_warnings.extend(honesty_warnings(result_tuple))
-    if not result_tuple:
-        empty = AgentResult(
-            capability=capability,
-            suite=selected[0] if selected else suite_name,
-            warnings=extra_warnings or ["not_found"],
-        )
-        result_tuple = (empty,)
-        answer = merge_answers((), extra_warnings=extra_warnings)
-        answer_stage = None
-    elif len(result_tuple) == 1 and not extra_warnings:
-        answer, answer_stage = build_answer(
-            result_tuple[0], llm_client=llm_client, mode=answer_mode
-        )
-    else:
-        answer = merge_answers(result_tuple, extra_warnings=extra_warnings)
-        answer_stage = None
-
-    if answer_stage is not None:
-        stages.append(answer_stage)
-
+    final_plan: ExecutionPlan = final["plan"]
+    result_tuple = tuple(final["results"])
     primary = result_tuple[0]
-    if extra_warnings:
-        primary = primary.model_copy(update={"warnings": [*primary.warnings, *extra_warnings]})
-        result_tuple = (primary, *result_tuple[1:])
-
     record = _record_turn(
         suite_label=",".join(item.suite for item in result_tuple),
-        plan=plan,
+        plan=final_plan,
         question=question,
         result=primary,
         results=result_tuple,
-        stages=stages,
-        tools=tools,
-        cache_hit=cache_hit,
-        heuristic_intent=interpreted.heuristic,
+        stages=list(final.get("stages") or []),
+        tools=list(final.get("tools") or []),
+        cache_hit=bool(final.get("cache_hit")),
+        heuristic_intent=bool(final.get("heuristic_intent", True)),
         persist=persist,
+        run_id=run_id,
     )
     return TurnOutcome(
-        capability=capability,
-        plan=plan,
+        capability=final_plan.intent.target,
+        plan=final_plan,
         result=primary,
-        answer=answer,
+        answer=final["answer"],
         record=record,
         results=result_tuple,
-        plan_draft=interpreted.draft,
+        plan_draft=final.get("plan_draft"),
     )

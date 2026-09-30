@@ -26,7 +26,7 @@ branch carried the code.
 
 ## Decision
 
-**The agent's memory is a single directory under the user's home, and its
+**The agent's memory is a single directory (the memory home), and its
 facts are SQLite-backed, typed, and node-ID-only.** Concretely:
 
 **1. The memory home is project-local, with an env override.** `.ta-agents/`
@@ -142,16 +142,14 @@ remember the cache masks fresh Neo4j round-trips until it expires.
 
 **Follow-ups.**
 
-- Semantic-layer decision (sqlite-vec vs Chroma) after episodes are green —
-  this ADR does not decide it. **Still open, and now measured first:** recall
-  ships lexical-only (`memory/fts_retriever.py`), and `evals/recall.py` is the
-  harness that produces the number a semantic layer would have to beat.
+- ~~Semantic-layer decision (sqlite-vec vs Chroma).~~ **Decided: sqlite-vec in
+  `memory.db`** (decision 6), with the local embedder (amendment 8).
 - Automated pruning of stale `MEMORY.md` notes (still open, plan session
   notes §2).
 - ~~Episodic recall surfaced to the assistant: "we covered this last
   Thursday" is a query over `episodes`, not a new store.~~ **Done** — as a
   query over `episodes`, with no new store, behind the seam in
-  `memory/retrieval.py` and switched by `TA_RECALL=lexical` (default `off`).
+  `memory/retrieval.py` and switched by `TA_RECALL` (default `hybrid`, see decision 7).
   "Last Thursday" specifically is *not* delivered: the lexical retriever ranks
   by bm25 over content words, so a time-based question is the case the deferred
   vector path would serve better — and, per decision 6, the vector path was
@@ -164,6 +162,9 @@ graph data — the keying must always include node + rel_types, and expiry must
 be checked at read. Episode rows accumulate in `memory.db` without pruning by
 design; if the file grows unbounded it becomes an index we have to bound —
 acceptable until the sniffed pilot shows otherwise.
+
+## Amendments
+
 **7. Recall defaults to `hybrid`, not `off` (reverses an earlier decision).**
 The original choice was `off`, on the sound reasoning that a feature which
 changes what the app says back to you should not surprise anyone who did not ask
@@ -184,3 +185,43 @@ The invariant that protects a user who never wanted recall is unchanged and now
 tested as such: **a question with nothing to recall leaves the system prompt
 byte-identical.** That is the promise the old `off` default was really making,
 and it survives the flip.
+
+**8. The embedder is local and free; the index is kept current (2026-09-30).**
+Decision 6 measured vector recall with a paid OpenAI model, so `hybrid` could
+only use its vector rung on an install with a key *and* a manual
+`recall-rebuild`, and no turn was embedded after that — in practice the default
+was keyword-only. Three changes, each measured:
+
+* **Local embedder.** `all-MiniLM-L6-v2` (sentence-transformers; the model the
+  taxonomy suites already use) is the default when installed. No network, no
+  bill, and the user's words never leave the process — which is what makes a
+  vector default defensible, including for the B2B pilot. A hosted model is an
+  explicit `TA_EMBEDDING_MODEL` choice.
+* **Cosine, and a per-model floor.** The `vec0` table used sqlite-vec's
+  default L2 metric while the floor (-1.10) was reasoned about as cosine; that
+  floor does not transfer. The table is now created with
+  `distance_metric=cosine` and floors are per model. For the local model:
+  unrelated queries top out in [-0.899, -0.794], every gold hit scores in
+  [-0.515, -0.009]; the floor is **-0.70**. Result on the same 43-query
+  corpus: **hybrid 1/36 unanswered (keyword 2/36), p@1 0.917, 0 irrelevant
+  hits.** (The paid model's 0/36 is not reproduced locally: one typo query,
+  "radiografer", stays unanswered.) Reproduce with
+  `python -m talent_angels.evals.recall --vector --calibrate`.
+* **Embed on write, topic only.** Each recorded turn is added to the vector
+  index (local embedder only, so recording never spends money), with a
+  backfill on the first write. Episodes keep the question plus at most three
+  topic labels (the resolved node per suite) rather than every cited
+  neighbour: an O*NET connect had indexed 400+ labels, and "I want to learn
+  Python" recalled a dentist turn through one of them. `satisfied` is computed
+  per suite.
+
+**9. The memory home is resolved per call (2026-09-30).** `TA_AGENTS_HOME`,
+else `<repo>/.ta-agents` in a source checkout, else `~/.ta-agents` for an
+installed package — never under `site-packages`, and nothing is created at
+import. Sessions, the run-log and query details live under the same home, so
+`/reset-all` erases one place regardless of the working directory.
+
+**Still open.** Memory is one store per home: the API serves every caller
+from the same profile, notes and episodes. Per-user scoping (a principal id
+on every record, per-user profile files, principal-scoped erase) is required
+before a multi-user deployment and is not built.

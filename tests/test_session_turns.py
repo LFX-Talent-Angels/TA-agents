@@ -1486,7 +1486,7 @@ def test_ambiguous_multi_suite_connect_never_calls_the_llm_narrative() -> None:
     # the picker's own tightly-scoped, already-safe intro call fired.
     assert not any("phrase taxonomy map facts" in prompt for prompt in client.system_prompts)
     # The safe, deterministic sentence is exactly synthesize_structured()'s output.
-    assert "On the attached maps this lines up with O*NET has several matches." in reply.text
+    assert "O*NET: several matches" in reply.text
     # The picker itself still renders every candidate.
     assert "Nurse Kind 0" in reply.text
     assert "I won't pick for you" in reply.text

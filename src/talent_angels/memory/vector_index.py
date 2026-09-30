@@ -183,6 +183,10 @@ class SqliteVecIndex:
         digits = rest[: rest.find("]")] if "]" in rest else ""
         return int(digits) if digits.isdigit() else None
 
+    def _is_cosine(self, conn: sqlite3.Connection) -> bool:
+        row = conn.execute("SELECT sql FROM sqlite_master WHERE name = ?", (_TABLE,)).fetchone()
+        return bool(row and row[0] and "distance_metric=cosine" in row[0].lower())
+
     def _ensure_table(self, conn: sqlite3.Connection) -> None:
         """Create the index table, or raise if it is a different width.
 
@@ -193,6 +197,11 @@ class SqliteVecIndex:
         instead.
         """
         existing = self._existing_dimensions(conn)
+        if existing is not None and not self._is_cosine(conn):
+            raise RuntimeError(
+                f"the existing {_TABLE} index uses L2 distance, but the relevance floor "
+                f"is calibrated for cosine. Run `recall-rebuild --vector` to rebuild it."
+            )
         if existing is not None:
             if existing != self._dimensions:
                 raise RuntimeError(
@@ -201,9 +210,12 @@ class SqliteVecIndex:
                     f"Run `recall-rebuild` to rebuild the index for the current model."
                 )
             return
+        # Cosine, explicitly: vec0 defaults to L2, and the relevance floor in
+        # vector_retriever is a cosine-distance threshold.
         conn.execute(
             f"CREATE VIRTUAL TABLE {_TABLE} USING vec0("
-            f"run_id TEXT PRIMARY KEY, embedding FLOAT[{self._dimensions}])"
+            f"run_id TEXT PRIMARY KEY, "
+            f"embedding FLOAT[{self._dimensions}] distance_metric=cosine)"
         )
         conn.commit()
 
@@ -262,7 +274,7 @@ class SqliteVecIndex:
             exists = conn.execute(
                 "SELECT 1 FROM sqlite_master WHERE name = ?", (_TABLE,)
             ).fetchone()
-            if exists is None:
+            if exists is None or not self._is_cosine(conn):
                 return []
             self._warn_if_stale(conn)
             rows = conn.execute(_SELECT, (sqlite_vec_float32(vector), limit)).fetchall()
@@ -290,7 +302,7 @@ class SqliteVecIndex:
             exists = conn.execute(
                 "SELECT 1 FROM sqlite_master WHERE name = ?", (_TABLE,)
             ).fetchone()
-            if exists is None:
+            if exists is None or not self._is_cosine(conn):
                 return []
             self._warn_if_stale(conn)
             rows = conn.execute(_SELECT, (sqlite_vec_float32(vector), limit)).fetchall()
@@ -321,6 +333,23 @@ class SqliteVecIndex:
         finally:
             conn.close()
         return row is not None
+
+    def missing_run_ids(self, *, limit: int) -> list[str]:
+        """Episodes not yet in the index, oldest first. [] when unreadable."""
+        conn = self._connect(create=True)
+        if conn is None:
+            return []
+        try:
+            rows = conn.execute(
+                f"SELECT run_id FROM episodes WHERE run_id NOT IN "
+                f"(SELECT run_id FROM {_TABLE}) ORDER BY rowid LIMIT ?",
+                (limit,),
+            ).fetchall()
+        except sqlite3.Error:
+            return []
+        finally:
+            conn.close()
+        return [row[0] for row in rows]
 
     def count(self) -> int:
         """How many episodes are in the index. Zero when there is no index."""

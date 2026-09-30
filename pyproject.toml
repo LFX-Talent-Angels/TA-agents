@@ -14,8 +14,9 @@ dependencies = [
   # Durable checkpointer for the API's per-session threads. The graph state a
   # `thread_id` enables has to outlive the process, and langgraph's own
   # MemorySaver (what this replaced) is a dict that dies with the interpreter.
-  # Pulls aiosqlite + sqlite-vec transitively; neither is imported here.
   "langgraph-checkpoint-sqlite",
+  # Vector episode recall stores embeddings in memory.db (memory/vector_index.py).
+  "sqlite-vec",
   "anthropic",
   "fastapi",
   "uvicorn",
@@ -26,8 +27,6 @@ dependencies = [
   "python-dotenv",
   "pyyaml",
   "rich>=13",
-  # "ta-taxonomies" — the suite-contract library (sibling repo), added once
-  # its first version is published/installable (ADR-0004).
 ]
 
 [project.scripts]
@@ -40,6 +39,20 @@ dev = [
   "ruff>=0.6",
   "mypy>=1.10",
 ]
+# The suite-contract library (sibling repo, ADR-0004) plus what the concrete
+# ESCO/O*NET adapters need. Pinned to the commit this runtime is tested
+# against: OnetSuite, SuiteSchema and hybrid search are not on TA-taxonomies
+# `dev` yet (TA-taxonomies PR #16). Bump to the merge commit when it lands.
+# For local work prefer `pip install -e ../TA-taxonomies`.
+taxonomies = [
+  "ta-taxonomies @ git+https://github.com/LFX-Talent-Angels/TA-taxonomies.git@8e002c68866e6822bb276c4316ce90152cf384ca",
+  "openpyxl",
+]
+# Free, local embeddings (all-MiniLM-L6-v2, CPU): the same model the suites use
+# for their vector indexes, and the no-cost backend for vector episode recall.
+local-embed = [
+  "sentence-transformers>=3",
+]
 
 [project.urls]
 Homepage = "https://github.com/LFX-Talent-Angels"
@@ -48,6 +61,9 @@ Workspace = "https://github.com/LFX-Talent-Angels/TA-workspace"
 [build-system]
 requires = ["hatchling"]
 build-backend = "hatchling.build"
+
+[tool.hatch.metadata]
+allow-direct-references = true
 
 [tool.hatch.build.targets.wheel]
 packages = ["src/talent_angels"]
@@ -63,6 +79,13 @@ select = ["E", "F", "I", "UP", "B"]
 python_version = "3.11"
 packages = ["talent_angels"]
 ignore_missing_imports = true
+
+# Heavy optional ML stacks: their stubs use 3.12-only syntax, which mypy rejects
+# under python_version=3.11. We only call them through narrow typed seams.
+[[tool.mypy.overrides]]
+module = ["numpy", "numpy.*", "torch", "torch.*", "sentence_transformers", "sentence_transformers.*", "transformers", "transformers.*"]
+follow_imports = "skip"
+follow_imports_for_stubs = true
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]

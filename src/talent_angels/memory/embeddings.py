@@ -28,13 +28,15 @@ which is the same bargain ``recall_prefix`` makes.
 on the interactive path, before the model is called. On the 30-turn corpus that
 is pennies; on a long history it is still pennies, because the *index* is built
 once and the *query* is a single short string. The latency is the part that
-matters, and it is why vector recall is opt-in rather than the default.
+matters for a hosted model, which is why the default is the local embedder
+(``LocalEmbedder``): no network, no bill, milliseconds per query.
 """
 
 from __future__ import annotations
 
 import logging
 import os
+import threading
 from collections.abc import Sequence
 from typing import Any, Protocol, runtime_checkable
 
@@ -255,6 +257,108 @@ class LiteLLMEmbedder:
                     )
             out.extend(vectors)
         return out
+
+
+#: The free, local default: the same model the taxonomy suites use for their
+#: vector indexes (``ta_taxonomies.suites.*.embed``). 384 dimensions, Apache-2.0,
+#: ~80 MB, a few milliseconds per query on CPU, no network and no bill.
+LOCAL_EMBEDDING_MODEL = "all-MiniLM-L6-v2"
+#: ``TA_EMBEDDING_MODEL`` value that selects it explicitly.
+LOCAL_MODEL_ALIASES = frozenset({"local", LOCAL_EMBEDDING_MODEL, f"local/{LOCAL_EMBEDDING_MODEL}"})
+
+_LOCAL_MODELS: dict[str, Any] = {}
+_LOCAL_LOCK = threading.Lock()
+
+
+def local_embeddings_available() -> bool:
+    try:
+        import sentence_transformers  # noqa: F401
+    except ImportError:
+        return False
+    return True
+
+
+class LocalEmbedder:
+    """An ``Embedder`` that runs on this machine (sentence-transformers).
+
+    Free and private: the user's question never leaves the process, which is
+    what makes vector recall a sensible *default* rather than an opt-in that
+    ships a user's words to a provider. The model is loaded once per process,
+    on first use, and shared across threads.
+    """
+
+    def __init__(self, *, model: str = LOCAL_EMBEDDING_MODEL) -> None:
+        self._model = model
+        self._dimensions: int | None = None
+
+    def _encoder(self) -> Any:
+        with _LOCAL_LOCK:
+            encoder = _LOCAL_MODELS.get(self._model)
+            if encoder is None:
+                from sentence_transformers import SentenceTransformer
+
+                encoder = SentenceTransformer(self._model)
+                _LOCAL_MODELS[self._model] = encoder
+            return encoder
+
+    @property
+    def dimensions(self) -> int:
+        if self._dimensions is None:
+            size = self._encoder().get_sentence_embedding_dimension()
+            if not size:
+                raise RuntimeError("local embedding model did not report a dimension")
+            self._dimensions = int(size)
+        return self._dimensions
+
+    @property
+    def configured(self) -> bool:
+        return local_embeddings_available()
+
+    def embed(self, texts: Sequence[str]) -> list[list[float]]:
+        if not texts:
+            return []
+        vectors = self._encoder().encode(
+            list(texts), normalize_embeddings=True, show_progress_bar=False
+        )
+        out = [[float(x) for x in vector] for vector in vectors]
+        self._dimensions = len(out[0])
+        return out
+
+
+class DisabledEmbedder:
+    """``TA_EMBEDDING_MODEL=none``: no embeddings at all (keyword recall only)."""
+
+    _model = "none"
+
+    @property
+    def dimensions(self) -> int:
+        raise RuntimeError("embeddings are disabled (TA_EMBEDDING_MODEL=none)")
+
+    @property
+    def configured(self) -> bool:
+        return False
+
+    def embed(self, texts: Sequence[str]) -> list[list[float]]:
+        raise RuntimeError("embeddings are disabled (TA_EMBEDDING_MODEL=none)")
+
+
+def default_embedder() -> Embedder:
+    """The embedder this install uses for episode recall.
+
+    ``TA_EMBEDDING_MODEL`` unset (or ``local``): the local model when
+    sentence-transformers is installed (``pip install -e '.[local-embed]'``),
+    else the hosted default. Any other value is a LiteLLM embedding model
+    (paid, network) and is used as given.
+    """
+    raw = (os.environ.get(_MODEL_ENV) or "").strip()
+    if raw.lower() in {"none", "off"}:
+        return DisabledEmbedder()
+    if (not raw or raw in LOCAL_MODEL_ALIASES) and local_embeddings_available():
+        return LocalEmbedder()
+    if raw in LOCAL_MODEL_ALIASES:
+        # Asked for local but it is not installed: never silently go paid.
+        return LocalEmbedder()
+    return LiteLLMEmbedder(model=raw or None)
 
 
 class StaticEmbedder:

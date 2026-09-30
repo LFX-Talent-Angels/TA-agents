@@ -276,7 +276,7 @@ def test_phrase_chat_injects_user_profile(tmp_path: Path) -> None:
         "STANDING[onet]: Software Developers  [onet:15-1252.00]   since: 2026-09-20\n"
     )
     client = ScriptedClient("You were looking at software developers.")
-    with patch("talent_angels.memory.profile.USER_MD", user_md):
+    with patch("talent_angels.memory.profile.user_md", lambda: user_md):
         phrase_chat(
             client,
             user_text="what was I looking for?",
@@ -292,7 +292,7 @@ def test_phrase_chat_no_profile_when_user_md_absent(tmp_path: Path) -> None:
     """phrase_chat must not crash and must omit profile block when USER.md is absent."""
     absent_md = tmp_path / "USER.md"  # does not exist
     client = ScriptedClient("No match found.")
-    with patch("talent_angels.memory.profile.USER_MD", absent_md):
+    with patch("talent_angels.memory.profile.user_md", lambda: absent_md):
         phrase_chat(
             client,
             user_text="pharmacist",
@@ -322,7 +322,7 @@ def test_phrase_map_injects_user_profile(tmp_path: Path) -> None:
     result = AgentResult(capability="locate", suite="onet", nodes=[node], confidence=0.95)
     client = ScriptedClient("Software Developers is on the map.")
 
-    with patch("talent_angels.memory.profile.USER_MD", user_md):
+    with patch("talent_angels.memory.profile.user_md", lambda: user_md):
         phrase_map(
             client,
             question="software developer",
@@ -351,7 +351,7 @@ def test_phrase_map_no_profile_when_user_md_absent(tmp_path: Path) -> None:
     result = AgentResult(capability="locate", suite="onet", nodes=[node], confidence=0.90)
     client = ScriptedClient("Nurse is on the map.")
 
-    with patch("talent_angels.memory.profile.USER_MD", absent_md):
+    with patch("talent_angels.memory.profile.user_md", lambda: absent_md):
         phrase_map(
             client,
             question="nurse",

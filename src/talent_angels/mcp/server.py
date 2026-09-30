@@ -261,6 +261,17 @@ do not retry it against another one), `no_neighbors`, or
             ),
         ] = None,
         suite: SuiteArg = None,
+        limit: Annotated[
+            int,
+            Field(
+                ge=1,
+                le=500,
+                description=(
+                    "Most neighbours to return, ranked by edge importance (O*NET) then "
+                    "hot/in-demand technology. What is cut is counted in `pruning`."
+                ),
+            ),
+        ] = 50,
     ) -> NeighborsPayload:
         session = ctx.request_context.lifespan_context
         runtime, name, warnings = _open_runtime(session, suite)
@@ -274,7 +285,7 @@ do not retry it against another one), `no_neighbors`, or
                 center_id=node_id,
                 warnings=_operation_warning(exc),
             )
-        return neighbors_payload(result, suite=runtime.name, center_id=node_id)
+        return neighbors_payload(result, suite=runtime.name, center_id=node_id, limit=limit)
 
     @server.tool(
         name="enumerate_paths",

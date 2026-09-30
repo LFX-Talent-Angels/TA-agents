@@ -1,14 +1,16 @@
-"""File-backed session save/load under data/local/sessions (or TA_SESSIONS_DIR)."""
+"""File-backed session save/load under ``<memory home>/sessions`` (or TA_SESSIONS_DIR)."""
 
 from __future__ import annotations
 
 import json
 import os
+import re
 from datetime import UTC, datetime
 from pathlib import Path
 from uuid import uuid4
 
 from talent_angels.contracts import AgentResult, NodeRef
+from talent_angels.memory.paths import default_sessions_dir
 from talent_angels.session.models import (
     LastBinding,
     PendingChoice,
@@ -23,18 +25,39 @@ _BINDING = "binding.json"
 
 
 def sessions_dir() -> Path:
-    raw = os.environ.get("TA_SESSIONS_DIR", "data/local/sessions")
-    return Path(raw)
+    """``TA_SESSIONS_DIR`` or ``<memory home>/sessions`` — never cwd-relative."""
+    raw = os.environ.get("TA_SESSIONS_DIR", "").strip()
+    return Path(raw).expanduser() if raw else default_sessions_dir()
+
+
+_SESSION_KEY = re.compile(r"^[A-Za-z0-9][A-Za-z0-9_-]{0,63}$")
+
+
+def validate_session_key(key: str) -> str:
+    """A session key is a directory name: no separators, no dots, bounded."""
+    if not _SESSION_KEY.fullmatch(key):
+        raise ValueError(f"invalid session id {key!r}")
+    return key
+
+
+def session_exists(key: str) -> bool:
+    try:
+        validate_session_key(key)
+    except ValueError:
+        return False
+    return (sessions_dir() / key / _META).is_file()
 
 
 def new_session() -> SessionState:
     return SessionState(session_id=uuid4().hex[:12])
 
 
-def save_session(state: SessionState, *, name: str | None = None) -> Path:
+def save_session(state: SessionState, *, name: str | None = None, update_last: bool = True) -> Path:
+    """Persist a session. ``update_last=False`` for API sessions, so a web
+    client's conversation never becomes the one the TUI resumes."""
     if name is not None:
         state.name = name
-    key = state.name or state.session_id
+    key = validate_session_key(state.name or state.session_id)
     root = sessions_dir()
     path = root / key
     path.mkdir(parents=True, exist_ok=True)
@@ -59,12 +82,13 @@ def save_session(state: SessionState, *, name: str | None = None) -> Path:
     }
     (path / _BINDING).write_text(json.dumps(binding_payload, indent=2) + "\n", encoding="utf-8")
 
-    (root / _LAST_POINTER).write_text(key + "\n", encoding="utf-8")
+    if update_last:
+        (root / _LAST_POINTER).write_text(key + "\n", encoding="utf-8")
     return path
 
 
 def load_session(name: str) -> SessionState:
-    path = sessions_dir() / name
+    path = sessions_dir() / validate_session_key(name)
     meta = json.loads((path / _META).read_text(encoding="utf-8"))
 
     transcript: list[TranscriptLine] = []

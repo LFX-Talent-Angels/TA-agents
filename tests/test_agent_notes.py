@@ -6,7 +6,7 @@ from unittest.mock import patch
 def test_append_note_dedupes_exact(tmp_path):
     from talent_angels.memory import agent_notes as notes
 
-    with patch.object(notes, "MEMORY_MD", tmp_path / "MEMORY.md"):
+    with patch.object(notes, "memory_md", lambda: tmp_path / "MEMORY.md"):
         notes.append_note("entry one")
         notes.append_note("entry one")
         content = (tmp_path / "MEMORY.md").read_text()
@@ -17,7 +17,7 @@ def test_append_note_evicts_oldest_when_over_cap(tmp_path):
     from talent_angels.memory import agent_notes as notes
 
     with (
-        patch.object(notes, "MEMORY_MD", tmp_path / "MEMORY.md"),
+        patch.object(notes, "memory_md", lambda: tmp_path / "MEMORY.md"),
         patch.object(notes, "MEMORY_MAX_CHARS", 40),
     ):
         notes.append_note("a" * 25)

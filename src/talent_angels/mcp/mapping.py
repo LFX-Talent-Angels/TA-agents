@@ -124,14 +124,51 @@ def search_payload(
     )
 
 
-def neighbors_payload(result: NeighborResult, *, suite: str, center_id: str) -> NeighborsPayload:
+def _edge_rank(edge: object) -> tuple[float, int]:
+    props = getattr(edge, "properties", None) or {}
+    importance = props.get("importance")
+    weight = -float(importance) if isinstance(importance, int | float) else 0.0
+    flagged = props.get("hot_technology") == "Y" or props.get("in_demand") == "Y"
+    return (weight, 0 if flagged else 1)
+
+
+def neighbors_payload(
+    result: NeighborResult, *, suite: str, center_id: str, limit: int | None = None
+) -> NeighborsPayload:
+    """Map one hop; with ``limit``, keep the top neighbours and count the rest.
+
+    Ranking is deterministic (O*NET importance, then hot/in-demand technology,
+    then suite order), and what is cut is reported as counts, not dropped
+    silently — ARCHITECTURE "truncate at the tool edge". Unbounded, an O*NET
+    occupation's hop was ~1.4 MB in one tool result.
+    """
+    edges = list(result.edges)
+    neighbour_ids: list[str] = []
+    for edge in sorted(edges, key=_edge_rank):
+        other = edge.to_id if edge.from_id == center_id else edge.from_id
+        if other not in neighbour_ids:
+            neighbour_ids.append(other)
+    pruning = None
+    warnings = list(result.warnings)
+    if limit is not None and len(neighbour_ids) > limit:
+        kept = set(neighbour_ids[:limit])
+        edges = [e for e in edges if (e.to_id if e.from_id == center_id else e.from_id) in kept]
+        pruning = PruningRef(
+            considered=len(neighbour_ids), returned=limit, pruned=len(neighbour_ids) - limit
+        )
+        warnings.append(f"truncated:{len(neighbour_ids) - limit}")
+    keep_nodes = {center_id} | {e.to_id for e in edges} | {e.from_id for e in edges}
+    nodes = [n for n in result.nodes if n.id in keep_nodes or pruning is None]
+    order = {nid: i for i, nid in enumerate(neighbour_ids)}
+    nodes.sort(key=lambda n: -1 if n.id == center_id else order.get(n.id, len(order)))
     return NeighborsPayload(
         suite=suite,
         center_id=center_id,
-        nodes=[node_ref(node, suite) for node in result.nodes],
-        edges=[edge_ref(edge, suite) for edge in result.edges],
+        nodes=[node_ref(node, suite) for node in nodes],
+        edges=[edge_ref(edge, suite) for edge in sorted(edges, key=_edge_rank)],
         evidence=_evidence(result.evidence, suite),
-        warnings=list(result.warnings),
+        warnings=warnings,
+        pruning=pruning,
     )
 
 

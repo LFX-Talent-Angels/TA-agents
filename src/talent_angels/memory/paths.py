@@ -1,42 +1,92 @@
-"""Where the agent's memory lives on disk.
+"""Where the agent's personal data lives on disk — one home, resolved per call.
 
-The home defaults to a directory **inside the project** (``.ta-agents/`` at the
-repository root) rather than ``~/.ta-agents``, so the memory — SQLite stores,
-``USER.md``, ``MEMORY.md``, checkpoints — sits where a developer already looks,
-travels with the checkout, and is covered by the repo's ``.gitignore``
-alongside sessions and the run-log. The root is derived from this file's own
-path, never from the process working directory, so the answer is the same no
-matter where the app is launched from.
+Everything that holds a user's words lives under one directory: ``USER.md``,
+``MEMORY.md``, ``memory.db``, ``checkpoints.db``, saved sessions, the run-log
+and the query-detail dumps. One home means one erase story (ADR-0007).
 
-Set ``TA_AGENTS_HOME`` to point elsewhere (a shared home, a hosting volume,
-…); it is honoured before the default.
+Resolution order, evaluated on **every call** (never at import):
+
+1. ``TA_AGENTS_HOME`` — the supported override (hosting volume, shared host).
+   Because it is read per call, a value loaded from ``.env`` after import is
+   honoured.
+2. ``<repo>/.ta-agents`` when running from a source checkout (the directory
+   holding this project's ``pyproject.toml``), so the memory sits next to the
+   code a developer is working on and under the repo's ``.gitignore``.
+3. ``~/.ta-agents`` for an installed (non-editable) package or a container —
+   never a path inside ``site-packages``.
+
+Nothing is created at import. Writers call :func:`ensure_home` (or create the
+parent of the file they write); readers treat a missing home as empty.
 """
+
+from __future__ import annotations
 
 import os
 from pathlib import Path
 
-# src/talent_angels/memory/paths.py → repository root (three parents up from `memory`)
-_PROJECT_ROOT = Path(__file__).resolve().parents[3]
+# src/talent_angels/memory/paths.py → candidate repository root.
+_CANDIDATE_ROOT = Path(__file__).resolve().parents[3]
+_PROJECT_NAME_MARKER = 'name = "talent-angels"'
 
 
-def _default_home() -> Path:
-    override = os.environ.get("TA_AGENTS_HOME")
+def _is_source_checkout(root: Path) -> bool:
+    pyproject = root / "pyproject.toml"
+    try:
+        return _PROJECT_NAME_MARKER in pyproject.read_text(encoding="utf-8")
+    except OSError:
+        return False
+
+
+def project_root() -> Path | None:
+    """The repository root when running from a checkout, else ``None``."""
+    return _CANDIDATE_ROOT if _is_source_checkout(_CANDIDATE_ROOT) else None
+
+
+def home() -> Path:
+    """The memory home for this call. Pure: never creates anything."""
+    override = os.environ.get("TA_AGENTS_HOME", "").strip()
     if override:
         return Path(override).expanduser()
-    return _PROJECT_ROOT / ".ta-agents"
+    root = project_root()
+    if root is not None:
+        return root / ".ta-agents"
+    return Path.home() / ".ta-agents"
 
 
-TA_HOME = _default_home()
-TA_HOME.mkdir(parents=True, exist_ok=True)
+def ensure_home() -> Path:
+    """The memory home, created if needed. Call from write paths only."""
+    path = home()
+    path.mkdir(parents=True, exist_ok=True)
+    return path
 
-USER_MD = TA_HOME / "USER.md"
-MEMORY_MD = TA_HOME / "MEMORY.md"
-DB_PATH = TA_HOME / "memory.db"
 
-#: LangGraph's per-thread checkpoint state, written by ``assistant.graph`` when a
-#: caller passes a ``thread_id``. Personal data on the same terms as the rest of
-#: this home — it holds the question, the plan and the cited nodes of every turn
-#: on the thread — so it lives under ``TA_HOME`` where ``erase_all`` sweeps and
-#: where test isolation redirects, rather than in whatever cwd the API happens
-#: to be served from.
-CHECKPOINT_DB_PATH = TA_HOME / "checkpoints.db"
+def user_md() -> Path:
+    """The human profile (explicit-confirm writes only)."""
+    return home() / "USER.md"
+
+
+def memory_md() -> Path:
+    """The agent's notes."""
+    return home() / "MEMORY.md"
+
+
+def db_path() -> Path:
+    """``memory.db``: episodes, recall indexes, neighbour cache."""
+    return home() / "memory.db"
+
+
+def checkpoint_db_path() -> Path:
+    """LangGraph per-thread checkpoints — personal data (questions, plans)."""
+    return home() / "checkpoints.db"
+
+
+def default_sessions_dir() -> Path:
+    return home() / "sessions"
+
+
+def default_runlog_path() -> Path:
+    return home() / "runlog.jsonl"
+
+
+def default_details_dir() -> Path:
+    return home() / "query-details"

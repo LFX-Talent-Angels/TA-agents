@@ -10,16 +10,15 @@ oldest notes are evicted first so the file never exceeds the cap.
 
 from __future__ import annotations
 
-from talent_angels.memory.paths import MEMORY_MD
+from talent_angels.memory.files import MEMORY_FILE_LOCK, atomic_write_text, read_text_or_empty
+from talent_angels.memory.paths import memory_md
 
 MEMORY_MAX_CHARS = 2200
 
 
 def read_agent_notes() -> str:
     """Returns raw MEMORY.md content, empty string if not found."""
-    if MEMORY_MD.exists():
-        return MEMORY_MD.read_text()
-    return ""
+    return read_text_or_empty(memory_md())
 
 
 def notes_prefix() -> str:
@@ -36,12 +35,14 @@ def append_note(note: str) -> None:
     Consolidation: when the file would exceed MEMORY_MAX_CHARS, the oldest
     notes are dropped first (newest wins), mirroring Hermes' bounded memory.
     """
-    existing = read_agent_notes()
-    lines = [line for line in existing.splitlines() if line.strip()]
     entry = f"- {note.strip()}"
-    if not note.strip() or entry in lines:
+    if not note.strip():
         return
-    lines.append(entry)
-    while len("\n".join(lines)) > MEMORY_MAX_CHARS and len(lines) > 1:
-        lines.pop(0)
-    MEMORY_MD.write_text("\n".join(lines) + "\n")
+    with MEMORY_FILE_LOCK:
+        lines = [line for line in read_agent_notes().splitlines() if line.strip()]
+        if entry in lines:
+            return
+        lines.append(entry)
+        while len("\n".join(lines)) > MEMORY_MAX_CHARS and len(lines) > 1:
+            lines.pop(0)
+        atomic_write_text(memory_md(), "\n".join(lines) + "\n")

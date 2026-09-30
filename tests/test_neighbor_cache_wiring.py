@@ -221,7 +221,9 @@ def test_cached_suite_delegates_the_pathfind_slice() -> None:
         CachedSuite(object()).enumerate_paths("a", "b")  # type: ignore[arg-type]
 
 
-def test_default_registry_wires_the_cache_and_the_opt_out_skips_it() -> None:
+def test_default_registry_wires_the_cache_and_the_opt_out_skips_it(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
     """`default_suite_registry()` is the one place all edges build a registry.
 
     That is the only reason the cache can no longer be forgotten by an edge.
@@ -229,6 +231,13 @@ def test_default_registry_wires_the_cache_and_the_opt_out_skips_it() -> None:
     (or quietly remove the opt-out the bench depends on).
     """
     assert default_suite_registry.__defaults__ is None  # keyword-only default
+    # Offline: stand the fake in for the concrete ESCO adapter, which needs the
+    # optional ta-taxonomies package (absent in the CI offline job).
+    from talent_angels.suites import registry as registry_module
+
+    monkeypatch.setattr(
+        registry_module, "_open_default_esco", suite_factory("esco", CountingSuite())
+    )
     with default_suite_registry(neighbor_cache=False).open("esco") as runtime:
         assert not isinstance(runtime.suite, CachedSuite)
     with default_suite_registry().open("esco") as runtime:
@@ -345,3 +354,30 @@ def _null_outcome() -> Any:
         plan=[],
         record=RunLogRecord(suite=SUITE_NAME, plan=["locate"], question="who is a nurse"),
     )
+
+
+def test_failures_are_never_cached_and_expired_rows_are_pruned(memory_home) -> None:
+    """A node_not_found for a malformed id used to be served for 24 hours."""
+    import sqlite3
+    import time
+
+    from talent_angels.memory.cache import get_cached_neighbors, set_cached_neighbors
+
+    missing = FakeToolResult(warnings=["node_not_found"])
+    assert set_cached_neighbors("onet:29-1023.00", None, missing) is False
+    assert get_cached_neighbors("onet:29-1023.00", None) is None
+
+    from tests.fakes.suite import DEV
+
+    ok = CountingSuite().get_neighbors(DEV.id)
+    assert set_cached_neighbors("a", None, ok) is True
+    conn = sqlite3.connect(memory_home.db)
+    conn.execute("UPDATE neighbor_cache SET cached_at = ?", (time.time() - 10 * 86400,))
+    conn.commit()
+    conn.close()
+
+    assert set_cached_neighbors("b", None, ok) is True
+    conn = sqlite3.connect(memory_home.db)
+    rows = {row[0] for row in conn.execute("SELECT node_id FROM neighbor_cache")}
+    conn.close()
+    assert rows == {"b"}

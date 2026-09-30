@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import contextvars
 import os
 import sys
 from collections.abc import Sequence
@@ -10,14 +11,14 @@ from functools import partial
 from rich.console import Console
 
 from talent_angels.assistant import TurnOutcome, run_turn
+from talent_angels.assistant.llm_call import PHRASING_STAGES, collect_stages
+from talent_angels.assistant.turn import persist_turn_record, with_extra_stages
 from talent_angels.env import load_local_dotenv
 from talent_angels.llm import LLMClient
 from talent_angels.llm.factory import get_llm_client
 from talent_angels.memory.agent_notes import append_note
-from talent_angels.memory.episodes import record_episode
-from talent_angels.memory.paths import MEMORY_MD
+from talent_angels.memory.paths import memory_md
 from talent_angels.query_details import write_query_details
-from talent_angels.runlog import append_record
 from talent_angels.session.catalog import render_catalogue
 from talent_angels.session.copy import WELCOME
 from talent_angels.session.credentials import (
@@ -137,7 +138,7 @@ _SEED_NOTES = [
 
 def _seed_memory_if_new() -> None:
     """Write seed notes to MEMORY.md on first run only."""
-    if not MEMORY_MD.exists():
+    if not memory_md().exists():
         for note in _SEED_NOTES:
             append_note(note)
 
@@ -214,6 +215,12 @@ def main(argv: Sequence[str] | None = None, *, registry: SuiteRegistry | None = 
         kind = route_line(line).kind
         turn_outcomes: list[tuple[TurnOutcome, str]] = []
         turn_state = state.model_copy(deep=True)
+        # Every metered LLM call made while handling this line, including the
+        # phrasing that happens after run_turn built its record. The context is
+        # copied into the worker thread so the collector sees its calls.
+        stage_scope = collect_stages()
+        line_stages = stage_scope.__enter__()
+        line_context = contextvars.copy_context()
         if kind == "command":
             # Commands can change session state, the active client, or the
             # process environment. Keep those effects on this thread so an
@@ -231,6 +238,7 @@ def main(argv: Sequence[str] | None = None, *, registry: SuiteRegistry | None = 
                     console,
                     label,
                     partial(
+                        line_context.run,
                         handle_line,
                         turn_state,
                         line,
@@ -239,6 +247,7 @@ def main(argv: Sequence[str] | None = None, *, registry: SuiteRegistry | None = 
                     ),
                 )
             except Cancelled:
+                stage_scope.__exit__(None, None, None)
                 console.print(
                     "[dim]Stopped waiting. The in-flight request may still finish and count "
                     "toward usage.[/]"
@@ -247,19 +256,17 @@ def main(argv: Sequence[str] | None = None, *, registry: SuiteRegistry | None = 
         state = turn_state
         save_session(state)
         runlog_key = _sync_runlog_path(state, runlog_key)
-        for outcome, question in turn_outcomes:
-            append_record(outcome.record)
-            # run_turn(persist=False) above deliberately skips its own
-            # append_record/record_episode — that flag exists so a cancelled
-            # (Esc'd) turn never gets persisted (skipped turns never reach
-            # this loop; see the `except Cancelled: continue` above). This
-            # loop is where the TUI has always taken over the run-log side of
-            # that deferred write; record_episode belongs on the same call,
-            # not to run_turn's own flag — otherwise it silently never fires
-            # for the one interface a person actually types into. Confirmed
-            # live: persist=True records an episode, persist=False (this
-            # path, until now) recorded zero, ever.
-            record_episode(outcome.record)
+        stage_scope.__exit__(None, None, None)
+        phrasing = [stage for stage in line_stages if stage.stage in PHRASING_STAGES]
+        for index, (outcome, question) in enumerate(turn_outcomes):
+            # run_turn(persist=False) above skips its own persistence so a
+            # cancelled (Esc'd) turn is never written; a completed one is
+            # persisted here through the same guarded path the API uses
+            # (run-log, episode, vector recall index). Phrasing calls are billed
+            # to the line's last turn so the run-log totals are complete.
+            if index == len(turn_outcomes) - 1:
+                outcome.record = with_extra_stages(outcome.record, phrasing)
+            persist_turn_record(outcome.record)
             write_query_details(outcome, question=question)
         if reply.new_llm_client is not None:
             llm_client = reply.new_llm_client

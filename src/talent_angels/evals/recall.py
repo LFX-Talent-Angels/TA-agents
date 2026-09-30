@@ -678,10 +678,10 @@ def _maybe_compare(want_vector: bool) -> BackendComparison | None:
     """
     if not want_vector:
         return None
-    from talent_angels.memory.embeddings import LiteLLMEmbedder
+    from talent_angels.memory.embeddings import default_embedder
 
     try:
-        return compare_backends(LiteLLMEmbedder())
+        return compare_backends(default_embedder())
     except Exception as exc:  # noqa: BLE001 - reported, never fatal
         print(
             f"vector comparison unavailable: {type(exc).__name__}: {exc}",
@@ -710,7 +710,24 @@ def main(argv: Sequence[str] | None = None) -> int:
             "suite."
         ),
     )
+    parser.add_argument(
+        "--calibrate",
+        action="store_true",
+        help="With --vector: print the score bands a relevance floor must separate, "
+        "and score the hybrid ladder at the configured floor.",
+    )
     args = parser.parse_args(argv)
+    if args.vector and args.calibrate:
+        from talent_angels.memory.embeddings import default_embedder
+        from talent_angels.memory.vector_retriever import relevance_floor
+
+        embedder = default_embedder()
+        bands = calibration_bands(embedder)
+        floor = relevance_floor(str(getattr(embedder, "_model", "")))
+        hybrid = measure_hybrid(embedder, floor)
+        print(json.dumps({"bands": bands, "floor": floor}, indent=2))
+        print(render_table([measure(DESIGNS[-1]), hybrid]))
+        return 0
 
     try:
         validate_corpus()
@@ -880,6 +897,44 @@ def _top1_by_query(metrics: Metrics) -> dict[str, str | None]:
     """
     answerable = [q.text for q in QUERIES if q.group not in IRRELEVANT_GROUPS]
     return dict(zip(answerable, metrics.top1, strict=True))
+
+
+def measure_hybrid(embedder: Any, floor: float) -> Metrics:
+    """The shipped default: keyword first, vector (above ``floor``) only on a miss."""
+    from talent_angels.memory.fts_retriever import Fts5EpisodeRetriever
+
+    with _vector_index(embedder) as (index, by_text):
+        lexical = Fts5EpisodeRetriever(db_path=index._db_path)  # noqa: SLF001
+
+        def run(question: str) -> tuple[list[EpisodeHit], int]:
+            hits = lexical.search(question, limit=_WIDE_LIMIT)
+            if hits:
+                return hits, 1
+            ranked = index.hits(by_text[question], limit=_WIDE_LIMIT)
+            return [hit for hit in ranked if hit.score >= floor], 2
+
+        return _score(f"hybrid ({getattr(embedder, '_model', 'unknown')}, floor {floor})", run)
+
+
+def calibration_bands(embedder: Any) -> dict[str, list[float]]:
+    """Top-hit scores for unrelated queries and gold-hit scores for answerable ones.
+
+    A floor belongs strictly between ``max(unrelated_top)`` and
+    ``min(answerable_gold)``; this is how RELEVANCE_FLOORS values are derived.
+    """
+    unrelated: list[float] = []
+    gold_scores: list[float] = []
+    with _vector_index(embedder) as (index, by_text):
+        for query in QUERIES:
+            hits = index.hits(by_text[query.text], limit=5)
+            if query.group in IRRELEVANT_GROUPS:
+                if hits:
+                    unrelated.append(round(hits[0].score, 3))
+                continue
+            golds = [h.score for h in hits if h.run_id in set(query.gold)]
+            if golds:
+                gold_scores.append(round(max(golds), 3))
+    return {"unrelated_top": sorted(unrelated), "answerable_gold": sorted(gold_scores)}
 
 
 def compare_backends(embedder: Any) -> BackendComparison:

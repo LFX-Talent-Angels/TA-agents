@@ -324,6 +324,12 @@ _STOPWORDS = frozenset(
         "just",
         "only",
         "very",
+        # desire / intent verbs — the frame of a career question, not its topic.
+        # Live: "I want to learn Python" recalled "I want to become a doctor"
+        # on the word "want" alone.
+        "want",
+        "wants",
+        "wanted",
     }
 )
 

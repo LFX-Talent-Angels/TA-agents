@@ -42,9 +42,7 @@ class _OfflineLocal(LocalEmbedder):
 @pytest.fixture(autouse=True)
 def _local_embedder(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setenv("TA_RECALL", "hybrid")
-    monkeypatch.setattr(
-        "talent_angels.memory.embeddings.default_embedder", lambda: _OfflineLocal()
-    )
+    monkeypatch.setattr("talent_angels.memory.embeddings.default_embedder", lambda: _OfflineLocal())
 
 
 def _turn(question: str) -> None:

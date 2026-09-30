@@ -444,8 +444,11 @@ def test_vacuum_db_cleans_a_file_written_before_secure_delete_existed(memory_hom
     Simulated by writing a file the old way, then asking the new code to clean it.
     """
     db = memory_home.db
-    conn = sqlite3.connect(db)  # deliberately without the pragma
+    conn = sqlite3.connect(db)
     try:
+        # "The old way" explicitly: some SQLite builds (Ubuntu's, so CI) enable
+        # secure_delete by default, and then nothing would be left to clean.
+        conn.execute("PRAGMA secure_delete=OFF")
         conn.execute("CREATE TABLE legacy (question TEXT)")
         conn.execute("INSERT INTO legacy VALUES (?)", (PII,))
         conn.commit()

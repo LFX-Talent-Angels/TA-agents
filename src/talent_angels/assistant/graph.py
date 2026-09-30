@@ -29,9 +29,9 @@ from talent_angels.assistant.llm_plan import (
 from talent_angels.assistant.state import AssistantState
 from talent_angels.contracts import AgentResult, NodeRef
 from talent_angels.llm import LLMClient
+from talent_angels.llm.protocol import uses_chat_phrasing
 from talent_angels.memory.paths import checkpoint_db_path as _checkpoint_db_path
 from talent_angels.runlog import usage_from_stage
-from talent_angels.session.phrase import uses_chat_phrasing
 from talent_angels.skills.connect import connect
 from talent_angels.skills.locate import ESCO_SUITE_NAME, locate
 from talent_angels.skills.locate.rank import group_and_sort_locate

@@ -181,3 +181,20 @@ def test_pathfind_is_reported_as_unavailable_not_as_a_miss() -> None:
     )
     assert "not available yet" in outcome.answer
     assert "miss" not in outcome.answer
+
+
+def test_phrasing_calls_are_metered_and_added_to_the_turn_record() -> None:
+    """The TUI's phrasing used to call the client directly: 9 calls, 7 logged."""
+    from talent_angels.assistant.llm_call import PHRASING_STAGES, collect_stages
+    from talent_angels.assistant.turn import with_extra_stages
+    from talent_angels.session.phrase import phrase_chat
+
+    client = _Scripted(["Hello! Ask me about an occupation."])
+    with collect_stages() as stages:
+        text = phrase_chat(client, user_text="hi", fallback="fallback", hint="")
+    assert text.startswith("Hello")
+    assert [s.stage for s in stages] == ["phrase"]
+
+    outcome = run_turn(registry=fake_registry(), llm_client=StubLLMClient(), question="nurse")
+    billed = with_extra_stages(outcome.record, [s for s in stages if s.stage in PHRASING_STAGES])
+    assert billed.gen_ai.calls == outcome.record.gen_ai.calls + 1

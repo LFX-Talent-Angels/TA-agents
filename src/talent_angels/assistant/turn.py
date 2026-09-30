@@ -238,6 +238,31 @@ def _record_turn(
     return record
 
 
+def with_extra_stages(record: RunLogRecord, extra: list[StageUsage]) -> RunLogRecord:
+    """The same record with LLM calls made after it was built (TUI phrasing).
+
+    Tokens, call count and cost are recomputed from the combined stages, so the
+    run-log totals match what the provider billed.
+    """
+    if not extra:
+        return record
+    stages = [*record.gen_ai.stages, *extra]
+    usage = _usage_from_stages(stages)
+    gen_ai = record.gen_ai.model_copy(
+        update={
+            "input_tokens": usage.input_tokens,
+            "output_tokens": usage.output_tokens,
+            "reasoning_tokens": usage.reasoning_tokens,
+            "cache_read_input_tokens": usage.cache_read_input_tokens,
+            "cache_creation_input_tokens": usage.cache_creation_input_tokens,
+            "calls": sum(stage.calls for stage in stages),
+            "stages": stages,
+        }
+    )
+    cost = estimate_turn_cost_usd(stages, record.gen_ai.request_model)
+    return record.model_copy(update={"gen_ai": gen_ai, "cost_usd": cost})
+
+
 def persist_turn_record(record: RunLogRecord) -> None:
     """Append the run-log line and the episode. Never fails the turn.
 

@@ -75,6 +75,14 @@ class LLMResult(BaseModel):
     tool_calls: list[ToolInvocation] = Field(default_factory=list)
 
 
+def uses_chat_phrasing(client: object | None) -> bool:
+    """True for a real model client (not the ``none``/stub/test providers)."""
+    if client is None:
+        return False
+    provider = str(getattr(client, "provider", "none") or "none").lower()
+    return provider not in {"none", "stub", "test"}
+
+
 @runtime_checkable
 class LLMClient(Protocol):
     provider: str

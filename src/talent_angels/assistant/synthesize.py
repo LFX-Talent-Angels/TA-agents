@@ -10,14 +10,15 @@ import re
 from collections.abc import Sequence
 
 from talent_angels.assistant.answer import NO_SUBJECT, PATHFIND_UNAVAILABLE, is_pathfind_unavailable
+from talent_angels.assistant.llm_call import measure_complete
 from talent_angels.assistant.merge import suite_heading
 from talent_angels.contracts import AgentResult
 from talent_angels.env import episode_retriever
 from talent_angels.llm import LLMClient, Message
+from talent_angels.llm.protocol import uses_chat_phrasing
 from talent_angels.memory.agent_notes import notes_prefix
 from talent_angels.memory.profile import profile_prefix
 from talent_angels.memory.retrieval import recall_prefix
-from talent_angels.session.phrase import uses_chat_phrasing
 
 _NODE_ID_RE = re.compile(
     r"\b(?:esco|onet|sfia|bls):[a-z0-9][a-z0-9_.:-]*",
@@ -223,8 +224,8 @@ def synthesize(
         ),
     ]
     try:
-        llm_result = llm_client.complete(messages)
-    except (RuntimeError, OSError, ValueError):
+        llm_result, _ = measure_complete(llm_client, messages, stage="synthesize")
+    except RuntimeError:
         return fallback
     text = (llm_result.text or "").strip()
     if not text or _phrasing_is_unsafe(text):

@@ -52,23 +52,39 @@ logger = logging.getLogger(__name__)
 #: the vector and its node ids cannot.
 _SEP = " "
 
-#: The score below which a near neighbour is not evidence of anything.
+#: The score below which a near neighbour is not evidence of anything, per
+#: embedding model. ``EpisodeHit.score`` is ``-cosine_distance`` (the index is
+#: created with ``distance_metric=cosine``), so ``-0.70`` means cosine
+#: similarity 0.30.
 #:
-#: ``EpisodeHit.score`` is ``-distance``, and sqlite-vec's cosine distance is
-#: ``1 - similarity``, so this is a cosine similarity of **-0.10**. Chosen from
-#: measurement, not taste: over the 43-query eval corpus the 7 questions that
-#: share nothing with any turn scored between -1.303 and -1.197, while the 36
-#: answerable ones scored between -1.018 and -0.234. That leaves an empty band
-#: from -1.197 to -1.018, and this sits in the middle of it.
+#: ``all-MiniLM-L6-v2`` (local, the default), measured on the 43-query
+#: ``evals.recall`` corpus: the 7 questions that share nothing with any turn
+#: top out in [-0.899, -0.794]; every answerable query's gold turn scores in
+#: [-0.515, -0.009]. -0.70 sits in the empty band with ~0.1 of margin to the
+#: unrelated class and ~0.19 to the weakest gold hit. Re-measure with
+#: ``python -m talent_angels.evals.recall --vector --calibrate``.
 #:
-#: **The margin is thin — 0.09 on either side, and the "nothing is relevant"
-#: class is only 7 queries.** Treat this as a starting value to re-calibrate
-#: against real usage, not a constant. It is deliberately allowed to be wrong
-#: in one direction only: below the floor the retriever returns nothing, which
-#: is the failure that measured best. A false positive instead injects an
-#: unrelated past turn into the prompt, and that is the 210-irrelevant-hit
-#: failure this floor exists to remove.
-MIN_RELEVANCE_SCORE = -1.10
+#: The previous single value (-1.10) was calibrated on sqlite-vec's *default*
+#: L2 metric while being documented as cosine; it does not transfer.
+RELEVANCE_FLOORS: dict[str, float] = {
+    "all-MiniLM-L6-v2": -0.70,
+}
+#: Used for a model with no calibrated floor (a warning says so).
+MIN_RELEVANCE_SCORE = -0.70
+
+
+def relevance_floor(model: str) -> float:
+    floor = RELEVANCE_FLOORS.get(model.rsplit("/", 1)[-1])
+    if floor is None:
+        logger.warning(
+            "no calibrated recall floor for embedding model %r; using %.2f. Calibrate with "
+            "`python -m talent_angels.evals.recall --vector --calibrate`.",
+            model,
+            MIN_RELEVANCE_SCORE,
+        )
+        return MIN_RELEVANCE_SCORE
+    return floor
+
 
 #: How many neighbours to fetch per ``limit`` before the floor is applied. The
 #: floor sits near the bottom of the range, so asking for exactly ``limit``
@@ -76,9 +92,16 @@ MIN_RELEVANCE_SCORE = -1.10
 _OVERSAMPLE = 4
 
 
+#: At most this many labels describe a turn's topic. A connect turn cites every
+#: neighbour (hundreds on O*NET); indexing all of them made "I want to learn
+#: Python" recall a dentist turn through some skill label. The first labels are
+#: the resolved node(s) — the topic — and the rest is noise for recall.
+MAX_TOPIC_LABELS = 3
+
+
 def episode_text(question: str, node_labels: Sequence[str]) -> str:
-    """The text both indexes see for one episode."""
-    return _SEP.join([question, *node_labels]).strip()
+    """The text both indexes see for one episode: question + topic labels."""
+    return _SEP.join([question, *list(node_labels)[:MAX_TOPIC_LABELS]]).strip()
 
 
 class VectorEpisodeRetriever:
@@ -89,9 +112,11 @@ class VectorEpisodeRetriever:
         embedder: Embedder,
         *,
         index: SqliteVecIndex | None = None,
-        floor: float = MIN_RELEVANCE_SCORE,
+        floor: float | None = None,
     ) -> None:
         self._embedder = embedder
+        if floor is None:
+            floor = relevance_floor(str(getattr(embedder, "_model", "")))
         self._index = index
         self._floor = floor
 
@@ -199,3 +224,55 @@ class VectorEpisodeRetriever:
                 self._floor,
             )
         return kept[:limit]
+
+
+def index_episode(run_id: str, question: str, topic_labels: Sequence[str]) -> bool:
+    """Add one recorded turn to the vector index. Never raises.
+
+    Called right after the episode row is written, so the meaning index never
+    lags behind the keyword index (it used to be built only by a manual
+    ``recall-rebuild``, and was stale from the next turn on). Only runs when
+    vector recall is in use and the embedder is **local**: an install pointed
+    at a paid model keeps building its index explicitly, so recording a turn
+    never spends money silently. The first write also backfills any earlier
+    episodes the index is missing.
+    """
+    from talent_angels.env import recall_mode
+    from talent_angels.memory.embeddings import LocalEmbedder, default_embedder
+
+    if recall_mode() not in ("vector", "hybrid"):
+        return False
+    embedder = default_embedder()
+    if not isinstance(embedder, LocalEmbedder) or not embedder.configured:
+        return False
+    try:
+        [vector] = embedder.embed([episode_text(question, topic_labels)])
+        index = SqliteVecIndex(dimensions=len(vector))
+        _backfill(index, embedder, skip=run_id)
+        index.add(run_id, vector)
+    except Exception:  # noqa: BLE001 — recall is an enhancement, never a failed turn
+        logger.warning(
+            "could not add this turn to the vector recall index; run "
+            "`python -m talent_angels.cli recall-rebuild --vector` to repair it",
+            exc_info=True,
+        )
+        return False
+    return True
+
+
+#: Backfill at most this many older episodes in one write (keeps a first turn
+#: fast on a long history; the rest follow on later writes).
+_BACKFILL_BATCH = 256
+
+
+def _backfill(index: SqliteVecIndex, embedder: Embedder, *, skip: str) -> int:
+    from talent_angels.memory.episodes import episodes_by_run_ids
+
+    ids = [run_id for run_id in index.missing_run_ids(limit=_BACKFILL_BATCH) if run_id != skip]
+    missing = episodes_by_run_ids(ids)
+    if not missing:
+        return 0
+    vectors = embedder.embed([episode_text(e.question, e.node_labels) for e in missing])
+    for episode, vector in zip(missing, vectors, strict=True):
+        index.add(episode.run_id, vector)
+    return len(missing)

@@ -29,6 +29,7 @@ import sqlite3
 from dataclasses import dataclass
 from pathlib import Path
 
+from talent_angels.contracts import AgentResult
 from talent_angels.memory.paths import db_path
 from talent_angels.runlog.models import ResultSummary, RunLogRecord
 
@@ -137,9 +138,18 @@ def _rebuild_fts(conn: sqlite3.Connection) -> int:
         return 0
     conn.executemany(
         "INSERT INTO episodes_fts (run_id, ts, question, node_labels) VALUES (?, ?, ?, ?)",
-        [tuple(row) for row in rows],
+        [(row[0], row[1], row[2], _bounded_labels_json(row[3])) for row in rows],
     )
     return len(rows)
+
+
+def _bounded_labels_json(raw: str | None) -> str:
+    """Older rows stored every cited label; the index only ever sees the topic."""
+    try:
+        labels = json.loads(raw or "[]")
+    except ValueError:
+        return "[]"
+    return json.dumps(list(labels)[:_TOPIC_LIMIT] if isinstance(labels, list) else [])
 
 
 def _connect(db_path: Path) -> sqlite3.Connection:
@@ -193,7 +203,28 @@ class Episode:
     satisfied: bool
 
 
+#: How many labels an episode keeps for recall (see ResultSummary.topic_labels).
+_TOPIC_LIMIT = 3
+
+
+def suite_satisfied(result: AgentResult) -> bool:
+    """One suite landed on a usable answer (nodes, no unsatisfied warning)."""
+    if not result.nodes:
+        return False
+    if any(w.startswith("capability_not_implemented") for w in result.warnings):
+        return False
+    return not any(w in _UNSATISFIED_WARNINGS for w in result.warnings)
+
+
+def _topic_labels(result: ResultSummary) -> list[str]:
+    return list(result.topic_labels or result.node_labels)[:_TOPIC_LIMIT]
+
+
 def _is_satisfied(result: ResultSummary) -> bool:
+    if result.satisfied is not None:
+        # Computed per suite at record time: one suite's not_found no longer
+        # marks a turn unsatisfied when another suite answered it.
+        return result.satisfied
     if not result.node_ids:
         return False
     if any(w.startswith("capability_not_implemented") for w in result.warnings):
@@ -232,7 +263,7 @@ def record_episode(record: RunLogRecord, *, db_path: Path | None = None) -> None
                 capability,
                 json.dumps(record.plan),
                 record.question,
-                json.dumps(record.result.node_labels),
+                json.dumps(_topic_labels(record.result)),
                 json.dumps(record.result.warnings),
                 int(_is_satisfied(record.result)),
             ),
@@ -260,7 +291,7 @@ def record_episode(record: RunLogRecord, *, db_path: Path | None = None) -> None
                         record.question,
                         # The same encoding the `episodes` row above uses. A second
                         # encoding for the same data would make `sync_fts` a guess.
-                        json.dumps(record.result.node_labels),
+                        json.dumps(_topic_labels(record.result)),
                     ),
                 )
         conn.commit()
@@ -302,6 +333,22 @@ def recent_episodes(*, limit: int = 20, db_path: Path | None = None) -> list[Epi
         return [_row_to_episode(row, _node_ids_for(conn, row["run_id"])) for row in rows]
     finally:
         conn.close()
+
+
+def episodes_by_run_ids(run_ids: list[str], *, db_path: Path | None = None) -> list[Episode]:
+    """The episodes with these run ids, in the given order (missing ids skipped)."""
+    path = db_path or episodes_db_path()
+    if not run_ids or not path.exists():
+        return []
+    conn = _connect(path)
+    conn.row_factory = sqlite3.Row
+    try:
+        marks = ",".join("?" for _ in run_ids)
+        rows = conn.execute(f"SELECT * FROM episodes WHERE run_id IN ({marks})", run_ids)
+        by_id = {row["run_id"]: _row_to_episode(row, ()) for row in rows}
+    finally:
+        conn.close()
+    return [by_id[run_id] for run_id in run_ids if run_id in by_id]
 
 
 def episodes_citing(node_id: str, *, limit: int = 20, db_path: Path | None = None) -> list[Episode]:

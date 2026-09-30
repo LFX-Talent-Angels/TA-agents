@@ -21,6 +21,9 @@ import pytest
 # assistant/checkpoint.py; strict mode turns a missing registration (today a
 # deprecation warning, later a hard failure in production) into a test failure.
 os.environ.setdefault("LANGGRAPH_STRICT_MSGPACK", "true")
+# The offline suite never loads an embedding model or calls a provider; tests
+# that exercise vector recall pass an explicit (static) embedder.
+os.environ.setdefault("TA_EMBEDDING_MODEL", "none")
 
 
 @dataclass(frozen=True, slots=True)

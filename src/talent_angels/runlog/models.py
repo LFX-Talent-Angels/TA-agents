@@ -75,6 +75,12 @@ class ResultSummary(BaseModel):
     node_ids: list[str] = Field(default_factory=list)
     node_labels: list[str] = Field(default_factory=list)
     warnings: list[str] = Field(default_factory=list)
+    #: The resolved node(s) of each suite — what the turn was *about* — bounded.
+    #: Episode recall indexes these, not every cited neighbour. Empty on records
+    #: written before this field existed (readers fall back to node_labels[:3]).
+    topic_labels: list[str] = Field(default_factory=list)
+    #: Did at least one suite land on a usable answer? ``None`` on older records.
+    satisfied: bool | None = None
 
 
 class RunLogRecord(BaseModel):

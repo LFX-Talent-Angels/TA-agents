@@ -31,7 +31,8 @@ from talent_angels.assistant.turn_graph import (
 )
 from talent_angels.contracts import AgentResult, NodeRef
 from talent_angels.llm import LLMClient, LLMUsage
-from talent_angels.memory.episodes import record_episode
+from talent_angels.memory.episodes import record_episode, suite_satisfied
+from talent_angels.memory.vector_retriever import MAX_TOPIC_LABELS, index_episode
 from talent_angels.runlog import (
     EfficiencyInfo,
     GenAIUsage,
@@ -198,6 +199,13 @@ def _record_turn(
     )
     all_nodes = [node for item in results for node in item.nodes]
     all_warnings = [warning for item in results for warning in item.warnings]
+    topic: list[str] = []
+    for item in results:
+        # Connect: the centre node. Locate: the unique hit, or the top candidates.
+        wanted = 1 if item.capability == "connect" or "ambiguous" not in item.warnings else 2
+        for node in item.nodes[:wanted]:
+            if node.pref_label and node.pref_label not in topic:
+                topic.append(node.pref_label)
     record = RunLogRecord(
         suite=suite_label,
         plan=list(plan.capabilities),
@@ -219,6 +227,8 @@ def _record_turn(
             node_ids=[node.id for node in all_nodes],
             node_labels=[node.pref_label for node in all_nodes],
             warnings=all_warnings,
+            topic_labels=topic[:MAX_TOPIC_LABELS],
+            satisfied=any(suite_satisfied(item) for item in results),
         ),
     )
     if run_id:
@@ -242,6 +252,12 @@ def persist_turn_record(record: RunLogRecord) -> None:
         record_episode(record)
     except (sqlite3.Error, OSError):
         logger.warning("episode record failed", exc_info=True)
+        return
+    index_episode(
+        record.run_id,
+        record.question,
+        record.result.topic_labels or record.result.node_labels,
+    )
 
 
 def _early_turn(

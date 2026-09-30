@@ -10,14 +10,13 @@ from functools import partial
 from rich.console import Console
 
 from talent_angels.assistant import TurnOutcome, run_turn
+from talent_angels.assistant.turn import persist_turn_record
 from talent_angels.env import load_local_dotenv
 from talent_angels.llm import LLMClient
 from talent_angels.llm.factory import get_llm_client
 from talent_angels.memory.agent_notes import append_note
-from talent_angels.memory.episodes import record_episode
 from talent_angels.memory.paths import memory_md
 from talent_angels.query_details import write_query_details
-from talent_angels.runlog import append_record
 from talent_angels.session.catalog import render_catalogue
 from talent_angels.session.copy import WELCOME
 from talent_angels.session.credentials import (
@@ -248,18 +247,11 @@ def main(argv: Sequence[str] | None = None, *, registry: SuiteRegistry | None = 
         save_session(state)
         runlog_key = _sync_runlog_path(state, runlog_key)
         for outcome, question in turn_outcomes:
-            append_record(outcome.record)
-            # run_turn(persist=False) above deliberately skips its own
-            # append_record/record_episode — that flag exists so a cancelled
-            # (Esc'd) turn never gets persisted (skipped turns never reach
-            # this loop; see the `except Cancelled: continue` above). This
-            # loop is where the TUI has always taken over the run-log side of
-            # that deferred write; record_episode belongs on the same call,
-            # not to run_turn's own flag — otherwise it silently never fires
-            # for the one interface a person actually types into. Confirmed
-            # live: persist=True records an episode, persist=False (this
-            # path, until now) recorded zero, ever.
-            record_episode(outcome.record)
+            # run_turn(persist=False) above skips its own persistence so a
+            # cancelled (Esc'd) turn is never written; a completed one is
+            # persisted here through the same guarded path the API uses
+            # (run-log, episode, vector recall index).
+            persist_turn_record(outcome.record)
             write_query_details(outcome, question=question)
         if reply.new_llm_client is not None:
             llm_client = reply.new_llm_client

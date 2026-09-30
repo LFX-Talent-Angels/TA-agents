@@ -186,7 +186,7 @@ def episode_retriever() -> Retriever:
         # "no vector recall here", which is the same thing a wrong mode means,
         # so the fallback is shared rather than re-implemented per failure.
         try:
-            from talent_angels.memory.embeddings import LiteLLMEmbedder
+            from talent_angels.memory.embeddings import default_embedder
             from talent_angels.memory.vector_retriever import VectorEpisodeRetriever
         except ImportError:
             logger.warning(
@@ -195,36 +195,25 @@ def episode_retriever() -> Retriever:
                 mode,
             )
             return NullRetriever()
-        vector = VectorEpisodeRetriever(LiteLLMEmbedder())
+        embedder = default_embedder()
         if mode == "vector":
-            return vector
+            return VectorEpisodeRetriever(embedder)
         from talent_angels.memory.fallback_retriever import FallbackEpisodeRetriever
 
-        # `hybrid` is the default, so this branch is the one almost every
-        # install takes, and it has to be safe for the ones that cannot use a
-        # meaning index. Degrading to keyword-only here — rather than letting
-        # the second rung fail per question — is what makes the default
-        # defensible: an install with no key, or one that never ran
-        # `recall-rebuild`, gets lexical and one explanation instead of a
-        # failed request on every keyword miss, forever.
-        if not vector._embedder.configured:
+        # `hybrid` is the default: keyword first, meaning only when keyword
+        # finds nothing. With the local embedder (free, on-device) the index is
+        # built as turns are recorded (`vector_retriever.index_episode`), so the
+        # only install that falls back to keyword-only is one without an
+        # embedder at all — said once, with the fix.
+        if not embedder.configured:
             _warn_once(
-                "no-credentials",
-                "TA_RECALL=hybrid has no embedding credentials, so only keyword "
-                "recall is active. Set OPENAI_API_KEY or OPENROUTER_API_KEY in "
-                ".env and run `python -m talent_angels.cli recall-rebuild "
-                "--vector` for meaning-based recall too. Set TA_RECALL=lexical to "
-                "silence this.",
+                "no-embedder",
+                "TA_RECALL=hybrid has no embedder, so only keyword recall is active. "
+                "Install the free local model with `pip install -e '.[local-embed]'` "
+                "(or set TA_EMBEDDING_MODEL to a hosted model you have a key for). "
+                "Set TA_RECALL=lexical to silence this.",
             )
             return Fts5EpisodeRetriever()
-        if not vector._probe_index():
-            _warn_once(
-                "no-index",
-                "TA_RECALL=hybrid has no vector index yet, so only keyword recall "
-                "is active. Build one with `python -m talent_angels.cli "
-                "recall-rebuild --vector`. Set TA_RECALL=lexical to silence this.",
-            )
-            return Fts5EpisodeRetriever()
-        return FallbackEpisodeRetriever(Fts5EpisodeRetriever(), vector)
+        return FallbackEpisodeRetriever(Fts5EpisodeRetriever(), VectorEpisodeRetriever(embedder))
     _warn_if_unavailable(mode)
     return NullRetriever()

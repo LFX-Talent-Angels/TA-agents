@@ -50,7 +50,7 @@ def test_node_id_str_leaf_http_uri():
 def test_write_standing_skips_blank_label(tmp_path):
     from talent_angels.memory import profile as prof
 
-    with patch.object(prof, "USER_MD", tmp_path / "USER.md"):
+    with patch.object(prof, "user_md", lambda: tmp_path / "USER.md"):
         good = _make_node("onet", "15-1252.00", "Software Developers")
         prof.write_standing(good)
         blank = _make_node("onet", "51-4121.00", "")
@@ -65,7 +65,7 @@ def test_user_profile_capped_and_consolidated(tmp_path):
     from talent_angels.memory import profile as prof
 
     with (
-        patch.object(prof, "USER_MD", tmp_path / "USER.md"),
+        patch.object(prof, "user_md", lambda: tmp_path / "USER.md"),
         patch.object(prof, "USER_MAX_CHARS", 300),
     ):
         for i in range(20):
@@ -81,7 +81,7 @@ def test_user_profile_capped_and_consolidated(tmp_path):
 def test_write_standing_keyed_by_suite(tmp_path):
     from talent_angels.memory import profile as prof
 
-    with patch.object(prof, "USER_MD", tmp_path / "USER.md"):
+    with patch.object(prof, "user_md", lambda: tmp_path / "USER.md"):
         onet_node = _make_node("onet", "15-1252.00", "Software Developers")
         esco_node = _make_node(
             "esco",
@@ -102,7 +102,7 @@ def test_write_standing_keyed_by_suite(tmp_path):
 def test_write_standing_updates_same_suite(tmp_path):
     from talent_angels.memory import profile as prof
 
-    with patch.object(prof, "USER_MD", tmp_path / "USER.md"):
+    with patch.object(prof, "user_md", lambda: tmp_path / "USER.md"):
         node_v1 = _make_node("onet", "15-1252.00", "Software Developers")
         node_v2 = _make_node("onet", "15-1253.00", "Web Developers")
 

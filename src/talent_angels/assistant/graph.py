@@ -31,7 +31,7 @@ from talent_angels.assistant.llm_plan import (
 from talent_angels.assistant.state import AssistantState
 from talent_angels.contracts import AgentResult, NodeRef
 from talent_angels.llm import LLMClient
-from talent_angels.memory.paths import CHECKPOINT_DB_PATH
+from talent_angels.memory.paths import checkpoint_db_path as _checkpoint_db_path
 from talent_angels.runlog import usage_from_stage
 from talent_angels.session.phrase import uses_chat_phrasing
 from talent_angels.skills.connect import connect
@@ -51,7 +51,7 @@ def checkpoint_db_path() -> Path:
     ``episodes_db_path``/``cache_db_path`` do, so the test fixture can redirect
     it per test.
     """
-    return CHECKPOINT_DB_PATH
+    return _checkpoint_db_path()
 
 
 def _build_checkpointer() -> SqliteSaver:

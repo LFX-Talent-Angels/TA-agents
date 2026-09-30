@@ -56,7 +56,7 @@ def test_tui_records_an_episode_for_a_real_turn(monkeypatch, tmp_path, capsys) -
     from tests.test_edges_offline import FakeSuite
 
     memory_db = tmp_path / "memory.db"
-    monkeypatch.setattr("talent_angels.memory.episodes.DB_PATH", memory_db)
+    monkeypatch.setattr("talent_angels.memory.episodes.db_path", lambda: memory_db)
     monkeypatch.setenv("TA_SESSIONS_DIR", str(tmp_path / "sessions"))
     monkeypatch.setenv("RUNLOG_PATH", str(tmp_path / "runlog.jsonl"))
     monkeypatch.setenv("QUERY_DETAILS_DIR", str(tmp_path / "details"))

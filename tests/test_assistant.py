@@ -392,7 +392,7 @@ def test_run_turn_persists_an_episode(monkeypatch: pytest.MonkeyPatch, tmp_path)
     monkeypatch.setenv("RUNLOG_PATH", str(tmp_path / "runlog.jsonl"))
     monkeypatch.setenv("LLM_PROVIDER", "none")
     memory_db = tmp_path / "memory.db"
-    monkeypatch.setattr("talent_angels.memory.episodes.DB_PATH", memory_db)
+    monkeypatch.setattr("talent_angels.memory.episodes.db_path", lambda: memory_db)
 
     run_turn(
         suite=FakeSuite(FakeToolResult(nodes=[_occupation_node()])),

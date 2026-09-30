@@ -1,4 +1,4 @@
-"""File-backed session save/load under data/local/sessions (or TA_SESSIONS_DIR)."""
+"""File-backed session save/load under ``<memory home>/sessions`` (or TA_SESSIONS_DIR)."""
 
 from __future__ import annotations
 
@@ -9,6 +9,7 @@ from pathlib import Path
 from uuid import uuid4
 
 from talent_angels.contracts import AgentResult, NodeRef
+from talent_angels.memory.paths import default_sessions_dir
 from talent_angels.session.models import (
     LastBinding,
     PendingChoice,
@@ -23,8 +24,9 @@ _BINDING = "binding.json"
 
 
 def sessions_dir() -> Path:
-    raw = os.environ.get("TA_SESSIONS_DIR", "data/local/sessions")
-    return Path(raw)
+    """``TA_SESSIONS_DIR`` or ``<memory home>/sessions`` — never cwd-relative."""
+    raw = os.environ.get("TA_SESSIONS_DIR", "").strip()
+    return Path(raw).expanduser() if raw else default_sessions_dir()
 
 
 def new_session() -> SessionState:

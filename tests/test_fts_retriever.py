@@ -1676,7 +1676,7 @@ def test_phrase_chat_carries_the_recall_block_when_recall_is_on(
     from talent_angels.session import phrase
 
     monkeypatch.setenv("TA_RECALL", "lexical")
-    _seed_recallable_episode(episodes_module.DB_PATH)
+    _seed_recallable_episode(episodes_module.episodes_db_path())
 
     class _Client:
         provider = "litellm"
@@ -1714,7 +1714,7 @@ def test_phrase_map_carries_the_recall_block_when_recall_is_on(
     from talent_angels.session import phrase
 
     monkeypatch.setenv("TA_RECALL", "lexical")
-    _seed_recallable_episode(episodes_module.DB_PATH)
+    _seed_recallable_episode(episodes_module.episodes_db_path())
 
     class _Client:
         provider = "litellm"
@@ -1778,7 +1778,7 @@ def test_the_tool_loop_prompt_matches_the_question_not_the_decorated_prompt(
     from tests.test_agent_loop import FakeSuite, ScriptedToolClient
 
     monkeypatch.setenv("TA_RECALL", "lexical")
-    db = episodes_module.DB_PATH
+    db = episodes_module.episodes_db_path()
     _record(db, "r1", "what skills does a nurse need?", ("nurse",))
     # A turn that shares the word `occupation` with the loop's own decoration and
     # nothing else with the question. Searching the decorated string reaches it;
@@ -1841,7 +1841,7 @@ def test_recall_only_reaches_a_prompt_when_it_has_something_to_say(
     # question shares no content with the seeded episode, and the point is that
     # the prompt does not change rather than which mode produced the retriever.
     monkeypatch.setenv("TA_RECALL", "off")
-    _seed_recallable_episode(episodes_module.DB_PATH)
+    _seed_recallable_episode(episodes_module.episodes_db_path())
 
     class _Client:
         provider = "litellm"

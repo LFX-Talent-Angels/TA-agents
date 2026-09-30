@@ -29,7 +29,7 @@ import sqlite3
 from dataclasses import dataclass
 from pathlib import Path
 
-from talent_angels.memory.paths import DB_PATH
+from talent_angels.memory.paths import db_path
 from talent_angels.runlog.models import ResultSummary, RunLogRecord
 
 logger = logging.getLogger(__name__)
@@ -62,7 +62,7 @@ _UNSATISFIED_WARNINGS = frozenset(
 
 
 def episodes_db_path() -> Path:
-    return DB_PATH
+    return db_path()
 
 
 def _ensure_fts(conn: sqlite3.Connection) -> bool:

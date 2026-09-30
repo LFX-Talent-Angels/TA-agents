@@ -7,17 +7,17 @@ import os
 from pathlib import Path
 
 from talent_angels.assistant.turn import TurnOutcome
+from talent_angels.memory.paths import default_details_dir
 from talent_angels.runlog.view import economics, economics_markdown_lines
-
-DEFAULT_DETAILS_DIR = "data/local/query-details"
 
 
 def details_dir() -> Path:
-    raw = os.environ.get("QUERY_DETAILS_DIR", DEFAULT_DETAILS_DIR).strip() or DEFAULT_DETAILS_DIR
-    path = Path(raw)
-    if not path.is_absolute():
-        path = Path.cwd() / path
-    return path
+    """``QUERY_DETAILS_DIR`` or ``<memory home>/query-details``."""
+    raw = os.environ.get("QUERY_DETAILS_DIR", "").strip()
+    if not raw:
+        return default_details_dir()
+    path = Path(raw).expanduser()
+    return path if path.is_absolute() else Path.cwd() / path
 
 
 def write_query_details(outcome: TurnOutcome, *, question: str) -> Path:

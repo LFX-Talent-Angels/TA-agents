@@ -55,8 +55,8 @@ def _boom(*_args: object, **_kwargs: object):  # noqa: ANN202
 
 def _seed_personal_stores() -> None:
     """Put the same personal details in every store that holds user speech."""
-    profile.USER_MD.write_text(f"STANDING: Priya Raman  [esco:nurse]\nGOAL: {PII}\n")
-    notes.MEMORY_MD.write_text("- Priya Raman asked about Bangalore roles\n")
+    profile.user_md().write_text(f"STANDING: Priya Raman  [esco:nurse]\nGOAL: {PII}\n")
+    notes.memory_md().write_text("- Priya Raman asked about Bangalore roles\n")
     record_episode(
         RunLogRecord(
             run_id="run-pii",
@@ -133,8 +133,8 @@ def test_reset_all_removes_the_pii_from_the_bytes_on_disk(memory_home) -> None:
 def _seed_default_location_stores() -> tuple[Path, Path]:
     """Write the two stores where the *writers* put them when nothing overrides them.
 
-    `query_details.details_dir()` falls back to `<cwd>/data/local/query-details`
-    and `runlog.writer.runlog_path()` to `<cwd>/runlog.jsonl`, so those are the
+    `query_details.details_dir()` falls back to `<home>/query-details`
+    and `runlog.writer.runlog_path()` to `<home>/runlog.jsonl`, so those are the
     paths to seed — not paths this test invented. That is the whole point: the
     bug was an eraser resolving a *different* location than the writer did, and
     a test that seeds its own invented path cannot see that.
@@ -175,6 +175,9 @@ def _unconfigured_home(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
     """
     monkeypatch.delenv("RUNLOG_PATH", raising=False)
     monkeypatch.delenv("QUERY_DETAILS_DIR", raising=False)
+    # The defaults now live under the memory home (not the cwd), so the home is
+    # the sandbox; chdir as well so a cwd-relative regression lands here too.
+    monkeypatch.setenv("TA_AGENTS_HOME", str(tmp_path))
     monkeypatch.chdir(tmp_path)
     return tmp_path
 
@@ -200,7 +203,7 @@ def test_reset_all_removes_the_stores_at_their_default_locations(
 
     cwd = _unconfigured_home(tmp_path, monkeypatch)
     details, runlog = _seed_default_location_stores()
-    assert details == cwd / "data" / "local" / "query-details", "seeded the wrong place"
+    assert details == cwd / "query-details", "seeded the wrong place"
 
     result = erase_all()
 
@@ -368,8 +371,8 @@ def test_reset_keeps_the_profile_and_the_history(memory_home) -> None:
 
     reply = handle_line(state, "/reset", runner=_boom)
 
-    assert profile.USER_MD.exists(), "/reset must not forget who the user is"
-    assert notes.MEMORY_MD.exists()
+    assert profile.user_md().exists(), "/reset must not forget who the user is"
+    assert notes.memory_md().exists()
     assert len(recent_episodes()) == 1, "/reset must not erase the long-term history"
     # The conversation itself did go.
     assert not (sessions_dir() / old_key / "transcript.jsonl").exists()
@@ -388,11 +391,11 @@ def test_the_two_scopes_differ_in_exactly_one_way(memory_home) -> None:
     save_session(state, name="prior")
 
     handle_line(state, "/reset", runner=_boom)
-    assert profile.USER_MD.exists() and len(recent_episodes()) == 1
+    assert profile.user_md().exists() and len(recent_episodes()) == 1
     assert not (sessions_dir() / "prior" / "transcript.jsonl").exists()
 
     handle_line(state, "/reset-all", runner=_boom)
-    assert not profile.USER_MD.exists()
+    assert not profile.user_md().exists()
     assert recent_episodes() == []
 
 

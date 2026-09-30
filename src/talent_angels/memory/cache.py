@@ -22,7 +22,7 @@ from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
 from pathlib import Path
 
-from talent_angels.memory.paths import DB_PATH
+from talent_angels.memory.paths import db_path
 from talent_angels.skills.connect.reveal import NeighborResult, TaxonomyEdge, TaxonomyNode
 from talent_angels.skills.locate.resolve import SearchResult
 from talent_angels.suites.protocol import SuiteTools
@@ -33,7 +33,7 @@ _DB_FILENAME = "memory.db"
 
 
 def cache_db_path() -> Path:
-    return DB_PATH
+    return db_path()
 
 
 def _connect(db_path: Path) -> sqlite3.Connection:

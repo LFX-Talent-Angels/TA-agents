@@ -1,35 +1,15 @@
 """Global test isolation for the agent's memory stores.
 
-The memory layer resolves its paths to module-level constants at import time
-(``USER_MD``, ``MEMORY_MD``, ``DB_PATH``), defaulting to the real
-project-local home (``<repo>/.ta-agents``). Without isolation, any test that writes or erases
-memory touches the developer's actual profile and the actual ``memory.db`` —
-and with ``/reset`` now purging episodes, a stray test call would silently
-delete real history.
-
-This was previously handled by a single module-level fixture in
-``tests/test_session_turns.py`` that patched only ``USER_MD``/``MEMORY.md``
-and only for that one module. Every other test module that touched memory was
-unprotected, and ``DB_PATH`` was never isolated anywhere.
-
-Two things this file is careful about:
-
-- **Every binding site, not just the source.** ``memory.paths`` defines the
-  constants, but each consumer does ``from ... import USER_MD``, so patching
-  ``memory.paths`` alone reaches nobody. The table below is the real list of
-  binding sites.
-- **Self-healing.** A consumer that stops binding a constant (because ruff
-  removed a now-unused import) is skipped rather than erroring, so a lint fix
-  upstream can never turn into 350 test errors downstream.
-
-Note ``memory.paths`` also does ``TA_HOME.mkdir()`` at import. That side
-effect is unavoidable without restructuring ``paths`` and only creates an
-empty directory, so it is left alone.
+Every personal-data store (``USER.md``, ``MEMORY.md``, ``memory.db``,
+``checkpoints.db``, sessions, run-log, query details) resolves its path from
+``TA_AGENTS_HOME`` / its own env var **at call time** (``memory/paths.py``), so
+setting the environment per test is complete isolation. Without it, a test
+that writes or erases memory would touch the developer's real profile, history
+and saved sessions — ``/reset-all`` deliberately sweeps all of them.
 """
 
 from __future__ import annotations
 
-import importlib
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -40,10 +20,8 @@ import pytest
 class MemoryHome:
     """The per-test stand-in for the real memory home (``<repo>/.ta-agents``).
 
-    Tests must seed files through these attributes, not through
-    ``memory.paths`` — the store modules bind the constants into their own
-    namespaces at import time, so ``memory.paths.USER_MD`` is still the *real*
-    home path and writing to it would touch the developer's actual profile.
+    Seed files through these attributes; they equal the ``memory.paths``
+    resolvers for the duration of the test.
     """
 
     root: Path
@@ -90,28 +68,9 @@ def _isolate_memory_home(
         checkpoint_db=root / "checkpoints.db",
     )
 
-    redirects = {
-        "talent_angels.memory.profile": {"USER_MD": home.user_md},
-        "talent_angels.memory.agent_notes": {"MEMORY_MD": home.memory_md},
-        "talent_angels.memory.episodes": {"DB_PATH": home.db},
-        "talent_angels.memory.cache": {"DB_PATH": home.db},
-        "talent_angels.memory.erase": {"USER_MD": home.user_md, "MEMORY_MD": home.memory_md},
-        "talent_angels.assistant.graph": {"CHECKPOINT_DB_PATH": home.checkpoint_db},
-        "talent_angels.tui.app": {"MEMORY_MD": home.memory_md},
-    }
-    for module_name, attributes in redirects.items():
-        try:
-            module = importlib.import_module(module_name)
-        except ModuleNotFoundError:
-            # The store being redirected has not been added yet. This fixture is
-            # autouse, so an unguarded import here fails *every* test in the
-            # suite, not just the ones about memory. Skipping is safe: a module
-            # that does not exist cannot read a real path.
-            continue
-        for name, isolated in attributes.items():
-            if not hasattr(module, name):
-                continue  # no longer bound here, so it never reads the real path
-            monkeypatch.setattr(module, name, isolated)
+    # Every store resolves its path from TA_AGENTS_HOME on each call, so one
+    # environment variable isolates all of them — no per-module patching.
+    monkeypatch.setenv("TA_AGENTS_HOME", str(root))
     return home
 
 

@@ -50,7 +50,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 
 from talent_angels.memory.episodes import clear_episodes, vacuum_db
-from talent_angels.memory.paths import MEMORY_MD, USER_MD
+from talent_angels.memory.paths import default_runlog_path, memory_md, user_md
 
 # Files a session directory is made of. Listed so a count can be reported
 # honestly rather than "deleted something".
@@ -172,7 +172,7 @@ def erase_person(*, vacuum: bool = True) -> EraseResult:
     the file, not merely unlinked. Without it the strings stay readable in
     free pages — verified, not assumed.
     """
-    files_deleted = _unlink(USER_MD) + _unlink(MEMORY_MD)
+    files_deleted = _unlink(user_md()) + _unlink(memory_md())
     episodes_deleted = clear_episodes()
     vacuumed = vacuum and vacuum_db()
     return EraseResult(
@@ -232,9 +232,11 @@ def erase_all(*, session_dir: Path | None = None) -> EraseResult:
     # with the swept set — an unresolved `.` is not "inside a swept dir" even when
     # the file is.
     extra = 0
-    runlog = runlog_path().resolve()
-    if runlog.parent not in swept:
-        extra += _unlink(runlog)
+    # The TUI re-points RUNLOG_PATH at the live session, so the home run-log
+    # (written by the API and CLI) must be named explicitly as well.
+    for runlog in {runlog_path().resolve(), default_runlog_path().resolve()}:
+        if runlog.parent not in swept:
+            extra += _unlink(runlog)
     details = details_dir().resolve()
     if details not in swept:
         extra += _purge_dir(details)

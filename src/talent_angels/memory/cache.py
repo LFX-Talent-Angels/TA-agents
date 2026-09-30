@@ -29,6 +29,7 @@ from talent_angels.suites.protocol import SuiteTools
 from talent_angels.suites.schema import SuiteSchema
 
 DEFAULT_TTL_SECONDS = 24 * 60 * 60  # a day; graph facts don't move fast
+_UNCACHEABLE_WARNINGS = frozenset({"node_not_found", "no_neighbors", "suite_unavailable"})
 _DB_FILENAME = "memory.db"
 
 
@@ -167,7 +168,17 @@ def set_cached_neighbors(
     result: NeighborResult,
     *,
     db_path: Path | None = None,
-) -> None:
+    ttl_seconds: float = DEFAULT_TTL_SECONDS,
+) -> bool:
+    """Cache a successful neighbour lookup. Returns False when not cached.
+
+    Failures are never cached: a ``node_not_found`` for a malformed id, or an
+    empty answer during a partial outage, would otherwise be served for a day
+    as if it were a graph fact. Expired rows are pruned on every write, so the
+    table cannot grow without bound.
+    """
+    if not result.nodes or any(w in _UNCACHEABLE_WARNINGS for w in result.warnings):
+        return False
     path = db_path or cache_db_path()
     payload = json.dumps(
         {
@@ -184,9 +195,11 @@ def set_cached_neighbors(
             "VALUES (?, ?, ?, ?)",
             (node_id, _rel_key(rel_types), payload, time.time()),
         )
+        conn.execute("DELETE FROM neighbor_cache WHERE cached_at < ?", (time.time() - ttl_seconds,))
         conn.commit()
     finally:
         conn.close()
+    return True
 
 
 def clear_neighbor_cache(*, db_path: Path | None = None) -> int:
@@ -258,7 +271,9 @@ class CachedSuite:
         self.misses += 1
         result = self._suite.get_neighbors(node_id, rel_types=rel_types)
         try:
-            set_cached_neighbors(node_id, rel_types, result, db_path=self._db_path)
+            set_cached_neighbors(
+                node_id, rel_types, result, db_path=self._db_path, ttl_seconds=self._ttl
+            )
         except (sqlite3.Error, OSError, ValueError):
             pass  # a write failure is invisible to the caller by design
         return result

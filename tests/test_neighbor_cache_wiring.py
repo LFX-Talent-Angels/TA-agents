@@ -354,3 +354,30 @@ def _null_outcome() -> Any:
         plan=[],
         record=RunLogRecord(suite=SUITE_NAME, plan=["locate"], question="who is a nurse"),
     )
+
+
+def test_failures_are_never_cached_and_expired_rows_are_pruned(memory_home) -> None:
+    """A node_not_found for a malformed id used to be served for 24 hours."""
+    import sqlite3
+    import time
+
+    from talent_angels.memory.cache import get_cached_neighbors, set_cached_neighbors
+
+    missing = FakeToolResult(warnings=["node_not_found"])
+    assert set_cached_neighbors("onet:29-1023.00", None, missing) is False
+    assert get_cached_neighbors("onet:29-1023.00", None) is None
+
+    from tests.fakes.suite import DEV
+
+    ok = CountingSuite().get_neighbors(DEV.id)
+    assert set_cached_neighbors("a", None, ok) is True
+    conn = sqlite3.connect(memory_home.db)
+    conn.execute("UPDATE neighbor_cache SET cached_at = ?", (time.time() - 10 * 86400,))
+    conn.commit()
+    conn.close()
+
+    assert set_cached_neighbors("b", None, ok) is True
+    conn = sqlite3.connect(memory_home.db)
+    rows = {row[0] for row in conn.execute("SELECT node_id FROM neighbor_cache")}
+    conn.close()
+    assert rows == {"b"}

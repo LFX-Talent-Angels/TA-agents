@@ -587,7 +587,15 @@ def _run_turn_checked(
         answer = merge_answers((), extra_warnings=extra_warnings)
         answer_stage = None
         extra_warnings = []
-    elif len(result_tuple) == 1 and not extra_warnings:
+    elif (
+        len(result_tuple) == 1
+        and not extra_warnings
+        and answer_mode == "natural"
+        and result_tuple[0].nodes
+        and not result_tuple[0].warnings
+    ):
+        # Only a clean single-suite hit is worth a natural-language rephrase;
+        # everything else gets the same deterministic answer as a multi-suite turn.
         answer, answer_stage = build_answer(
             result_tuple[0], llm_client=llm_client, mode=answer_mode
         )

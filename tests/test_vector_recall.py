@@ -387,7 +387,12 @@ def fake_litellm(monkeypatch: pytest.MonkeyPatch) -> _FakeLiteLLM:
 
 
 def test_embedder_meets_the_protocol(fake_litellm: _FakeLiteLLM) -> None:
-    assert isinstance(LiteLLMEmbedder(), Embedder)
+    # Not isinstance(): on Python 3.11 a runtime Protocol check *evaluates*
+    # properties, and `dimensions` deliberately raises before the first call.
+    # mypy checks the structural fit; this pins the member names at runtime.
+    embedder: Embedder = LiteLLMEmbedder()
+    for member in ("dimensions", "configured", "embed"):
+        assert hasattr(type(embedder), member), member
 
 
 def test_dimension_is_unknown_until_the_first_call(fake_litellm: _FakeLiteLLM) -> None:

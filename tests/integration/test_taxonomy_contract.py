@@ -94,3 +94,23 @@ def test_connect_accepts_real_taxonomy_contract_models() -> None:
         "esco:search:exact_pref",
         "esco:neighbors:esco:occupation:contract-check",
     ]
+
+
+def test_the_runtime_imports_every_symbol_it_needs_from_taxonomies() -> None:
+    """The concrete adapters and the schema must exist in the pinned package.
+
+    The contract check above only covered the result models, so TA-agents could
+    depend on `OnetSuite` and `SuiteSchema` from an unmerged TA-taxonomies
+    branch and CI would still pass.
+    """
+    from ta_taxonomies.contract.schema import SuiteSchema
+    from ta_taxonomies.suites.esco.tools import EscoSuite
+    from ta_taxonomies.suites.onet.tools import OnetSuite
+
+    import talent_angels.suites.esco  # noqa: F401
+    import talent_angels.suites.onet  # noqa: F401
+    from talent_angels.suites.schema import SuiteSchema as Reexported
+
+    assert Reexported is SuiteSchema
+    for suite in (EscoSuite, OnetSuite):
+        assert hasattr(suite, "suite_schema"), suite

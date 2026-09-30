@@ -254,6 +254,7 @@ def dispatch_plan(
     suite_name: str,
     llm_client: LLMClient | None = None,
     bound_node: NodeRef | None = None,
+    need_answer: bool = True,
 ) -> AssistantState:
     """Run the planned capability against one opened suite.
 
@@ -264,6 +265,16 @@ def dispatch_plan(
     """
     if uses_chat_phrasing(llm_client):
         assert llm_client is not None
+        plan = state.get("plan")
+        draft = state.get("plan_draft")
+        if draft is not None:
+            subject_hint = draft.subject
+        elif state.get("heuristic_intent", True):
+            # The LLM planner failed or was skipped: keyword extraction is the
+            # only subject we have (empty question → empty subject → no search).
+            subject_hint = extract_locate_subject(state["question"])
+        else:
+            subject_hint = None
         try:
             outcome = run_tool_loop(
                 question=state["question"],
@@ -272,6 +283,9 @@ def dispatch_plan(
                 llm_client=llm_client,
                 kind=state.get("kind"),
                 bound_node=bound_node,
+                intent=plan.intent.target if plan is not None else None,
+                subject_hint=subject_hint,
+                need_answer=need_answer,
             )
         except Exception:
             # Provider rejected the call or the loop failed — fall back to deterministic dispatch.

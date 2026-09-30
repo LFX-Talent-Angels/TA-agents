@@ -107,13 +107,20 @@ def extract_locate_subject(question: str) -> str:
     return text.strip() or question.strip()
 
 
+def _has_keyword(text: str, keyword: str) -> bool:
+    """Word-start match: "gap" must not match "Singapore"; "gaps"/"skills" still match."""
+    if not keyword[0].isalnum():
+        return keyword in text
+    return re.search(rf"(?<![a-z0-9]){re.escape(keyword)}", text) is not None
+
+
 def classify_capability(question: str) -> Capability:
     q = question.lower()
     padded = f" {q} "
-    if any(k in q for k in _PATHFIND_KEYWORDS):
+    if any(_has_keyword(q, k) for k in _PATHFIND_KEYWORDS):
         return CAPABILITY_PATHFIND
     if " from " in padded and " to " in padded:
         return CAPABILITY_PATHFIND
-    if any(k in q for k in _CONNECT_KEYWORDS):
+    if any(_has_keyword(q, k) for k in _CONNECT_KEYWORDS):
         return CAPABILITY_CONNECT
     return CAPABILITY_LOCATE

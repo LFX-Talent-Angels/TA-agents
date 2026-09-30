@@ -7,14 +7,16 @@ client of the same assistant).
 
 from __future__ import annotations
 
+import logging
 import os
+import sqlite3
 from dataclasses import dataclass, field
 
 from talent_angels.assistant.answer import build_answer
 from talent_angels.assistant.cache import ResultCache
 from talent_angels.assistant.graph import build_graph, dispatch_plan
 from talent_angels.assistant.honesty import honesty_warnings
-from talent_angels.assistant.intent import CAPABILITY_LOCATE, Capability
+from talent_angels.assistant.intent import CAPABILITY_CONNECT, CAPABILITY_LOCATE, Capability
 from talent_angels.assistant.llm_plan import PlanDraft, interpret_question
 from talent_angels.assistant.merge import merge_answers
 from talent_angels.assistant.planning import (
@@ -43,6 +45,26 @@ from talent_angels.skills.locate.rank import group_and_sort_locate
 from talent_angels.suites.measured import MeasuredSuite
 from talent_angels.suites.protocol import SuiteTools
 from talent_angels.suites.registry import SuiteRegistry, UnknownSuiteError
+
+logger = logging.getLogger(__name__)
+
+#: Hard cap on the question the runtime will process. The API rejects longer
+#: input; other callers are truncated (with a warning) so a pasted document can
+#: never be sent whole to every prompt and to full-text search.
+MAX_QUESTION_CHARS = 1000
+
+NO_SUBJECT_ANSWER = (
+    "Which occupation or skill do you mean? For example: "
+    "“What skills does a nurse need?” or “Where is data scientist?”"
+)
+
+
+def normalize_question(question: str) -> tuple[str, list[str]]:
+    """Strip and bound the question. Returns the text and any warnings."""
+    text = " ".join(question.split())
+    if len(text) > MAX_QUESTION_CHARS:
+        return text[:MAX_QUESTION_CHARS].rstrip(), ["question_truncated"]
+    return text, []
 
 
 def _usage_from_stages(stages: list[StageUsage]) -> LLMUsage:
@@ -231,9 +253,66 @@ def _record_turn(
         ),
     )
     if persist:
-        append_record(record)
-        record_episode(record)
+        persist_turn_record(record)
     return record
+
+
+def persist_turn_record(record: RunLogRecord) -> None:
+    """Append the run-log line and the episode. Never fails the turn.
+
+    The answer has already been computed; a locked, corrupt or read-only store
+    must degrade to a logged warning, not turn a good answer into a 500.
+    """
+    try:
+        append_record(record)
+    except OSError:
+        logger.warning("run-log append failed", exc_info=True)
+    try:
+        record_episode(record)
+    except (sqlite3.Error, OSError):
+        logger.warning("episode record failed", exc_info=True)
+
+
+def _early_turn(
+    *,
+    capability: Capability,
+    suite_name: str,
+    question: str,
+    warnings: list[str],
+    answer: str,
+    persist: bool,
+    stages: list[StageUsage] | None = None,
+    plan_draft: PlanDraft | None = None,
+    heuristic_intent: bool = True,
+) -> TurnOutcome:
+    """A turn that stops before any suite is queried — still logged (rule 7)."""
+    result = AgentResult(capability=capability, suite=suite_name, warnings=warnings)
+    plan = build_plan_for_capability(capability, suites=(suite_name,))
+    record = _record_turn(
+        suite_label=suite_name,
+        plan=plan,
+        question=question,
+        result=result,
+        results=(result,),
+        stages=list(stages or []),
+        tools=[],
+        cache_hit=False,
+        heuristic_intent=heuristic_intent,
+        persist=persist,
+    )
+    return TurnOutcome(
+        capability=capability,
+        plan=plan,
+        result=result,
+        answer=answer,
+        record=record,
+        results=(result,),
+        plan_draft=plan_draft,
+    )
+
+
+def _has_bound(bound_node: NodeRef | None, bound_nodes: dict[str, NodeRef] | None) -> bool:
+    return bound_node is not None or bool(bound_nodes)
 
 
 def run_turn(
@@ -265,9 +344,93 @@ def run_turn(
     capability cost measurement (MVP plan Sec 2.3). `cache`, when given, is
     only consulted on the `force_locate` path — the efficiency A/B experiment
     (MVP plan Sec 2.7) targets Locate specifically.
+
+    Robustness contract: every turn returns a typed outcome and writes a
+    run-log record. An empty question is answered without any model call; an
+    unexpected failure degrades to a ``turn_failed:<Type>`` warning instead of
+    raising. Only ``UnknownSuiteError`` (a caller error) propagates.
     """
     if force_locate and force_capability not in (None, CAPABILITY_LOCATE):
         raise ValueError("force_locate cannot be combined with another forced capability")
+    if registry is None and suite is None:
+        raise ValueError("run_turn requires registry or suite")
+    question, input_warnings = normalize_question(question)
+    default_suite = registry.default if registry is not None else suite_name
+    if not question:
+        return _early_turn(
+            capability=force_capability or CAPABILITY_LOCATE,
+            suite_name=default_suite,
+            question=question,
+            warnings=["no_subject"],
+            answer=NO_SUBJECT_ANSWER,
+            persist=persist,
+        )
+    try:
+        outcome = _run_turn_checked(
+            llm_client=llm_client,
+            question=question,
+            suite=suite,
+            suite_name=suite_name,
+            registry=registry,
+            suite_override=suite_override,
+            kind=kind,
+            answer_mode=answer_mode,
+            force_locate=force_locate,
+            force_capability=force_capability,
+            cache=cache,
+            bound_node=bound_node,
+            bound_nodes=bound_nodes,
+            persist=persist,
+            thread_id=thread_id,
+            input_warnings=input_warnings,
+        )
+    except UnknownSuiteError:
+        raise
+    except Exception as exc:  # noqa: BLE001 — a turn must degrade, never crash the edge
+        logger.exception("turn failed")
+        return _failed_turn(exc, question, default_suite, force_capability, persist)
+    return outcome
+
+
+def _failed_turn(
+    exc: Exception,
+    question: str,
+    suite_name: str,
+    force_capability: Capability | None,
+    persist: bool,
+) -> TurnOutcome:
+    return _early_turn(
+        capability=force_capability or CAPABILITY_LOCATE,
+        suite_name=suite_name,
+        question=question,
+        warnings=[f"turn_failed:{type(exc).__name__}"],
+        answer=(
+            "Something went wrong while answering that, and nothing was looked up. "
+            "Please try again; if it keeps happening, the run log has the details."
+        ),
+        persist=persist,
+    )
+
+
+def _run_turn_checked(
+    *,
+    llm_client: LLMClient,
+    question: str,
+    suite: SuiteTools | None,
+    suite_name: str,
+    registry: SuiteRegistry | None,
+    suite_override: str | None,
+    kind: str | None,
+    answer_mode: str,
+    force_locate: bool,
+    force_capability: Capability | None,
+    cache: ResultCache | None,
+    bound_node: NodeRef | None,
+    bound_nodes: dict[str, NodeRef] | None,
+    persist: bool,
+    thread_id: str | None,
+    input_warnings: list[str],
+) -> TurnOutcome:
     if registry is None:
         if suite is None:
             raise ValueError("run_turn requires registry or suite")
@@ -320,7 +483,8 @@ def run_turn(
         question=question,
     )
     extra_warnings: list[str] = [
-        f"suite_not_attached:{name}" for name in named_unattached(question, registry.available)
+        *input_warnings,
+        *(f"suite_not_attached:{name}" for name in named_unattached(question, registry.available)),
     ]
     collected: list[AgentResult] = []
     tools = []
@@ -338,6 +502,29 @@ def run_turn(
         stages.append(interpreted.stage)
     plan = interpreted.plan
     capability = plan.intent.target
+    draft = interpreted.draft
+    if (
+        not interpreted.heuristic
+        and draft is not None
+        and not draft.subject
+        and capability in (CAPABILITY_LOCATE, CAPABILITY_CONNECT)
+        and selected_force is None
+        and not _has_bound(bound_node, bound_nodes)
+    ):
+        # The planner found no occupation or skill to look up (a greeting, an
+        # instruction to the assistant, noise). Querying the graph anyway is how
+        # a prompt example once became a confident, cited, unrelated answer.
+        return _early_turn(
+            capability=capability,
+            suite_name=selected[0] if selected else registry.default,
+            question=question,
+            warnings=["no_subject", *extra_warnings],
+            answer=NO_SUBJECT_ANSWER,
+            persist=persist,
+            stages=stages,
+            plan_draft=draft,
+            heuristic_intent=False,
+        )
     seed_state = {
         "question": question,
         "kind": kind,
@@ -373,6 +560,9 @@ def run_turn(
                     suite_name=name,
                     llm_client=llm_client,
                     bound_node=_bound_for_suite(name, bound_node, bound_nodes),
+                    # The merged answer below is written in code; the model's own
+                    # final phrasing round would be billed and then discarded.
+                    need_answer=False,
                 )
                 cache_hit = cache_hit or _served_from_cache(runtime.suite)
                 collected.append(dispatched["result"])
@@ -381,19 +571,22 @@ def run_turn(
         except UnknownSuiteError:
             raise
         except Exception:  # noqa: BLE001 — a down suite must not fail the turn
+            logger.warning("suite %s unavailable", name, exc_info=True)
             extra_warnings.append(f"suite_unavailable:{name}")
 
     result_tuple = tuple(collected)
     extra_warnings.extend(honesty_warnings(result_tuple))
     if not result_tuple:
-        empty = AgentResult(
+        # Warnings go on the placeholder once — they are not appended again below.
+        primary = AgentResult(
             capability=capability,
             suite=selected[0] if selected else suite_name,
             warnings=extra_warnings or ["not_found"],
         )
-        result_tuple = (empty,)
+        result_tuple = (primary,)
         answer = merge_answers((), extra_warnings=extra_warnings)
         answer_stage = None
+        extra_warnings = []
     elif len(result_tuple) == 1 and not extra_warnings:
         answer, answer_stage = build_answer(
             result_tuple[0], llm_client=llm_client, mode=answer_mode

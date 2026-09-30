@@ -875,7 +875,7 @@ def _from_outcome(
         # (`_hit_phrase` already says "<suite> has several matches" for an
         # ambiguous hit) with no model call, so there is nothing left to
         # hallucinate.
-        text = synthesize_structured(results)
+        text = synthesize_structured(results, list_ambiguous=False)
         extras = [*unique_cards]
         picker_blocks = [
             block for block in blocks if "I won't pick" in block or "Which one" in block

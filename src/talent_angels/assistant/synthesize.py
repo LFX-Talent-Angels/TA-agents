@@ -9,6 +9,7 @@ from __future__ import annotations
 import re
 from collections.abc import Sequence
 
+from talent_angels.assistant.answer import NO_SUBJECT, PATHFIND_UNAVAILABLE, is_pathfind_unavailable
 from talent_angels.assistant.merge import suite_heading
 from talent_angels.contracts import AgentResult
 from talent_angels.env import episode_retriever
@@ -64,7 +65,60 @@ def sources_line(
     return line
 
 
+#: How many names a deterministic answer shows per list before "+N more".
+ANSWER_LIST_PREVIEW = 6
+
+
+def _preview(labels: Sequence[str], total: int | None = None) -> str:
+    shown = [label for label in labels if label][:ANSWER_LIST_PREVIEW]
+    count = len(labels) if total is None else total
+    extra = count - len(shown)
+    text = ", ".join(shown)
+    return f"{text} (+{extra} more)" if extra > 0 else text
+
+
+def _connect_line(result: AgentResult) -> str:
+    """Name the centre node and its top neighbours, split by relation type.
+
+    Neighbours arrive ranked (skills first, O*NET importance, hot technology);
+    this only groups and previews them.
+    """
+    center, neighbours = result.nodes[0], result.nodes[1:]
+    type_of: dict[str, str] = {}
+    for edge in result.edges:
+        other = edge.target_node_id if edge.source_node_id == center.id else edge.source_node_id
+        type_of.setdefault(other, edge.type)
+    tools = [n.pref_label for n in neighbours if type_of.get(n.id) == "USES_SOFTWARE"]
+    skills = [n.pref_label for n in neighbours if type_of.get(n.id) != "USES_SOFTWARE"]
+    parts: list[str] = []
+    if skills:
+        parts.append(f"{len(skills)} skill(s): {_preview(skills)}")
+    if tools:
+        parts.append(f"{len(tools)} software/tool(s): {_preview(tools)}")
+    if not parts:
+        return f"{center.pref_label} — no linked skills on this map"
+    return f"{center.pref_label} — " + "; ".join(parts)
+
+
+def _suite_line(result: AgentResult, *, list_ambiguous: bool = True) -> str | None:
+    """One line per suite, or None when the suite had nothing to say."""
+    heading = suite_heading(result.suite) if result.suite else "map"
+    if "ambiguous" in result.warnings and result.nodes:
+        if not list_ambiguous:
+            return f"{heading}: several matches"
+        names = [node.pref_label for node in result.nodes]
+        return f"{heading}: several matches — {_preview(names)}"
+    if not result.nodes or "not_found" in result.warnings:
+        return None
+    if result.capability == "connect":
+        return f"{heading}: {_connect_line(result)}"
+    top = result.nodes[0]
+    confidence = f", confidence {result.confidence:.0%}" if result.confidence is not None else ""
+    return f"{heading}: {top.pref_label} ({top.kind}{confidence})"
+
+
 def _hit_phrase(result: AgentResult) -> str | None:
+    """Short label for a suite hit (kept for callers that want one phrase)."""
     heading = suite_heading(result.suite) if result.suite else "map"
     if "ambiguous" in result.warnings and result.nodes:
         return f"{heading} has several matches"
@@ -81,28 +135,37 @@ def synthesize_structured(
     results: Sequence[AgentResult],
     *,
     extra_warnings: Sequence[str] = (),
+    list_ambiguous: bool = True,
 ) -> str:
-    """Deterministic one-paragraph answer. Safe with no LLM."""
+    """Deterministic answer naming what each suite found. Safe with no LLM.
+
+    ``list_ambiguous=False`` when a numbered picker is printed underneath (TUI),
+    so the candidates are not listed twice.
+    """
     if not results:
         empty = sources_line((), extra_warnings=extra_warnings)
         return "No attached taxonomy was reachable. " + empty
 
-    if results and all("bind_required" in result.warnings for result in results):
-        body = "Name or pick an occupation first, then ask for skills."
-        return f"{body}\n\n{sources_line(results, extra_warnings=extra_warnings)}"
+    sources = sources_line(results, extra_warnings=extra_warnings)
+    if all("bind_required" in result.warnings for result in results):
+        return f"Name or pick an occupation first, then ask for skills.\n\n{sources}"
+    if all("no_subject" in result.warnings for result in results):
+        return f"{NO_SUBJECT}\n\n{sources}"
+    if all(is_pathfind_unavailable(result) for result in results):
+        return f"{PATHFIND_UNAVAILABLE}\n\n{sources}"
 
-    hits = [phrase for result in results if (phrase := _hit_phrase(result))]
-    if not hits:
+    lines = [
+        line for result in results if (line := _suite_line(result, list_ambiguous=list_ambiguous))
+    ]
+    if not lines:
         body = "No node for that phrase with today's search. That's a miss, not a maybe."
-    elif len(hits) == 1:
-        body = f"On the attached maps this lines up with {hits[0]}."
+    elif len(lines) == 1:
+        body = lines[0]
     else:
-        body = (
-            "On the attached maps this lines up with "
-            + "; ".join(hits)
-            + ". These are separate official records, not one shared id."
-        )
-    return f"{body}\n\n{sources_line(results, extra_warnings=extra_warnings)}"
+        body = "\n".join(lines) + "\nThese are separate official records, not one shared id."
+    if list_ambiguous and any("ambiguous" in r.warnings and r.nodes for r in results):
+        body += "\nWhich one do you mean?"
+    return f"{body}\n\n{sources}"
 
 
 def _fact_card(results: Sequence[AgentResult]) -> str:

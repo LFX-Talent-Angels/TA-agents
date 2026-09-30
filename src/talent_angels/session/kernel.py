@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import copy
 import json
 from collections.abc import Sequence
 from dataclasses import dataclass
@@ -248,12 +249,14 @@ def _finish(state: SessionState, user_text: str, assistant_text: str) -> ChatRep
 
 
 def _copy_into(state: SessionState, loaded: SessionState) -> None:
-    state.session_id = loaded.session_id
-    state.name = loaded.name
-    state.transcript = list(loaded.transcript)
-    state.binding = loaded.binding
-    state.pending = list(loaded.pending)
-    state.last_result = loaded.last_result
+    """Replace every field of ``state`` in place.
+
+    Field-by-field copying missed ``bindings`` and ``last_results``: after
+    ``/reset`` the old per-suite binding kept steering turns and was saved back
+    to disk. Iterating the model's fields means a new field cannot be missed.
+    """
+    for field_name in SessionState.model_fields:
+        setattr(state, field_name, copy.deepcopy(getattr(loaded, field_name)))
 
 
 def _handle_command(state: SessionState, text: str) -> ChatReply:
@@ -269,14 +272,26 @@ def _handle_command(state: SessionState, text: str) -> ChatReply:
         return _finish(state, text, HELP_TEXT)
     if command.name == "save":
         _record(state, "user", text)
-        path = save_session(state, name=command.argument)
+        previous_name = state.name
+        try:
+            path = save_session(state, name=command.argument)
+        except ValueError:
+            state.name = previous_name
+            message = "Session names use letters, digits, - and _ only (up to 64)."
+            _record(state, "assistant", message)
+            return _reply(state, message)
         message = f"Saved session to {path}"
         _record(state, "assistant", message)
         return _reply(state, message)
     if command.name == "resume":
-        loaded = (
-            load_last() if command.argument == "last" else load_session(command.argument or "last")
-        )
+        try:
+            loaded = (
+                load_last()
+                if command.argument in (None, "", "last")
+                else load_session(command.argument)
+            )
+        except (OSError, ValueError, KeyError):
+            return _finish(state, text, f"No saved session named {command.argument!r}.")
         _copy_into(state, loaded)
         message = f"Resumed session {state.name or state.session_id}."
         return _finish(state, text, message)

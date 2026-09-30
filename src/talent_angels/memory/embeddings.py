@@ -28,7 +28,8 @@ which is the same bargain ``recall_prefix`` makes.
 on the interactive path, before the model is called. On the 30-turn corpus that
 is pennies; on a long history it is still pennies, because the *index* is built
 once and the *query* is a single short string. The latency is the part that
-matters, and it is why vector recall is opt-in rather than the default.
+matters for a hosted model, which is why the default is the local embedder
+(``LocalEmbedder``): no network, no bill, milliseconds per query.
 """
 
 from __future__ import annotations

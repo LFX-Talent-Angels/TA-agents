@@ -109,14 +109,25 @@ worth knowing before adding to it is the **retrieval seam**:
   particular answer.
 - `memory/fts_retriever.py` — the lexical implementation (SQLite FTS5). The
   query design behind it is measured by `evals/recall.py`, not asserted.
-- `env.py` — `TA_RECALL=off|lexical|vector` picks the backend, default `off`.
-  A new backend is a branch here, never a decision repeated at a call site.
-  `vector` is implemented but **measured as not worth defaulting to**: over the
-  `evals/recall.py` corpus it fixed 1 query and broke 2 (p@1 0.889 vs 0.917),
-  because a dense retriever always returns its `k` nearest turns and so never
-  returns nothing — 210 irrelevant hits against lexical's 0. It is kept because
-  the comparison is the artefact, and a shipped alternative is what makes
-  "we measured it" checkable rather than a claim.
+- `memory/vector_retriever.py` + `memory/vector_index.py` — meaning-based
+  recall over the same episodes: sqlite-vec in `memory.db`, cosine distance,
+  a per-model relevance floor (`RELEVANCE_FLOORS`, calibrated by
+  `evals.recall --vector --calibrate`).
+- `memory/embeddings.py` — `default_embedder()`: the **local**
+  `all-MiniLM-L6-v2` (free, on-device, the model the suites use for their own
+  vector indexes) when the `local-embed` extra is installed; a hosted LiteLLM
+  model only when `TA_EMBEDDING_MODEL` names one; `none` disables embeddings.
+- `env.py` — `TA_RECALL=off|lexical|vector|hybrid` picks the backend,
+  **default `hybrid`**: keyword (FTS5) first, vector only when keyword finds
+  nothing. Measured on the 43-query corpus with the local model: 1/36
+  unanswered (keyword alone 2/36), p@1 0.917, 0 irrelevant hits. `vector` alone
+  is kept for comparison, not recommended (a dense retriever never returns
+  "nothing"). A new backend is a branch here, never a decision at a call site.
+- Turns are added to the vector index as they are recorded
+  (`vector_retriever.index_episode`, local embedder only — recording never
+  spends money), with a backfill of older episodes on the first write.
+  Episodes index the question plus at most 3 topic labels (the resolved node
+  per suite), never every cited neighbour.
 
 Prompt sites import `env.episode_retriever()`, never a backend. Four call sites
 exist (`session/phrase.py` twice, `assistant/agent_loop.py`,
@@ -141,6 +152,25 @@ Recall is personal history, not telemetry, so `/reset-all` clears the episodes
 readable in free pages. See `memory/erase.py` and `tests/test_erase_scopes.py`,
 which assert at the byte level because that is the only level the original bug
 was visible at.
+
+## Turn graph and checkpointing
+
+Every registry turn (API, CLI, TUI) runs as a LangGraph:
+`plan → dispatch → answer → remember` (`assistant/turn_graph.py`). Runtime
+objects (registry, LLM client) are closed over by the nodes; only data is in
+state. Every per-turn channel is set on every invoke (`fresh_turn_input`), so
+nothing carries over by omission. With a `thread_id` (the API's session id)
+the graph uses the shared durable saver (`assistant/checkpoint.py`,
+`<home>/checkpoints.db`), and the one channel meant to persist is a bounded
+`history` of typed `TurnMemo`s — exposed as `GET /v1/sessions/{id}/history`,
+erased by `DELETE /v1/sessions/{id}`. Checkpointed types are registered with
+the msgpack serde; tests run with `LANGGRAPH_STRICT_MSGPACK=true`.
+
+Every turn returns a typed outcome and writes its run-log record: an empty or
+subject-less question stops before the graph (`no_subject`), any LLM failure
+becomes `LLMError` and degrades to the deterministic path, and any other
+failure returns `turn_failed:<Type>`. Model calls go through
+`llm_call.measure_complete` (metered, typed errors, timeouts).
 
 ## Contracts
 

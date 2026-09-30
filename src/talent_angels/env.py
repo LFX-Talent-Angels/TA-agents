@@ -61,10 +61,7 @@ def load_local_dotenv() -> Path | None:
 
 
 def recall_mode() -> str:
-    """``off`` | ``lexical`` | ``vector``. Default ``off``.
-
-    Default off so a fresh install behaves exactly as it did before recall
-    existed, and so no turn depends on an index that may not be built yet.
+    """``off`` | ``lexical`` | ``vector`` | ``hybrid``. Default ``hybrid``.
 
     Defaults to ``hybrid``, which is the best-measured mode: over the
     ``evals.recall`` corpus it answers 0 of 36 questions wrongly-unanswered

@@ -223,6 +223,12 @@ def _compare_heuristic(question: str) -> PlanDraft | None:
     return None
 
 
+def denied_subject(question: str) -> str | None:
+    """The title in "I am not a X" / "I don't work as X", or None."""
+    m = _REJECT_RE.match(question.strip())
+    return m.group(1).strip().rstrip("?.!") if m else None
+
+
 def _profile_intent_heuristic(question: str) -> PlanDraft | None:
     """Return a PlanDraft for compare/goal/reject/standing patterns when the LLM planner fails."""
     compare = _compare_heuristic(question)

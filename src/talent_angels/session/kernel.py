@@ -13,7 +13,7 @@ from typing import Literal, Protocol
 from talent_angels.assistant.answer import CONNECT_PREVIEW_CAP, summarize_result
 from talent_angels.assistant.connect_request import followup_connect_request, is_describe_followup
 from talent_angels.assistant.intent import CAPABILITY_CONNECT
-from talent_angels.assistant.llm_plan import PlanDraft
+from talent_angels.assistant.llm_plan import PlanDraft, denied_subject
 from talent_angels.assistant.merge import suite_heading
 from talent_angels.assistant.suite_select import resolve_show_token
 from talent_angels.assistant.synthesize import synthesize, synthesize_structured
@@ -23,6 +23,7 @@ from talent_angels.llm import LLMClient
 from talent_angels.memory.episodes import recent_episodes
 from talent_angels.memory.erase import erase_all, erase_session, erase_summary
 from talent_angels.memory.profile import (
+    drop_standing_matching,
     profile_titles,
     read_user_profile,
     write_goal,
@@ -1144,6 +1145,14 @@ def _handle_map(
     bound = state.binding.node if state.binding is not None else None
     bound_nodes = dict(state.bindings) if state.bindings else None
     # "compare the two" names its titles in code, from the working set.
+    denied = denied_subject(text)
+    dropped = drop_standing_matching(denied) if denied else []
+    if dropped:
+        # The denial names a saved current job: correct the profile, no search.
+        titles = ", ".join(f"**{title}**" for title in dropped)
+        message = f"Noted: {titles} is no longer saved as your current job."
+        _record(state, "assistant", message)
+        return _reply(state, message)
     pair = question or pair_followup(text, state.recent)
     if pair is None and bound_nodes and is_describe_followup(text, bound_nodes):
         return _describe_bound(state, text, llm_client=llm_client)

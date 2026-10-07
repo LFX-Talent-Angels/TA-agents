@@ -158,6 +158,49 @@ def write_rejected(node: NodeRef) -> None:
     _rewrite(update)
 
 
+def drop_standing_matching(subject: str) -> list[str]:
+    """Remove current-job lines naming ``subject`` and record them as rejected.
+
+    "I am not a teacher" after "dance teacher" was saved: the denial is about
+    the saved title, so it is matched on whole words of that title, not searched.
+    Returns the removed titles (one per suite line).
+    """
+    words = subject.casefold().split()
+    removed: list[str] = []
+
+    def names_subject(label: str) -> bool:
+        tokens = label.casefold().replace("-", " ").split()
+        return bool(words) and all(
+            any(token == word or token == f"{word}s" for token in tokens) for word in words
+        )
+
+    def update(lines: list[str]) -> list[str]:
+        kept: list[str] = []
+        entries: list[str] = []
+        for line in lines:
+            if line.startswith("STANDING[") and "]:" in line:
+                body = line.split("]:", 1)[1]
+                label = body.split("  [", 1)[0].strip()
+                if names_subject(label):
+                    tag = body.split("  [", 1)[1].split("]", 1)[0] if "  [" in body else ""
+                    removed.append(label)
+                    entries.append(f"{label} [{tag}]" if tag else label)
+                    continue
+            kept.append(line)
+        if not entries:
+            return lines
+        for i, line in enumerate(kept):
+            if line.startswith("REJECTED:"):
+                existing = line[len("REJECTED:") :].strip()
+                joined = ", ".join(entries)
+                kept[i] = f"REJECTED: {existing}, {joined}" if existing else f"REJECTED: {joined}"
+                return kept
+        return [*kept, "REJECTED: " + ", ".join(entries)]
+
+    _rewrite(update)
+    return removed
+
+
 def write_goal(node: NodeRef) -> None:
     """Updates GOAL line in USER.md.
 

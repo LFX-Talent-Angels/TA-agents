@@ -434,3 +434,26 @@ def test_connect_phrasing_drops_a_table_the_list_already_shows() -> None:
         card=connect_card(_connect_result()),
     )
     assert text == "Software developers code."
+
+
+def test_picker_intro_that_answers_for_the_user_falls_back() -> None:
+    reply = (
+        "Here they are side by side:\n\n| | Baker | Cook |\n|---|---|---|\n"
+        "| Typical tasks | doughs | food |\n\nWhich one did you mean?"
+    )
+    text = phrase_chat(
+        _Scripted(reply),
+        user_text="compare it with a cook",
+        fallback="pick one",
+        hint="",
+        mode="intro",
+    )
+    assert text == "pick one"
+
+
+def test_picker_intro_of_one_sentence_is_kept() -> None:
+    reply = "I found a few cooks on the map. Which one did you mean?"
+    text = phrase_chat(
+        _Scripted(reply), user_text="cook", fallback="pick one", hint="", mode="intro"
+    )
+    assert text == reply

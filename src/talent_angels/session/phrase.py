@@ -82,7 +82,7 @@ def phrase_chat(
     text = (result.text or "").strip()
     if not text:
         return fallback
-    if mode == "intro" and _looks_like_numbered_list(text):
+    if mode == "intro" and (_looks_like_numbered_list(text) or _too_long_for_intro(text)):
         return fallback
     if mode == "miss" and _looks_like_invented_miss(text):
         return fallback
@@ -235,6 +235,15 @@ def _has_extra_job_title(text: str, result: AgentResult) -> bool:
 def _names_the_product(text: str) -> bool:
     lowered = text.casefold()
     return "lfx" in lowered or "talent angels" in lowered
+
+
+#: A pick-list intro is one sentence; a longer one has started answering for
+#: the user (live: an invented side-by-side table of "typical tasks").
+_INTRO_MAX_CHARS = 200
+
+
+def _too_long_for_intro(text: str) -> bool:
+    return len(text) > _INTRO_MAX_CHARS or "|" in text or "\n" in text.strip()
 
 
 def _looks_like_numbered_list(text: str) -> bool:

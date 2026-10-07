@@ -7,7 +7,16 @@ from dataclasses import dataclass
 from typing import Literal
 
 LineKind = Literal[
-    "command", "greet", "help_plain", "advice", "catalogue", "pick", "show_suite", "chat", "map"
+    "command",
+    "greet",
+    "help_plain",
+    "advice",
+    "catalogue",
+    "pick",
+    "show_suite",
+    "chat",
+    "recall",
+    "map",
 ]
 
 _GREET_RE = re.compile(
@@ -69,6 +78,19 @@ _META_SELF_RE = re.compile(
 )
 
 
+# What this conversation (or an earlier one) looked at: answered from memory.
+_RECALL_RE = re.compile(
+    r"^\s*(?:can\s+you\s+)?(?:remind\s+me\s+)?(?:"
+    r"what\s+(?:(?:did|have)\s+)?we\s+(?:talk(?:ed)?\s+about|discuss(?:ed)?|look(?:ed)?\s+at)|"
+    r"what\s+(?:jobs?|occupations?|titles?)\s+(?:did|have)\s+i\s+"
+    r"(?:look(?:ed)?\s+at|ask(?:ed)?\s+about)|"
+    r"what\s+was\s+the\s+(?:first|last|previous)\s+(?:job|occupation|title|thing)\s+"
+    r"(?:i|we)\s+(?:looked\s+at|asked\s+about)"
+    r")\b",
+    re.IGNORECASE,
+)
+
+
 @dataclass(frozen=True, slots=True)
 class RoutedLine:
     kind: LineKind
@@ -116,5 +138,8 @@ def route_line(text: str) -> RoutedLine:
 
     if _META_SELF_RE.match(stripped):
         return RoutedLine(kind="chat", text=stripped)
+
+    if _RECALL_RE.match(stripped):
+        return RoutedLine(kind="recall", text=stripped)
 
     return RoutedLine(kind="map", text=stripped)

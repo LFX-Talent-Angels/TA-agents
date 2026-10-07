@@ -20,6 +20,7 @@ from talent_angels.assistant.synthesize import synthesize, synthesize_structured
 from talent_angels.assistant.turn import TurnOutcome
 from talent_angels.contracts import AgentResult, NodeRef
 from talent_angels.llm import LLMClient
+from talent_angels.memory.episodes import recent_episodes
 from talent_angels.memory.erase import erase_all, erase_session, erase_summary
 from talent_angels.memory.profile import (
     read_user_profile,
@@ -65,6 +66,7 @@ from talent_angels.session.phrase import (
     uses_chat_phrasing,
 )
 from talent_angels.session.picker import bind_pick, choices_from_result, render_picker
+from talent_angels.session.recall import recall_reply
 from talent_angels.session.router import route_line
 from talent_angels.session.store import (
     clear_conversation,
@@ -186,6 +188,8 @@ def handle_line(
         return _handle_show(state, text, routed.show_token or "")
     if routed.kind == "chat":
         return _handle_chat(state, text, llm_client=llm_client)
+    if routed.kind == "recall":
+        return _finish(state, text, recall_reply(text, state.recent, recent_episodes(limit=30)))
     mention = parse_skill_mention(text)
     stored = state.last_result
     if mention is None and stored is not None and can_expand_connect(stored):

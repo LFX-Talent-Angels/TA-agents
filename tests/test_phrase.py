@@ -457,3 +457,15 @@ def test_picker_intro_of_one_sentence_is_kept() -> None:
         _Scripted(reply), user_text="cook", fallback="pick one", hint="", mode="intro"
     )
     assert text == reply
+
+
+def test_map_prompt_forbids_claiming_an_earlier_conversation() -> None:
+    client = ScriptedClient("ok")
+    phrase_map(
+        client,
+        question="I want to become a web developer",
+        result=_connect_result(),
+        fallback="fallback",
+        card=connect_card(_connect_result()),
+    )
+    assert "Never claim\n  something was noted or said earlier" in client.calls[0][0].content

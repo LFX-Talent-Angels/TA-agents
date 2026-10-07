@@ -42,6 +42,8 @@ Rules:
   a wish the user did not state.
 - Use only titles, skills, and descriptions in the FACT CARD.
 - Do not invent demand, pay, outlook, or study advice.
+- The profile may already hold what the user says in this message. Never claim
+  something was noted or said earlier unless a past-turns block shows it.
 - Do not say two records are the same id or the same node.
 - If two maps name similar titles, say once, in a short clause, that they are
   separate official records; do not repeat it.

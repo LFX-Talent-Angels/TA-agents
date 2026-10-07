@@ -30,6 +30,7 @@ from talent_angels.memory.profile import (
 from talent_angels.session.budget import model_view
 from talent_angels.session.catalog import FreeModel
 from talent_angels.session.commands import UnknownCommand, parse_command
+from talent_angels.session.compare_view import render_compare
 from talent_angels.session.copy import (
     ADVICE_REFUSE,
     CATALOGUE_REFUSE,
@@ -74,6 +75,7 @@ from talent_angels.session.store import (
     sessions_dir,
 )
 from talent_angels.session.switch import SwitchError, apply, load_catalogue, resolve
+from talent_angels.skills.connect.compare import CAPABILITY_COMPARE
 
 _NO_PENDING = "There's no numbered list to pick from. Type a job title first."
 _BAD_PICK = "That number isn't in the list. Reply with a number from the options."
@@ -724,6 +726,9 @@ def _from_single_outcome(
         hint = _connect_more_hint(result)
         if hint and hint not in text:
             text = f"{text}\n\n{hint}"
+    elif result.capability == CAPABILITY_COMPARE:
+        state.pending = []
+        text = render_compare(result)
     elif any(w.startswith("capability_not_implemented") for w in result.warnings):
         text = PATHFIND_REDIRECT
     else:
@@ -897,6 +902,10 @@ def _from_outcome(
             continue
         all_miss = False
         any_hit = True
+        if result.capability == CAPABILITY_COMPARE:
+            # Two titles, neither is "it": the compare binds nothing.
+            unique_cards.append(f"## {heading}\n\n{render_compare(result)}")
+            continue
         _set_bind(state, result.nodes[0])
         if unique_bind is None:
             unique_bind = result.nodes[0]
@@ -973,7 +982,9 @@ def _from_outcome(
         if extras:
             text = text + "\n\n---\n\n" + "\n\n---\n\n".join(extras)
     else:
-        has_connect = any(r.capability == "connect" and r.nodes for r in results)
+        has_connect = any(
+            r.capability in ("connect", CAPABILITY_COMPARE) and r.nodes for r in results
+        )
         if has_connect and unique_cards:
             text = "\n\n---\n\n".join(unique_cards)
             intro = _connect_bridge_intro(results)

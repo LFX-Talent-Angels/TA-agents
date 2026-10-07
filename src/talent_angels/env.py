@@ -45,10 +45,24 @@ def local_dotenv_candidates() -> tuple[Path, ...]:
     return tuple(ordered)
 
 
+#: The taxonomy suites embed a search query with a local sentence-transformers
+#: model. Loading it prints a Hub rate-limit warning and a weights progress bar
+#: into the chat; neither is actionable for a user. Defaults only: an export or
+#: a `.env` line still wins.
+_QUIET_MODEL_LOADING = {
+    "HF_HUB_VERBOSITY": "error",
+    "HF_HUB_DISABLE_PROGRESS_BARS": "1",
+    "TRANSFORMERS_VERBOSITY": "error",
+    "TRANSFORMERS_NO_ADVISORY_WARNINGS": "1",
+    "TOKENIZERS_PARALLELISM": "false",
+}
+
+
 def load_local_dotenv() -> Path | None:
     """Load the first existing candidate with ``override=False``.
 
-    Shell exports always win. Values are never printed.
+    Shell exports always win. Values are never printed. Also sets quiet
+    defaults for local model loading (see ``_QUIET_MODEL_LOADING``).
     """
     loaded: Path | None = None
     for path in local_dotenv_candidates():
@@ -57,6 +71,8 @@ def load_local_dotenv() -> Path | None:
         load_dotenv(path, override=False)
         if loaded is None:
             loaded = path
+    for key, value in _QUIET_MODEL_LOADING.items():
+        os.environ.setdefault(key, value)
     return loaded
 
 

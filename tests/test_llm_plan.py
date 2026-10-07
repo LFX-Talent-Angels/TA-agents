@@ -202,3 +202,4 @@ def test_pathfind_with_two_ends_is_not_a_compare() -> None:
 def test_planner_prompt_teaches_the_compare_shape() -> None:
     assert '"secondary_subject":"software developer"' in PLAN_SYSTEM
     assert '"X vs Y" or "X and Y" as two titles is locate' not in PLAN_SYSTEM
+    assert '("I know Python and SQL") are not a compare' in PLAN_SYSTEM

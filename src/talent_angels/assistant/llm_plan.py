@@ -40,7 +40,8 @@ How to choose target:
   ("path from A to B", "skill gap from A to B", "how to become X from Y")
 - compare = two titles side by side ("X vs Y", "compare X and Y", "difference
   between X and Y", "help me choose between X and Y"): target connect, subject X,
-  secondary_subject Y
+  secondary_subject Y. Only when the user asks to compare or choose; skills the
+  user lists ("I know Python and SQL") are not a compare: secondary_subject null
 
 If the user asks for skills, neighbors, or what someone needs, target MUST be
 connect, not locate. Put only the occupation or skill name in subject — never

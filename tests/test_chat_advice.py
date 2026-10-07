@@ -90,3 +90,15 @@ def test_chat_compares_current_job_and_goal_for_learn_first() -> None:
 
     assert asked == ["compare dance teacher and data analyst"]
     assert reply.text.startswith("Your profile says you are a **dance teacher**")
+
+
+def test_which_one_after_a_compare_compares_that_pair_again() -> None:
+    from talent_angels.session.advice import advice_plan
+
+    plan = advice_plan(
+        "which one should I choose?", current=None, goal=None, compared=("accountant", "chef")
+    )
+    assert plan is not None
+    assert plan.question == "compare accountant and chef"
+    assert "can't choose" in plan.preface
+    assert advice_plan("which one should I choose?", current=None, goal=None) is None

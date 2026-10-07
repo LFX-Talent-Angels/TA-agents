@@ -6,6 +6,7 @@ not a statement about the user. Node IDs + labels only — no prose descriptions
 
 from __future__ import annotations
 
+import re
 from collections.abc import Callable
 from datetime import date
 
@@ -248,5 +249,37 @@ def profile_prefix() -> str:
                 return i
         return len(_CARD_ORDER)
 
-    card = "\n".join(sorted(lines, key=rank)[:_CARD_MAX_LINES])
+    card = "\n".join(_card_line(line) for line in sorted(lines, key=rank)[:_CARD_MAX_LINES])
     return f"[User profile — confirmed by user, not from taxonomy]\n{card}\n\n"
+
+
+def profile_facts() -> list[str]:
+    """What the user told us, one readable line each, for showing back to them."""
+    lines = [line for line in read_user_profile().splitlines() if line.strip()]
+    order = {prefix: i for i, prefix in enumerate(_CARD_ORDER)}
+
+    def rank(line: str) -> int:
+        return next((i for prefix, i in order.items() if line.startswith(prefix)), len(order))
+
+    return [_card_line(line, you=True) for line in sorted(lines, key=rank)]
+
+
+def _card_line(line: str, *, you: bool = False) -> str:
+    """One USER.md line in words a model reads right, without ids.
+
+    The raw "REJECTED: nurse assistant [esco:...]" was read as the user's job
+    with a contradiction attached; "Not their job (they said so)" is not.
+    """
+    head, _, rest = line.partition(":")
+    title = re.sub(r"\s+\[.*$", "", rest).strip()
+    if head == "GOAL":
+        return f"Goal: {title}"
+    if head == "REJECTED":
+        return (
+            f"Not your job (you said so): {title}"
+            if you
+            else (f"Not their job (they said so): {title}")
+        )
+    if head.startswith("STANDING[") and head.endswith("]"):
+        return f"Current job ({head[len('STANDING[') : -1]}): {title}"
+    return line

@@ -216,3 +216,46 @@ def test_hint_that_fits_nothing_searches_again_keeping_the_topic() -> None:
     client = _Scripted({"action": "narrow", "options": [], "areas": []})
     handle_line(state, "the zoo ones", runner=runner, llm_client=client)  # type: ignore[arg-type]
     assert runner.calls[-1][0] == "the zoo ones, in engineer"
+
+
+def test_a_statement_about_the_user_is_never_a_hint() -> None:
+    (state, _), runner = _broad_list()
+    handle_line(state, "I am not a marine engineer", runner=runner)
+    assert runner.calls[-1][0] == "I am not a marine engineer"
+
+
+def test_after_a_pick_a_sentence_is_a_new_request() -> None:
+    (state, _), runner = _broad_list()
+    handle_line(state, "2", runner=runner)
+    handle_line(state, "the marine ones", runner=runner)
+    assert runner.calls[-1][0] == "the marine ones"
+
+
+def test_typing_a_listed_title_picks_it() -> None:
+    (state, _), runner = _broad_list()
+    client = _Scripted({"action": "narrow", "options": [4], "areas": []})
+    reply = handle_line(state, "marine engineers", runner=runner, llm_client=client)  # type: ignore[arg-type]
+    assert reply.text == "Bound marine engineer."
+    assert state.bindings["esco"].pref_label == "marine engineer"
+
+
+def test_thanks_with_a_tail_is_not_a_search() -> None:
+    from talent_angels.session.router import route_line
+
+    assert route_line("thanks, that was helpful").kind == "greet"
+    assert route_line("thank you so much!").kind == "greet"
+    assert route_line("thanks, what skills does a nurse need?").kind != "greet"
+
+
+def test_profile_question_is_answered_from_the_profile_in_code() -> None:
+    from talent_angels.memory.profile import write_goal, write_rejected
+
+    state = new_session()
+    empty = handle_line(state, "what do you know about me?", runner=_Runner())
+    assert "don't have much about you yet" in empty.text
+    write_goal(_node("data scientist"))
+    write_rejected(_node("nurse assistant"))
+    reply = handle_line(state, "what do you know about me?", runner=_Runner())
+    assert "- Goal: data scientist" in reply.text
+    assert "- Not your job (you said so): nurse assistant" in reply.text
+    assert "esco:" not in reply.text

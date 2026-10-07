@@ -295,6 +295,11 @@ def _profile_intent_heuristic(question: str) -> PlanDraft | None:
     return None
 
 
+def is_statement(question: str) -> bool:
+    """A compare, or a statement about the user ("I am a X", "my goal is X")."""
+    return _profile_intent_heuristic(question) is not None
+
+
 def uses_llm_planner(client: LLMClient) -> bool:
     return getattr(client, "provider", "none") != "none"
 

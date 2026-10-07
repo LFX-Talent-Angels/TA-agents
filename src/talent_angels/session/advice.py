@@ -22,6 +22,11 @@ _LEARN_TOWARD_GOAL = re.compile(
     re.IGNORECASE,
 )
 _NOT_A_CHOICE = "I can't choose for you, but here is what the map lists for each."
+#: "which one should I choose?" right after two titles were compared.
+_WHICH_OF_PAIR = re.compile(
+    r"\b(?:which\s+(?:one|of\s+(?:them|the\s+two|these|those))|choose|pick|go\s+for)\b",
+    re.IGNORECASE,
+)
 
 
 @dataclass(frozen=True)
@@ -30,11 +35,29 @@ class AdvicePlan:
     preface: str
 
 
-def advice_plan(text: str, *, current: str | None, goal: str | None) -> AdvicePlan | None:
-    """A grounded map question for an advice line, or None to keep refusing."""
+def advice_plan(
+    text: str,
+    *,
+    current: str | None,
+    goal: str | None,
+    compared: tuple[str, str] | None = None,
+) -> AdvicePlan | None:
+    """A grounded map question for an advice line, or None to keep refusing.
+
+    ``compared`` is the pair the user just compared, so "which one should I
+    choose?" has referents.
+    """
     either = _EITHER.search(text)
     if either:
         return AdvicePlan(f"compare {either.group(1)} and {either.group(2)}", _NOT_A_CHOICE)
+    if compared and _WHICH_OF_PAIR.search(text):
+        first, second = compared
+        return AdvicePlan(
+            f"compare {first} and {second}",
+            f"I can't choose between **{first}** and **{second}** for you. Here is what the "
+            "map lists for each; tell me what you enjoy or want to avoid and I'll point to "
+            "the skills that match.",
+        )
     if not _LEARN_TOWARD_GOAL.search(text) or not goal:
         return None
     if current and current.casefold() != goal.casefold():

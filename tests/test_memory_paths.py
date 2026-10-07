@@ -88,5 +88,6 @@ def test_profile_card_keeps_goal_and_rejections_ahead_of_standings() -> None:
         profile.write_standing(_node(f"s{i}", f"job{i}"))
 
     card = profile.profile_prefix()
-    assert "GOAL: data scientist" in card
-    assert "REJECTED: chef" in card
+    assert "Goal: data scientist" in card
+    assert "Not their job (they said so): chef" in card
+    assert "esco:" not in card

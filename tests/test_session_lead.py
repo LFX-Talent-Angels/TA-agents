@@ -63,3 +63,12 @@ def test_next_step_follows_the_profile_intent() -> None:
     assert text.endswith("Pick the one you mean and I'll save it as your goal.")
     plain = lead("engineer", _draft("engineer"), [_result("esco", "a", "b")])
     assert plain.endswith("Pick the one you mean, or tell me more and I'll narrow it.")
+
+
+def test_suggestions_are_not_saved_as_the_current_job() -> None:
+    from talent_angels.session.lead import pick_intent
+
+    suggestions = _draft("math", "actuary", "statistician", intent="standing")
+    assert pick_intent(suggestions) is None
+    assert pick_intent(_draft("nurse", intent="standing")) == "standing"
+    assert pick_intent(_draft("engineer", "civil engineer", intent="goal")) == "goal"

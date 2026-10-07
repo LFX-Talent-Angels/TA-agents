@@ -21,7 +21,9 @@ LineKind = Literal[
 
 _GREET_RE = re.compile(
     r"^\s*(hi|hello|hey|thanks|thank you|"
-    r"good\s+(morning|afternoon|evening))\s*[!.?]?\s*$",
+    r"good\s+(morning|afternoon|evening))\s*[!.?]?\s*$"
+    # "thanks, that was helpful", "thank you so much!": thanks with a short tail.
+    r"|^\s*(?:thanks|thank\s+you)\b[^?]{0,40}$",
     re.IGNORECASE,
 )
 

@@ -65,9 +65,22 @@ def found(results: Sequence[AgentResult]) -> str:
     return f"{', '.join(parts[:-1])} and {parts[-1]}."
 
 
+def pick_intent(draft: PlanDraft | None) -> str | None:
+    """What a pick from this list says about the user, if anything.
+
+    Suggestions for "I'm a teacher and I like math, what suits me?" are not the
+    user's current job: picking one must not save it as that.
+    """
+    if draft is None:
+        return None
+    if draft.profile_intent == "standing" and draft.candidates:
+        return None
+    return draft.profile_intent
+
+
 def lead(question: str, draft: PlanDraft | None, results: Sequence[AgentResult]) -> str:
     """Two or three short sentences shown before any list."""
-    intent = draft.profile_intent if draft is not None else None
+    intent = pick_intent(draft)
     next_step = _NEXT.get(
         intent or "", "Pick the one you mean, or tell me more and I'll narrow it."
     )

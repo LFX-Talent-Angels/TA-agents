@@ -1212,7 +1212,8 @@ def test_tui_shows_onet_picker_next_to_esco_card() -> None:
     reply = handle_line(state, "I want to be a software engineer", runner=runner)
     assert "software developer" in reply.text.casefold() or "ESCO" in reply.text
     assert "Blockchain Engineers" in reply.text
-    assert "Sources used:" in reply.text
+    # The lead names what each map did; provenance travels in source_note.
+    assert "ESCO matched software developer and O*NET has 2 matching titles" in reply.text
     assert reply.source_note == "ESCO · O*NET"
     assert state.binding is not None
     assert state.binding.node.suite == "esco"
@@ -1485,8 +1486,9 @@ def test_ambiguous_multi_suite_connect_never_calls_the_llm_narrative() -> None:
     # synthesize()'s free-form narrative system prompt was never sent — only
     # the picker's own tightly-scoped, already-safe intro call fired.
     assert not any("phrase taxonomy map facts" in prompt for prompt in client.system_prompts)
-    # The safe, deterministic sentence is exactly synthesize_structured()'s output.
-    assert "O*NET: several matches" in reply.text
+    # The safe, deterministic lead is written in code (session.lead).
+    assert "O*NET has 25+ matching titles" in reply.text
+    assert "ESCO has no match" in reply.text
     # The picker itself still renders every candidate.
     assert "Nurse Kind 0" in reply.text
     assert "I won't pick for you" in reply.text

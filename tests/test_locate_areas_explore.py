@@ -182,3 +182,26 @@ def test_a_title_the_planner_wrote_is_offered_not_bound() -> None:
     assert explored is not None
     assert [n.pref_label for n in explored[0].nodes] == ["civil engineer"]
     assert "ambiguous" in explored[0].warnings
+
+
+def test_subject_matches_that_do_not_name_it_are_dropped_once_titles_are_confirmed() -> None:
+    dev = _occ("software developer", "software engineer")
+    sweep = _occ("chimney sweep")
+    swe_alias = _occ("systems engineer", "SWE lead")
+    suite = _Suite(
+        {
+            "SWE": _hits(sweep, _occ("street sweeper"), swe_alias),
+            "software engineer": _hits(dev, method="exact_alt"),
+        }
+    )
+    explored = explore(suite, "esco", "SWE", ["software engineer"], kind="occupation")
+    assert explored is not None
+    assert [n.pref_label for n in explored[0].nodes] == ["software developer", "systems engineer"]
+
+
+def test_without_confirmed_titles_the_subject_list_is_kept_whole() -> None:
+    sweep = _occ("chimney sweep")
+    suite = _Suite({"SWE": _hits(sweep, _occ("street sweeper"))})
+    explored = explore(suite, "esco", "SWE", ["no such title"], kind="occupation")
+    assert explored is not None
+    assert [n.pref_label for n in explored[0].nodes] == ["chimney sweep", "street sweeper"]

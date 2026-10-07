@@ -9,6 +9,7 @@ the whole list is always the user's to choose from — never an automatic pick.
 
 from __future__ import annotations
 
+import re
 from collections.abc import Sequence
 from typing import Protocol
 
@@ -46,6 +47,16 @@ def _same_title(candidate: str, node: NodeRef) -> bool:
         if name in (wanted, f"{wanted}s") or f"{name}s" == wanted:
             return True
     return False
+
+
+def _names_subject(subject: str, node: NodeRef) -> bool:
+    """``subject`` as a whole word or phrase of the title or an alias.
+
+    "SWE" names "SWE" but not "chimney sweep"; "engineer" names "civil
+    engineer". A plural still counts.
+    """
+    pattern = re.compile(rf"(?<![\w]){re.escape(subject.casefold().strip())}s?(?![\w])")
+    return any(pattern.search(name.casefold()) for name in (node.pref_label, *node.alt_labels))
 
 
 def _confirmed(
@@ -129,7 +140,10 @@ def explore(
                 )
             )
     seen = {node.id for node in confirmed}
-    nodes = [*confirmed, *(node for node in located.nodes if node.id not in seen)]
+    # With confirmed titles in hand, the subject's own matches stay only when
+    # they really name it: "SWE" word-start hits ("chimney sweep") are noise.
+    rest = [node for node in located.nodes if node.id not in seen and _names_subject(subject, node)]
+    nodes = [*confirmed, *rest]
     kept = [w for w in located.warnings if w in ("truncated", "match_count_capped")]
     return (
         AgentResult(

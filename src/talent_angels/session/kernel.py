@@ -16,7 +16,7 @@ from talent_angels.assistant.intent import CAPABILITY_CONNECT
 from talent_angels.assistant.llm_plan import PlanDraft, denied_subject
 from talent_angels.assistant.merge import suite_heading
 from talent_angels.assistant.suite_select import resolve_show_token
-from talent_angels.assistant.synthesize import synthesize, synthesize_structured
+from talent_angels.assistant.synthesize import synthesize
 from talent_angels.assistant.turn import TurnOutcome
 from talent_angels.contracts import AgentResult, NodeRef
 from talent_angels.llm import LLMClient
@@ -58,6 +58,7 @@ from talent_angels.session.followup import (
     skill_from_connect,
     skill_index_by_label,
 )
+from talent_angels.session.lead import lead
 from talent_angels.session.models import (
     AreaChoice,
     LastBinding,
@@ -67,7 +68,6 @@ from talent_angels.session.models import (
 )
 from talent_angels.session.narrow import area_by_letter, area_choices, narrow_decision, render_areas
 from talent_angels.session.phrase import (
-    ambiguous_intro_card,
     connect_card,
     locate_card,
     phrase_chat,
@@ -731,15 +731,8 @@ def _from_single_outcome(
         state.binding = None
         state.bindings.clear()
         searched = _searched_for(question, draft)
-        intro = phrase_chat(
-            llm_client,
-            user_text=question,
-            fallback=f'I found several matches for "{searched}". Which one did you mean?',
-            hint=ambiguous_intro_card(
-                searched, [choice.node.pref_label for choice in pending], omitted=omitted
-            ),
-            mode="intro",
-        )
+        # What was understood and what happens next, written in code (lead.py).
+        intro = lead(question, draft, [result])
         text = render_picker(searched, pending, omitted=omitted, intro=intro)
         text = _with_areas(state, text, outcome, searched=searched, draft=draft)
     elif "not_found" in result.warnings:
@@ -1145,7 +1138,9 @@ def _from_outcome(
         # (`_hit_phrase` already says "<suite> has several matches" for an
         # ambiguous hit) with no model call, so there is nothing left to
         # hallucinate.
-        text = synthesize_structured(results, list_ambiguous=False)
+        # The short answer first: what was understood, what each map has, what
+        # next. Code-written, like the rest of a pick list (lead.py).
+        text = lead(question, _draft, results)
         extras = [*unique_cards]
         picker_blocks = [
             block for block in blocks if "I won't pick" in block or "Which one" in block

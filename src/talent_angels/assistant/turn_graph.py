@@ -46,10 +46,13 @@ from talent_angels.assistant.suite_select import named_unattached, select_suites
 from talent_angels.contracts import AgentResult, NodeRef
 from talent_angels.llm import LLMClient
 from talent_angels.memory.cache import CachedSuite
+from talent_angels.memory.profile import profile_line
 from talent_angels.runlog import StageUsage, ToolCall
 from talent_angels.skills.connect import ConnectRequest, connect
 from talent_angels.skills.connect.compare import compare_result
 from talent_angels.skills.locate import locate
+from talent_angels.skills.locate.areas import Area, AreaRequest, area_summary, search_area
+from talent_angels.skills.locate.explore import explore
 from talent_angels.skills.locate.rank import group_and_sort_locate
 from talent_angels.suites.measured import MeasuredSuite
 from talent_angels.suites.protocol import SuiteTools
@@ -69,6 +72,8 @@ class TurnState(TypedDict, total=False):
     force_locate: bool
     suite_override: str | None
     input_warnings: list[str]
+    #: "Which area?" answered: re-run one search inside one occupation group.
+    area: AreaRequest | None
     # --- working state (reset every turn) ---
     selected: list[str]
     plan: ExecutionPlan | None
@@ -78,6 +83,8 @@ class TurnState(TypedDict, total=False):
     tools: list[ToolCall]
     cache_hit: bool
     results: list[AgentResult]
+    #: Per suite, how a broad match set splits into occupation groups.
+    areas: dict[str, list[Area]]
     extra_warnings: list[str]
     answer: str
     stopped: bool
@@ -96,6 +103,7 @@ _DEFAULTS: dict[str, Any] = {
     "tools": [],
     "cache_hit": False,
     "results": [],
+    "areas": {},
     "extra_warnings": [],
     "answer": "",
     "stopped": False,
@@ -193,6 +201,41 @@ def compare_one(
     return compare_result(sides[0], sides[1]), measured.tool_calls
 
 
+def explore_one(
+    suite: SuiteTools, suite_name: str, draft: PlanDraft, question: str = ""
+) -> tuple[AgentResult, list[Area], list[ToolCall]] | None:
+    """A vague subject: the planner's titles, checked against the map, as a pick list.
+
+    None when the subject is already one clear title; the normal dispatch runs.
+    """
+    assert draft.subject
+    measured = MeasuredSuite(suite)
+    schema = suite.suite_schema
+    explored = explore(
+        measured,
+        suite_name,
+        draft.subject,
+        draft.candidates,
+        kind=draft.kind or "occupation",
+        subject_is_users=draft.subject.casefold() in question.casefold(),
+        group_rel_type=schema.group_rel_type,
+        group_node_kinds=schema.group_node_kinds,
+    )
+    if explored is None:
+        return None
+    result, areas = explored
+    return result, areas, measured.tool_calls
+
+
+def _is_broad(result: AgentResult) -> bool:
+    """More matching titles than the pick list shows."""
+    return (
+        result.capability == CAPABILITY_LOCATE
+        and "ambiguous" in result.warnings
+        and "truncated" in result.warnings
+    )
+
+
 def _plan(state: TurnState, rt: TurnRuntime) -> dict[str, Any]:
     question = state["question"]
     registry = rt.registry
@@ -204,8 +247,14 @@ def _plan(state: TurnState, rt: TurnRuntime) -> dict[str, Any]:
         *(f"suite_not_attached:{name}" for name in named_unattached(question, registry.available)),
     ]
     forced = CAPABILITY_LOCATE if state.get("force_locate") else state.get("force_capability")
+    if state.get("area") is not None:
+        forced = CAPABILITY_LOCATE  # the user chose an area: nothing to interpret
     interpreted = interpret_question(
-        question, suites=selected, llm_client=rt.llm_client, forced_capability=forced
+        question,
+        suites=selected,
+        llm_client=rt.llm_client,
+        forced_capability=forced,
+        profile=profile_line() if forced is None else None,
     )
     stages = [interpreted.stage] if interpreted.stage is not None else []
     update: dict[str, Any] = {
@@ -251,6 +300,8 @@ def _dispatch(state: TurnState, rt: TurnRuntime) -> dict[str, Any]:
     extra = list(state.get("extra_warnings") or [])
     tools: list[ToolCall] = []
     collected: list[AgentResult] = []
+    areas: dict[str, list[Area]] = {}
+    area = state.get("area")
     cache_hit = False
     seed: dict[str, Any] = {
         "question": question,
@@ -263,10 +314,17 @@ def _dispatch(state: TurnState, rt: TurnRuntime) -> dict[str, Any]:
     }
     draft = state.get("plan_draft")
     for name in state.get("selected") or []:
+        if area is not None and area.suite != name:
+            continue
         prior = len(stages)
         bound = _bound_for_suite(name, bound_node, bound_nodes)
         try:
             with rt.registry.open(name) as runtime:
+                if area is not None:
+                    measured = MeasuredSuite(runtime.suite)
+                    collected.append(search_area(measured, name, area))
+                    tools.extend(measured.tool_calls)
+                    continue
                 if state.get("force_locate"):
                     one, one_tools, hit = locate_one(
                         runtime.suite, name, question, kind=kind, cache=rt.cache
@@ -283,6 +341,22 @@ def _dispatch(state: TurnState, rt: TurnRuntime) -> dict[str, Any]:
                     collected.append(pair)
                     tools.extend(pair_tools)
                     continue
+                if (
+                    draft is not None
+                    and draft.subject
+                    and draft.candidates
+                    and bound is None
+                    and not state.get("force_capability")
+                    and plan.intent.target in (CAPABILITY_LOCATE, CAPABILITY_CONNECT)
+                ):
+                    explored = explore_one(runtime.suite, name, draft, question)
+                    if explored is not None:
+                        guided, guided_areas, guided_tools = explored
+                        collected.append(guided)
+                        tools.extend(guided_tools)
+                        if guided_areas:
+                            areas[name] = guided_areas
+                        continue
                 dispatched = dispatch_plan(
                     cast(AssistantState, {**seed, "bound_node": bound}),
                     suite=runtime.suite,
@@ -295,6 +369,15 @@ def _dispatch(state: TurnState, rt: TurnRuntime) -> dict[str, Any]:
                 )
                 cache_hit = cache_hit or _served_from_cache(runtime.suite)
                 collected.append(dispatched["result"])
+                if draft is not None and draft.subject and bound is None:
+                    if _is_broad(dispatched["result"]):
+                        measured = MeasuredSuite(runtime.suite)
+                        found = area_summary(
+                            measured, name, draft.subject, kind=draft.kind or "occupation"
+                        )
+                        tools.extend(measured.tool_calls)
+                        if found:
+                            areas[name] = found
                 tools.extend(dispatched.get("tool_calls") or [])
                 stages.extend((dispatched.get("llm_stages") or [])[prior:])
         except UnknownSuiteError:
@@ -304,6 +387,7 @@ def _dispatch(state: TurnState, rt: TurnRuntime) -> dict[str, Any]:
             extra.append(f"suite_unavailable:{name}")
     return {
         "results": collected,
+        "areas": areas,
         "tools": tools,
         "stages": stages,
         "cache_hit": cache_hit,

@@ -40,6 +40,7 @@ class FakeToolResult:
     pruning: FakePruning | None = None
     evidence: list[str] = field(default_factory=list)
     warnings: list[str] = field(default_factory=list)
+    meta: dict[str, object] = field(default_factory=dict)
 
 
 @dataclass

@@ -203,3 +203,33 @@ def test_planner_prompt_teaches_the_compare_shape() -> None:
     assert '"secondary_subject":"software developer"' in PLAN_SYSTEM
     assert '"X vs Y" or "X and Y" as two titles is locate' not in PLAN_SYSTEM
     assert '("I know Python and SQL") are not a compare' in PLAN_SYSTEM
+
+
+def test_candidates_are_cleaned_deduplicated_and_capped() -> None:
+    draft = parse_plan_text(
+        '{"target":"locate","subject":"engineer","candidates":'
+        '[" civil engineer ","civil engineer","",3,"a","b","c","d","e"]}'
+    )
+    assert draft.candidates == ("civil engineer", "a", "b", "c", "d")
+
+
+def test_candidates_default_to_none_offered() -> None:
+    assert parse_plan_text('{"target":"locate","subject":"nurse"}').candidates == ()
+    assert parse_plan_text('{"target":"locate","candidates":"nurse"}').candidates == ()
+
+
+def test_planner_sees_the_profile_line_before_the_message() -> None:
+    client = ScriptedLLMClient('{"target":"locate","subject":"chef"}')
+    interpret_question("jobs like mine", llm_client=client, profile="current job: chef")
+    user = client.calls[0][1].content
+    assert user == "Profile: current job: chef\n\nMessage: jobs like mine"
+
+
+def test_planner_without_profile_gets_the_bare_question() -> None:
+    client = ScriptedLLMClient('{"target":"locate","subject":"chef"}')
+    interpret_question("chef", llm_client=client)
+    assert client.calls[0][1].content == "chef"
+
+
+def test_prompt_asks_for_candidates_on_vague_requests() -> None:
+    assert "candidates" in PLAN_SYSTEM and "Vague requests" in PLAN_SYSTEM

@@ -31,6 +31,24 @@ Keys:
 - relation_filter: essential | optional | null
 - suites: array of attached suite names (runtime fills this; do not drop
   a suite unless the user named one taxonomy)
+- candidates: array of 3 to 5 specific English job titles, or []
+
+Vague requests:
+- When the user describes work or names a broad field instead of one title
+  ("an engineer who builds buildings", "something in healthcare", "a job with
+  computers but no coding"), set subject to the shortest broad search word
+  ("engineer", "healthcare", "computer") and candidates to 3 to 5 specific
+  titles that fit the description, most likely first ("civil engineer",
+  "construction engineer", "building engineer"). Respect what the user rules
+  out: no coding titles for "no coding".
+- Expand an abbreviation in candidates ("ML engineer" → "machine learning
+  engineer"), keeping the user's words in subject.
+- Write candidates as the maps name jobs: plain singular titles. Two maps are
+  searched, one in British and one in American spelling: where they differ,
+  give both ("paediatrician", "pediatrician").
+- A follow-up that adds a detail to a topic ("something with children, in
+  healthcare") gets candidates that fit both.
+- A clear title ("nurse", "software developer") gets candidates [].
 
 How to choose target:
 - locate = only identify / define a node ("what is X", "where is X in ESCO")
@@ -62,12 +80,17 @@ Examples:
 {"target":"pathfind","subject":"data analyst","secondary_subject":"data scientist"}
 {"target":"connect","subject":"accountant","secondary_subject":"software developer",
  "kind":"occupation"}
+{"target":"locate","subject":"engineer","kind":"occupation","profile_intent":"goal",
+ "candidates":["civil engineer","construction engineer","building engineer"]}
 
 Same connect shape for: "what skills does a X need", "what skills I need to be
 a X", "skills I need to become a X".
 Same locate shape for: "what is a X", "what does a X do", "where is X".
 Same pathfind shape for: "path from X to Y", "skill gap from X to Y",
 "how to become X from Y", "how do I move from X to Y".
+
+A "Profile:" line, when present, is what the user told you before. Use it only
+to resolve "my job", "my goal" or "jobs like mine"; never search it otherwise.
 
 profile_intent rules:
 - Set "goal" when the user states a career destination:
@@ -117,6 +140,9 @@ class PlanDraft(BaseModel):
 
     profile_intent: str | None = None
     suite_override: str | None = None
+    #: Specific titles that may fit a vague subject. Model guesses: every one
+    #: is looked up before it is offered (skills.locate.explore).
+    candidates: tuple[str, ...] = Field(default=())
 
     @field_validator("subject", "secondary_subject", "kind", "relation_filter", mode="before")
     @classmethod
@@ -133,6 +159,14 @@ class PlanDraft(BaseModel):
         if isinstance(value, list) and not value:
             return None
         return value
+
+    @field_validator("candidates", mode="before")
+    @classmethod
+    def clean_candidates(cls, value: object) -> object:
+        if not isinstance(value, list | tuple):
+            return ()
+        titles = [str(item).strip() for item in value if isinstance(item, str) and item.strip()]
+        return tuple(dict.fromkeys(titles))[:5]
 
     @field_validator("suites", mode="before")
     @classmethod
@@ -297,6 +331,13 @@ def connect_request_from_draft(
     )
 
 
+def planner_message(question: str, profile: str | None = None) -> str:
+    """The planner's user message: the question, after a profile line if any."""
+    if not profile:
+        return question
+    return f"Profile: {profile}\n\nMessage: {question}"
+
+
 def interpret_question(
     question: str,
     *,
@@ -304,6 +345,7 @@ def interpret_question(
     suite_name: str | None = None,
     suites: tuple[str, ...] | None = None,
     forced_capability: Capability | None = None,
+    profile: str | None = None,
 ) -> InterpretedPlan:
     selected = suites or ((suite_name,) if suite_name else (ESCO_SUITE_NAME,))
     if forced_capability is not None:
@@ -334,7 +376,7 @@ def interpret_question(
             llm_client,
             [
                 Message(role="system", content=PLAN_SYSTEM),
-                Message(role="user", content=question),
+                Message(role="user", content=planner_message(question, profile)),
             ],
             stage="intent",
         )

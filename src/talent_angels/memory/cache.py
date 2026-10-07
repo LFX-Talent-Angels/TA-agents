@@ -252,6 +252,14 @@ class CachedSuite:
     def search_nodes(self, text: str, kind: str | None = None) -> SearchResult:
         return self._suite.search_nodes(text, kind=kind)
 
+    def search_group(self, text: str, group: str) -> SearchResult:
+        """Delegated, uncached: narrowing to one occupation group is rare."""
+        inner = getattr(self._suite, "search_group", None)
+        if inner is None:
+            raise AttributeError("search_group")
+        result: SearchResult = inner(text, group)
+        return result
+
     def get_neighbors(self, node_id: str, rel_types: list[str] | None = None) -> NeighborResult:
         # The cache is an optimization, never a dependency. A locked, corrupt,
         # or unreadable memory.db must cost latency, not correctness: fall

@@ -61,6 +61,14 @@ def profile_titles() -> tuple[str | None, str | None]:
     return current or None, goal
 
 
+def profile_line() -> str | None:
+    """ "current job: X; goal: Y" for the planner, or None when nothing is saved."""
+    current, goal = profile_titles()
+    parts = [f"current job: {current}" if current else "", f"goal: {goal}" if goal else ""]
+    line = "; ".join(part for part in parts if part)
+    return line or None
+
+
 # Hermes-style caps (docs: Persistent Memory). USER.md holds the user profile.
 USER_MAX_CHARS = 1375
 

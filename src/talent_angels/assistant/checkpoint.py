@@ -42,6 +42,8 @@ PERSISTED_TYPES: tuple[tuple[str, str], ...] = (
     ("talent_angels.assistant.planning", "Intent"),
     ("talent_angels.assistant.planning", "PlanStep"),
     ("talent_angels.assistant.llm_plan", "PlanDraft"),
+    ("talent_angels.skills.locate.areas", "Area"),
+    ("talent_angels.skills.locate.areas", "AreaRequest"),
     ("talent_angels.assistant.memo", "TurnMemo"),
     ("talent_angels.assistant.memo", "SuiteMemo"),
     ("talent_angels.runlog.models", "StageUsage"),

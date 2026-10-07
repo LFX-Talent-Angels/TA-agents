@@ -56,7 +56,9 @@ class Chat:
         self.state: SessionState = new_session()
 
     def say(self, line: str) -> ChatReply:
-        def runner(question, *, bound_node=None, bound_nodes=None, force_capability=None):
+        def runner(
+            question, *, bound_node=None, bound_nodes=None, force_capability=None, area=None
+        ):
             outcome = run_turn(
                 registry=self.registry,
                 llm_client=self.client,
@@ -66,6 +68,7 @@ class Chat:
                 bound_nodes=bound_nodes,
                 force_capability=force_capability,
                 persist=False,
+                area=area,
             )
             persist_turn_record(outcome.record)
             return outcome
@@ -172,3 +175,32 @@ def test_bare_engineer_asks_which_one(chat: Chat) -> None:
 def test_it_manager_is_not_a_credit_manager(chat: Chat) -> None:
     chat.say("IT manager")
     assert chat.bound("esco") != "credit manager"
+
+
+# --- Guided search (2026-10-07): vague requests, areas, hints -----------------
+
+
+def test_described_job_offers_confirmed_titles_and_binds_nothing(chat: Chat) -> None:
+    reply = chat.say("I want to become an engineer who builds buildings")
+    labels = [choice.node.pref_label for choice in chat.state.pending]
+    assert "civil engineer" in labels or "construction engineer" in labels
+    assert chat.state.bindings == {}
+    assert "Or narrow it down by area" in reply.text
+
+
+def test_area_letter_narrows_inside_that_area(chat: Chat) -> None:
+    chat.say("engineer")
+    civil = next(area for area in chat.state.areas if area.label == "Civil engineers")
+    chat.say(civil.letter)
+    labels = {choice.node.pref_label for choice in chat.state.pending}
+    assert "civil engineer" in labels
+    assert "test engineer" not in labels
+    assert chat.state.bindings == {}
+
+
+def test_hint_narrows_the_list_and_a_pick_saves_the_goal(chat: Chat) -> None:
+    chat.say("I want to become an engineer who builds buildings")
+    chat.say("the ones that design bridges")
+    first = chat.state.pending[0].node.pref_label
+    chat.say("1")
+    assert f"GOAL: {first}" in profile()

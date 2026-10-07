@@ -58,7 +58,14 @@ from talent_angels.session.followup import (
     skill_from_connect,
     skill_index_by_label,
 )
-from talent_angels.session.models import LastBinding, PendingChoice, SessionState, TranscriptLine
+from talent_angels.session.models import (
+    AreaChoice,
+    LastBinding,
+    PendingChoice,
+    SessionState,
+    TranscriptLine,
+)
+from talent_angels.session.narrow import area_by_letter, area_choices, narrow_decision, render_areas
 from talent_angels.session.phrase import (
     ambiguous_intro_card,
     connect_card,
@@ -68,7 +75,7 @@ from talent_angels.session.phrase import (
     skill_card,
     uses_chat_phrasing,
 )
-from talent_angels.session.picker import bind_pick, choices_from_result, render_picker
+from talent_angels.session.picker import PICKER_LIMIT, bind_pick, choices_from_result, render_picker
 from talent_angels.session.recall import recall_reply
 from talent_angels.session.router import route_line
 from talent_angels.session.store import (
@@ -82,6 +89,7 @@ from talent_angels.session.store import (
 from talent_angels.session.switch import SwitchError, apply, load_catalogue, resolve
 from talent_angels.session.working_set import pair_followup, refers_to_one, remember
 from talent_angels.skills.connect.compare import CAPABILITY_COMPARE
+from talent_angels.skills.locate.areas import AreaRequest
 
 _NO_PENDING = "There's no numbered list to pick from. Type a job title first."
 _BAD_PICK = "That number isn't in the list. Reply with a number from the options."
@@ -127,6 +135,7 @@ class TurnRunner(Protocol):
         bound_node: NodeRef | None = None,
         bound_nodes: dict[str, NodeRef] | None = None,
         force_capability: str | None = None,
+        area: AreaRequest | None = None,
     ) -> TurnOutcome: ...
 
 
@@ -204,6 +213,10 @@ def handle_line(
         return _handle_chat(state, text, llm_client=llm_client)
     if routed.kind == "recall":
         return _finish(state, text, recall_reply(text, state.recent, recent_episodes(limit=30)))
+    if state.pending or state.areas:
+        narrowed = _handle_narrow(state, routed.text, runner=runner, llm_client=llm_client)
+        if narrowed is not None:
+            return narrowed
     mention = parse_skill_mention(text)
     stored = state.last_result
     if mention is None and stored is not None and can_expand_connect(stored):
@@ -450,6 +463,7 @@ def _handle_pick(
         state.recent = remember(state.recent, node.pref_label)
         _apply_profile_intent(state.pending_profile_intent, node)
         state.pending_profile_intent = None
+        state.areas = []
         _write_picker_event(
             state,
             query=_last_map_query(state),
@@ -708,6 +722,7 @@ def _from_single_outcome(
     text = outcome.answer
     draft = getattr(outcome, "plan_draft", None)
     state.pending_profile_intent = None
+    state.areas = []
     if "ambiguous" in result.warnings:
         pending = choices_from_result(result)
         omitted = max(0, len(result.nodes) - len(pending))
@@ -726,6 +741,7 @@ def _from_single_outcome(
             mode="intro",
         )
         text = render_picker(searched, pending, omitted=omitted, intro=intro)
+        text = _with_areas(state, text, outcome, searched=searched, draft=draft)
     elif "not_found" in result.warnings:
         text = phrase_chat(
             llm_client,
@@ -784,6 +800,114 @@ def _from_single_outcome(
         text = _map_answer(outcome.answer)
     source = result.suite.upper() if result.suite else None
     return _reply(state, text, source_note=source)
+
+
+def _with_areas(
+    state: SessionState,
+    text: str,
+    outcome: TurnOutcome,
+    *,
+    searched: str,
+    draft: PlanDraft | None,
+) -> str:
+    """Offer "which area?" under a pick list when the search was broad."""
+    kind = draft.kind if draft is not None and draft.kind else "occupation"
+    state.areas = area_choices(getattr(outcome, "areas", None) or {}, query=searched, kind=kind)
+    if not state.areas:
+        return text
+    return f"{text}\n\n{render_areas(state.areas)}"
+
+
+def _narrowed_reply(
+    state: SessionState, text: str, choices: list[PendingChoice], intro: str
+) -> ChatReply:
+    numbered = _renumber_pending(choices[:PICKER_LIMIT], start=1)
+    state.pending = numbered
+    state.areas = []
+    state.binding = None
+    state.bindings.clear()
+    message = render_picker(
+        text,
+        numbered,
+        omitted=max(0, len(choices) - len(numbered)),
+        intro=intro,
+        include_source=False,
+    )
+    _record(state, "assistant", message)
+    return _reply(state, message, source_note=_source_note_for(tuple(state.last_results)))
+
+
+def _area_titles(state: SessionState, choice: AreaChoice, *, runner: TurnRunner) -> list[NodeRef]:
+    """Every title of the search inside one area; the shown list when unsupported."""
+    request = AreaRequest(
+        suite=choice.suite, code=choice.code, query=choice.query, kind=choice.kind
+    )
+    outcome = runner(choice.query, area=request)
+    result = outcome.result
+    if result.nodes:
+        state.last_result = result
+        state.last_results = [result]
+        return list(result.nodes)
+    return [c.node for c in state.pending if c.group_label == choice.label]
+
+
+def _handle_narrow(
+    state: SessionState,
+    text: str,
+    *,
+    runner: TurnRunner,
+    llm_client: LLMClient | None,
+) -> ChatReply | None:
+    """Narrow the open pick list, or None when ``text`` is a new request."""
+    letter = area_by_letter(text, state.areas)
+    if letter is not None:
+        chosen_areas = [letter]
+        options: list[PendingChoice] = []
+    else:
+        decision = narrow_decision(llm_client, text, state.pending, state.areas)
+        if decision.action == "new":
+            return None
+        if not (decision.options or decision.areas):
+            # About the list, but nothing on it fits: search again, keeping
+            # the topic the list was for ("something with children, in healthcare").
+            topic = state.areas[0].query if state.areas else _last_map_query(state)
+            if not topic:
+                return None
+            return _handle_map(
+                state, text, runner=runner, llm_client=llm_client, question=f"{text}, in {topic}"
+            )
+        options = [c for c in state.pending if c.number in decision.options]
+        chosen_areas = [a for a in state.areas if a.letter in decision.areas]
+        if (
+            len(options) == 1
+            and not chosen_areas
+            and options[0].node.pref_label.casefold() == text.strip().rstrip(".!").casefold()
+        ):
+            # The user typed the title itself: that is a pick, not a hint.
+            return _handle_pick(
+                state, text, options[0].number, runner=runner, llm_client=llm_client
+            )
+    _record(state, "user", text)
+    nodes = [c.node for c in options]
+    for area in chosen_areas:
+        nodes.extend(_area_titles(state, area, runner=runner))
+    unique: list[NodeRef] = []
+    for node in nodes:
+        if all(node.id != kept.id for kept in unique):
+            unique.append(node)
+    if not unique:
+        message = (
+            "None of the titles on the list fit that. Describe it another way, or name a title."
+        )
+        _record(state, "assistant", message)
+        return _reply(state, message)
+    choices = [PendingChoice(number=i, node=n) for i, n in enumerate(unique, start=1)]
+    if chosen_areas and not options:
+        names = ", ".join(f"**{a.label}**" for a in chosen_areas)
+        intro = f'{names}: titles matching "{chosen_areas[0].query}". Which one did you mean?'
+    else:
+        intro = f'These fit "{text.strip()}". Which one did you mean?'
+    return _narrowed_reply(state, text, choices, intro)
 
 
 def _stacked_cards(
@@ -875,6 +999,7 @@ def _from_outcome(
 ) -> ChatReply:
     results = _turn_results(outcome)
     state.last_results = list(results)
+    state.areas = []
     if len(results) <= 1:
         return _from_single_outcome(
             state,
@@ -910,18 +1035,12 @@ def _from_outcome(
             any_hit = True
             choices = _renumber_pending(choices_from_result(result), start=len(pending_all) + 1)
             omitted = max(0, len(result.nodes) - len(choices))
-            intro = phrase_chat(
-                llm_client,
-                user_text=question,
-                fallback=(
-                    f'I found several {heading} matches for "{searched}". Which one did you mean?'
-                ),
-                hint=ambiguous_intro_card(
-                    searched,
-                    [choice.node.pref_label for choice in choices],
-                    omitted=omitted,
-                ),
-                mode="intro",
+            # Written in code: a model call per suite for one fixed sentence
+            # cost 4-9 seconds each and said nothing the list does not.
+            intro = (
+                f'{heading} titles that fit "{question}". Which one did you mean?'
+                if "guided" in result.warnings
+                else f'I found several {heading} matches for "{searched}". Which one did you mean?'
             )
             picker = render_picker(
                 searched,
@@ -1035,6 +1154,7 @@ def _from_outcome(
         extras.extend(miss_blocks)
         if extras:
             text = text + "\n\n---\n\n" + "\n\n---\n\n".join(extras)
+        text = _with_areas(state, text, outcome, searched=searched, draft=_draft)
     else:
         has_connect = any(
             r.capability in ("connect", CAPABILITY_COMPARE) and r.nodes for r in results

@@ -89,3 +89,77 @@ def test_goal_is_saved_without_making_it_the_current_job() -> None:
     profile = _profile()
     assert "GOAL: data analyst" in profile
     assert "STANDING" not in profile
+
+
+def _draft(intent: str, subject: str) -> PlanDraft:
+    return PlanDraft(target="locate", subject=subject, kind="occupation", profile_intent=intent)
+
+
+def test_i_am_statement_records_the_current_job_in_every_suite() -> None:
+    esco = AgentResult(capability="locate", suite="esco", nodes=[_node("esco", "plumber")])
+    onet = AgentResult(capability="locate", suite="onet", nodes=[_node("onet", "Plumbers")])
+    state = new_session()
+
+    handle_line(
+        state, "I am a plumber", runner=_runner(esco, onet, draft=_draft("standing", "plumber"))
+    )
+
+    profile = _profile()
+    assert "STANDING[esco]: plumber" in profile
+    assert "STANDING[onet]: Plumbers" in profile
+
+
+def test_ambiguous_i_am_statement_is_recorded_on_pick() -> None:
+    nodes = [_node("esco", "music teacher"), _node("esco", "maths teacher")]
+    esco = AgentResult(
+        capability="locate", suite="esco", nodes=nodes, warnings=["ambiguous"], confidence=0.7
+    )
+    state = new_session()
+
+    handle_line(state, "I am a teacher", runner=_runner(esco, draft=_draft("standing", "teacher")))
+    assert "STANDING" not in _profile()
+    handle_line(state, "2", runner=_runner(esco))
+
+    assert "STANDING[esco]: maths teacher" in _profile()
+    assert state.pending_profile_intent is None
+
+
+def test_ambiguous_denial_is_recorded_on_pick() -> None:
+    nodes = [_node("esco", "music teacher"), _node("esco", "maths teacher")]
+    esco = AgentResult(
+        capability="locate", suite="esco", nodes=nodes, warnings=["ambiguous"], confidence=0.7
+    )
+    state = new_session()
+
+    handle_line(
+        state, "I am not a teacher", runner=_runner(esco, draft=_draft("reject", "teacher"))
+    )
+    handle_line(state, "1", runner=_runner(esco))
+
+    assert "REJECTED: music teacher" in _profile()
+
+
+def test_a_later_plain_lookup_does_not_inherit_the_statement() -> None:
+    teachers = AgentResult(
+        capability="locate",
+        suite="esco",
+        nodes=[_node("esco", "music teacher"), _node("esco", "maths teacher")],
+        warnings=["ambiguous"],
+        confidence=0.7,
+    )
+    nurses = AgentResult(
+        capability="locate",
+        suite="esco",
+        nodes=[_node("esco", "nurse assistant"), _node("esco", "specialist nurse")],
+        warnings=["ambiguous"],
+        confidence=0.7,
+    )
+    state = new_session()
+
+    handle_line(
+        state, "I am a teacher", runner=_runner(teachers, draft=_draft("standing", "teacher"))
+    )
+    handle_line(state, "nurse", runner=_runner(nurses))
+    handle_line(state, "1", runner=_runner(nurses))
+
+    assert "STANDING" not in _profile()

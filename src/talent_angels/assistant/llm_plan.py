@@ -70,6 +70,10 @@ profile_intent rules:
   target must be "locate". Example:
   "my goal is data scientist" →
     {"target":"locate","subject":"data scientist","kind":"occupation","profile_intent":"goal"}
+- Set "standing" when the user states their own current occupation:
+  "I am a X", "I'm a X", "I work as X", "my job is X", "I currently work as X".
+  Set subject to ONLY the occupation name. target must be "locate".
+  Looking a title up ("X", "what is a X") is NOT standing; leave it null.
 - Set "reject" when user denies an occupational identity:
   "I am not a X", "that's not my job", "I don't work as X".
   Set subject to the rejected occupation name only.
@@ -142,6 +146,26 @@ _GOAL_RE = re.compile(
     r"\s+(?:a\s+|an\s+)?(.+)$",
     re.IGNORECASE,
 )
+_STANDING_RE = re.compile(
+    r"^(?:i\s+am|i'm|i\s+work\s+as|i\s+currently\s+work\s+as|my\s+(?:current\s+)?job\s+is)"
+    r"\s+(?:a\s+|an\s+)?(.+)$",
+    re.IGNORECASE,
+)
+#: "I am looking for a job" is not an occupation; the first word after
+#: "I am" decides whether the rest can be one.
+_NOT_AN_OCCUPATION = frozenset(
+    {
+        "not",
+        "working",
+        "looking",
+        "interested",
+        "trying",
+        "thinking",
+        "going",
+        "planning",
+        "curious",
+    }
+)
 _REJECT_RE = re.compile(
     r"^(?:i\s+am\s+not\s+an?\s+|that(?:'s|'s|\s+is)\s+not\s+my\s+(?:job|occupation|role)\s*|i\s+don't\s+work\s+as\s+(?:an?\s+)?)(.+)$",
     re.IGNORECASE,
@@ -149,7 +173,7 @@ _REJECT_RE = re.compile(
 
 
 def _profile_intent_heuristic(question: str) -> PlanDraft | None:
-    """Return a PlanDraft for goal/reject patterns when the LLM planner fails."""
+    """Return a PlanDraft for goal/reject/standing patterns when the LLM planner fails."""
     m = _GOAL_RE.match(question.strip())
     if m:
         return PlanDraft(
@@ -165,6 +189,14 @@ def _profile_intent_heuristic(question: str) -> PlanDraft | None:
             subject=m.group(1).strip(),
             kind="occupation",
             profile_intent="reject",
+        )
+    m = _STANDING_RE.match(question.strip())
+    if m and m.group(1).split()[0].casefold() not in _NOT_AN_OCCUPATION:
+        return PlanDraft(
+            target=CAPABILITY_LOCATE,
+            subject=m.group(1).strip().rstrip(".!"),
+            kind="occupation",
+            profile_intent="standing",
         )
     return None
 

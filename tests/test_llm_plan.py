@@ -2,8 +2,11 @@
 
 from __future__ import annotations
 
+import pytest
+
 from talent_angels.assistant.llm_plan import (
     PLAN_SYSTEM,
+    _profile_intent_heuristic,
     interpret_question,
     parse_plan_text,
     uses_llm_planner,
@@ -116,3 +119,24 @@ def test_invalid_planner_json_falls_back_to_heuristic() -> None:
 
 def test_planner_prompt_asks_for_english_subjects() -> None:
     assert '("enfermero" → "nurse")' in PLAN_SYSTEM
+
+
+@pytest.mark.parametrize(
+    ("question", "intent", "subject"),
+    [
+        ("I am a plumber", "standing", "plumber"),
+        ("I work as a nurse", "standing", "nurse"),
+        ("my job is data analyst", "standing", "data analyst"),
+        ("I am not a teacher", "reject", "teacher"),
+        ("I am working toward data analyst", "goal", "data analyst"),
+    ],
+)
+def test_profile_heuristic_reads_statements(question: str, intent: str, subject: str) -> None:
+    draft = _profile_intent_heuristic(question)
+    assert draft is not None
+    assert (draft.profile_intent, draft.subject) == (intent, subject)
+
+
+@pytest.mark.parametrize("question", ["I am looking for a job", "I'm interested in tech", "chef"])
+def test_profile_heuristic_ignores_non_statements(question: str) -> None:
+    assert _profile_intent_heuristic(question) is None

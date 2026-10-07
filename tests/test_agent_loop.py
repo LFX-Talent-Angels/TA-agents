@@ -636,3 +636,19 @@ def test_compact_result_truncates_neighbors_but_keeps_counts() -> None:
     assert payload["omitted_edges"] == 12
     assert len(payload["nodes"]) == 8
     assert len(payload["edges"]) == 8
+
+
+def test_loop_is_told_the_planners_english_subject() -> None:
+    client = ScriptedToolClient(
+        [LLMResult(text='{"final":"done"}', provider="litellm", model="m", usage=LLMUsage())]
+    )
+    run_tool_loop(
+        question="enfermero",
+        suite=FakeSuite(FakeToolResult(warnings=["not_found"])),
+        suite_name="esco",
+        llm_client=client,
+        kind="occupation",
+        subject_hint="nurse",
+    )
+    user_message = client.calls[0][0][1].content
+    assert user_message.endswith("kind=occupation\nsubject=nurse")

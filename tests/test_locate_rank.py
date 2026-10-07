@@ -219,3 +219,42 @@ def test_truncated_pool_still_auto_selects_an_exact_title() -> None:
 
     assert ranked.nodes == [exact]
     assert ranked.confidence == 0.95
+
+
+def test_query_inside_a_word_is_not_a_title_match() -> None:
+    """Live repro: "IT manager" auto-selected "credit manager"."""
+    credit = _occ("credit manager", 1)
+    assert lexical_rank("IT manager", credit)[0] == 5
+    assert lexical_rank("manager", credit)[0] == 1
+    assert lexical_rank("develop", _occ("software developer", 2))[0] == 2
+
+
+def test_alias_the_suite_doubts_is_never_auto_selected() -> None:
+    """Live repro: "AI engineer" auto-selected an insemination technician."""
+    vet = _occ("animal artificial insemination technician", 1, alts=["AI engineer"])
+    ai = _occ("artificial intelligence engineer", 2)
+    result = AgentResult(
+        capability="locate",
+        suite="esco",
+        nodes=[vet, ai],
+        confidence=0.9,
+        warnings=["alias_unconfirmed", "ambiguous"],
+    )
+
+    ranked = group_and_sort_locate(_NoGroups(), result, "AI engineer", suite_name="esco")
+
+    assert len(ranked.nodes) == 2
+    assert "ambiguous" in ranked.warnings
+
+
+def test_meaning_hits_keep_the_suite_order() -> None:
+    """With no lexical match, the suite's relevance order wins over label length."""
+    best = _occ("artificial intelligence engineer", 1)
+    short = _occ("patent engineer", 2)
+    result = AgentResult(
+        capability="locate", suite="esco", nodes=[best, short], warnings=["ambiguous"]
+    )
+
+    ranked = group_and_sort_locate(_NoGroups(), result, "AI engineer", suite_name="esco")
+
+    assert [node.pref_label for node in ranked.nodes] == [best.pref_label, short.pref_label]

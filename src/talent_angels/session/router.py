@@ -104,6 +104,8 @@ def _is_advice(lowered: str) -> bool:
         return True
     if "learn" in lowered and "first" in lowered:
         return True
+    if "my goal" in lowered and ("missing" in lowered or "gap" in lowered):
+        return True
     return False
 
 

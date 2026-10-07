@@ -42,6 +42,25 @@ def read_user_profile() -> str:
     return read_text_or_empty(user_md())
 
 
+def _label_of(line: str) -> str:
+    """``GOAL: data analyst  [esco:x]`` → ``data analyst``."""
+    return line.split(":", 1)[1].split("  [", 1)[0].strip()
+
+
+def profile_titles() -> tuple[str | None, str | None]:
+    """(current job, goal) as stored, ESCO's standing first when there are several."""
+    standing: dict[str, str] = {}
+    goal: str | None = None
+    for line in read_user_profile().splitlines():
+        if line.startswith("GOAL:"):
+            goal = _label_of(line) or None
+        elif line.startswith("STANDING[") and "]:" in line:
+            suite = line[len("STANDING[") : line.index("]")]
+            standing[suite] = _label_of(line.replace("]:", ":", 1))
+    current = standing.get("esco") or next(iter(standing.values()), None)
+    return current or None, goal
+
+
 # Hermes-style caps (docs: Persistent Memory). USER.md holds the user profile.
 USER_MAX_CHARS = 1375
 

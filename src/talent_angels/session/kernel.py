@@ -5,7 +5,7 @@ from __future__ import annotations
 import copy
 import json
 from collections.abc import Sequence
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import Literal, Protocol
@@ -23,11 +23,13 @@ from talent_angels.llm import LLMClient
 from talent_angels.memory.episodes import recent_episodes
 from talent_angels.memory.erase import erase_all, erase_session, erase_summary
 from talent_angels.memory.profile import (
+    profile_titles,
     read_user_profile,
     write_goal,
     write_rejected,
     write_standing,
 )
+from talent_angels.session.advice import advice_plan
 from talent_angels.session.budget import model_view
 from talent_angels.session.catalog import FreeModel
 from talent_angels.session.commands import UnknownCommand, parse_command
@@ -162,6 +164,17 @@ def handle_line(
         )
         return _finish(state, text, said)
     if routed.kind == "advice":
+        current, goal = profile_titles()
+        grounded = advice_plan(text, current=current, goal=goal)
+        if grounded is not None:
+            return _handle_map(
+                state,
+                text,
+                runner=runner,
+                llm_client=llm_client,
+                question=grounded.question,
+                preface=grounded.preface,
+            )
         said = phrase_chat(
             llm_client,
             user_text=text,
@@ -1123,12 +1136,15 @@ def _handle_map(
     *,
     runner: TurnRunner,
     llm_client: LLMClient | None,
+    question: str | None = None,
+    preface: str = "",
 ) -> ChatReply:
+    """``question`` replaces ``text`` for the search when code already rewrote it."""
     _record(state, "user", text)
     bound = state.binding.node if state.binding is not None else None
     bound_nodes = dict(state.bindings) if state.bindings else None
     # "compare the two" names its titles in code, from the working set.
-    pair = pair_followup(text, state.recent)
+    pair = question or pair_followup(text, state.recent)
     if pair is None and bound_nodes and is_describe_followup(text, bound_nodes):
         return _describe_bound(state, text, llm_client=llm_client)
     question = pair or text
@@ -1154,5 +1170,7 @@ def _handle_map(
                 _record(state, "assistant", message)
                 return _reply(state, message, source_note=heading)
     reply = _from_outcome(state, outcome, question=text, llm_client=llm_client)
+    if preface:
+        reply = replace(reply, text=f"{preface}\n\n{reply.text}")
     _record(state, "assistant", reply.text)
     return reply

@@ -3,7 +3,9 @@
 from __future__ import annotations
 
 from talent_angels.assistant.merge import merge_answers, suite_heading
+from talent_angels.assistant.synthesize import synthesize
 from talent_angels.contracts import AgentResult, NodeRef
+from talent_angels.llm.protocol import LLMResult, LLMUsage, Message
 
 
 def _node(*, suite: str, node_id: str, label: str) -> NodeRef:
@@ -56,3 +58,23 @@ def test_suite_heading_for_known_and_future_suites() -> None:
     assert suite_heading("esco") == "ESCO"
     assert suite_heading("onet") == "O*NET"
     assert suite_heading("sfia") == "SFIA"
+
+
+class _CodeBlockClient:
+    provider = "litellm"
+    model = "test"
+
+    def complete(self, messages: list[Message], **_kwargs: object) -> LLMResult:
+        text = "Both maps list a chef.\n\n```\nSources used:\n- ESCO: chef\n```"
+        return LLMResult(text=text, provider=self.provider, model=self.model, usage=LLMUsage())
+
+
+def test_synthesize_drops_a_code_block_and_prints_sources_once() -> None:
+    esco = AgentResult(
+        capability="locate",
+        suite="esco",
+        nodes=[_node(suite="esco", node_id="esco:occupation:chef", label="chef")],
+    )
+    answer = synthesize((esco,), question="chef", llm_client=_CodeBlockClient())
+    assert "```" not in answer
+    assert answer.count("Sources used") == 1

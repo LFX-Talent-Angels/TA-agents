@@ -422,3 +422,15 @@ def test_map_prompt_answers_first_and_forbids_invented_people() -> None:
     system = client.calls[0][0].content
     assert "First reply to the user's own words" in system
     assert "Do not invent people" in system
+
+
+def test_connect_phrasing_drops_a_table_the_list_already_shows() -> None:
+    reply = "Software developers code.\n\n| Skill | Tag |\n|---|---|\n| skill 0 | essential |"
+    text = phrase_map(
+        ScriptedClient(reply),
+        question="what skills does a software developer need?",
+        result=_connect_result(),
+        fallback="fallback",
+        card=connect_card(_connect_result()),
+    )
+    assert text == "Software developers code."

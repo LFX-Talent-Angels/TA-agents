@@ -130,13 +130,21 @@ def group_and_sort_locate(
         key=lambda node: (group_order[group_id(node)], lexical_rank(query, node)),
     )
     top_tier = lexical_rank(query, ordered[0])[0]
-    second_tier = lexical_rank(query, ordered[1])[0]
+    # The runner-up is the best of the rest, not the next node in group order:
+    # a weak member of the winning group must not hide an equal hit elsewhere.
+    second_tier = min(lexical_rank(query, node)[0] for node in ordered[1:])
     # A hit that names the query in its preferred label (tiers 0-2) or as an
     # exact alias (3), and beats the next hit's tier, is unique enough — extra
     # full-text noise is not a picker. An alias *substring* (4) or a hit with no
     # lexical match at all (5) is never auto-selected: "nurse" must not resolve
     # to "chief executive officer" because one alias is "senior nurse manager".
-    unique_enough = top_tier <= _MAX_AUTO_SELECT_TIER and top_tier < second_tier
+    # A truncated pool may have cut an equal hit, so only an exact title wins it.
+    truncated = "truncated" in result.warnings
+    unique_enough = (
+        top_tier <= _MAX_AUTO_SELECT_TIER
+        and top_tier < second_tier
+        and not (truncated and top_tier > 0)
+    )
     if unique_enough:
         extra = len(ordered) - 1
         winner = ordered[0]

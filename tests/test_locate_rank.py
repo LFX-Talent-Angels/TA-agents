@@ -152,3 +152,70 @@ def test_alias_substring_is_never_auto_selected() -> None:
     assert "ambiguous" in ranked.warnings
     assert ranked.confidence == 0.7
     assert len(ranked.nodes) == 2
+
+
+class _Groups:
+    """CLASSIFIED_UNDER parents from a node-id -> group-label map."""
+
+    def __init__(self, groups: dict[str, str]) -> None:
+        self.groups = groups
+
+    def get_neighbors(self, node_id: str, rel_types: list[str] | None = None) -> FakeToolResult:
+        label = self.groups.get(node_id)
+        if label is None:
+            return FakeToolResult()
+        group = FakeNode(
+            id=f"esco:isco:{label}", kind="ISCOGroup", label=label, source="esco", source_id=label
+        )
+        return FakeToolResult(
+            nodes=[group],
+            edges=[FakeEdge(type="CLASSIFIED_UNDER", from_id=node_id, to_id=group.id)],
+        )
+
+
+def test_equally_good_hit_in_another_group_blocks_auto_select() -> None:
+    """The runner-up is the best of the rest, not the next node in group order."""
+    test_eng = _occ("test engineer", 1)
+    chemist = _occ("chemist", 2, alts=["chemical engineer"])
+    data_eng = _occ("data engineer", 3)
+    result = AgentResult(
+        capability="locate", suite="esco", nodes=[test_eng, chemist, data_eng], confidence=0.7
+    )
+    suite = _Groups({test_eng.id: "A engineers", chemist.id: "A engineers", data_eng.id: "B data"})
+
+    ranked = group_and_sort_locate(suite, result, "engineer", suite_name="esco")
+
+    assert "ambiguous" in ranked.warnings
+    assert len(ranked.nodes) == 3
+
+
+def test_truncated_pool_does_not_auto_select_a_token_hit() -> None:
+    """Live repro: "engineer" auto-selected "test engineer" from a cut-off pool."""
+    winner = _occ("test engineer", 1)
+    noise = _occ("roboticist", 2, alts=["robotics engineer"])
+    nodes = [winner, noise]
+
+    full = AgentResult(capability="locate", suite="esco", nodes=nodes, confidence=0.7)
+    cut = full.model_copy(update={"warnings": ["truncated"]})
+
+    assert group_and_sort_locate(_NoGroups(), full, "engineer", suite_name="esco").nodes == [winner]
+    ranked = group_and_sort_locate(_NoGroups(), cut, "engineer", suite_name="esco")
+    assert "ambiguous" in ranked.warnings
+    assert len(ranked.nodes) == 2
+
+
+def test_truncated_pool_still_auto_selects_an_exact_title() -> None:
+    exact = _occ("software developer", 1)
+    noise = _occ("web developer", 2)
+    result = AgentResult(
+        capability="locate",
+        suite="esco",
+        nodes=[noise, exact],
+        confidence=0.95,
+        warnings=["truncated"],
+    )
+
+    ranked = group_and_sort_locate(_NoGroups(), result, "software developer", suite_name="esco")
+
+    assert ranked.nodes == [exact]
+    assert ranked.confidence == 0.95

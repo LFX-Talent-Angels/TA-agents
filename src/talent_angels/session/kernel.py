@@ -309,9 +309,19 @@ def _handle_command(state: SessionState, text: str) -> ChatReply:
         # session's own files go too — the transcript is the largest store of
         # the user's own words and previously survived every reset, since
         # erase_person() only covered the profile and the episode table.
+        # A session the user named with /save is something they asked to keep:
+        # step away from it instead of erasing it.
+        saved_name = state.name
         old_dir = _session_dir_for(state)
         fresh = new_session()
         _copy_into(state, clear_conversation(fresh))
+        if saved_name:
+            return _finish(
+                state,
+                text,
+                f"Starting a fresh conversation. Saved session {saved_name!r} is kept; "
+                f"/resume {saved_name} to go back.",
+            )
         erased = erase_session(old_dir)
         return _finish(state, text, f"{erase_summary(erased)} Starting a fresh conversation.")
     if command.name == "reset-all":

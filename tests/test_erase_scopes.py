@@ -387,16 +387,22 @@ def test_the_two_scopes_differ_in_exactly_one_way(memory_home) -> None:
     from talent_angels.memory.episodes import recent_episodes
 
     _seed_personal_stores()
+    kept = new_session()
+    save_session(kept, name="kept")
     state = new_session()
-    save_session(state, name="prior")
+    save_session(state)
+    live_dir = sessions_dir() / state.session_id
 
     handle_line(state, "/reset", runner=_boom)
     assert profile.user_md().exists() and len(recent_episodes()) == 1
-    assert not (sessions_dir() / "prior" / "transcript.jsonl").exists()
+    assert not (live_dir / "transcript.jsonl").exists()
+    # A session the user named with /save is theirs to keep until /reset-all.
+    assert (sessions_dir() / "kept").is_dir()
 
     handle_line(state, "/reset-all", runner=_boom)
     assert not profile.user_md().exists()
     assert recent_episodes() == []
+    assert not (sessions_dir() / "kept").exists()
 
 
 def test_both_commands_are_idempotent_and_honest_when_there_is_nothing_to_erase(
@@ -516,12 +522,13 @@ def test_an_erased_session_directory_does_not_linger(memory_home) -> None:
     _seed_personal_stores()
     state = new_session()
     state.transcript.append(TranscriptLine(role="user", text=PII, ts="t0"))
-    save_session(state, name="my-journey")
-    assert (sessions_dir() / "my-journey").is_dir()
+    save_session(state)
+    session_dir = sessions_dir() / state.session_id
+    assert session_dir.is_dir()
 
     handle_line(state, "/reset", runner=_boom)
 
-    assert not (sessions_dir() / "my-journey").exists(), (
+    assert not session_dir.exists(), (
         "an empty session directory left behind will be offered by /resume"
     )
 
@@ -537,16 +544,15 @@ def test_the_whole_session_directory_goes_including_nested_stores(memory_home) -
     _seed_personal_stores()
     state = new_session()
     state.transcript.append(TranscriptLine(role="user", text=PII, ts="t0"))
-    save_session(state, name="my-journey")
-    nested = sessions_dir() / "my-journey" / "query-details" / "turn-1.json"
+    save_session(state)
+    session_dir = sessions_dir() / state.session_id
+    nested = session_dir / "query-details" / "turn-1.json"
     nested.parent.mkdir(parents=True, exist_ok=True)
     nested.write_text(f'{{"question": "{PII}"}}')
 
     handle_line(state, "/reset", runner=_boom)
 
-    assert not (sessions_dir() / "my-journey").exists(), (
-        "the session directory and everything under it must be gone"
-    )
+    assert not session_dir.exists(), "the session directory and everything under it must be gone"
     # Scoped to the session tree: `/reset` deliberately leaves the profile and
     # the episode history in place, so they are expected to still hold the PII.
     assert not _leaks(sessions_dir().parent)

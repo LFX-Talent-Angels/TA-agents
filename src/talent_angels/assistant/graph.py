@@ -269,7 +269,9 @@ def dispatch_plan(
                 suite=suite,
                 suite_name=suite_name,
                 llm_client=llm_client,
-                kind=state.get("kind"),
+                # The planner's kind ("skill" for "what is machine learning?")
+                # unless the caller fixed one.
+                kind=state.get("kind") or (draft.kind if draft is not None else None),
                 bound_node=bound_node,
                 intent=plan.intent.target if plan is not None else None,
                 subject_hint=subject_hint,

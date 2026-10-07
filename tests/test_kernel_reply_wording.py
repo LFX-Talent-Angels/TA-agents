@@ -90,3 +90,14 @@ def test_suite_waiting_for_a_pick_is_not_reported_as_a_miss(warning: str) -> Non
 
     assert "No O*NET occupation is chosen yet" in reply.text
     assert LOCATE_MISS not in reply.text
+
+
+def test_a_unique_hit_without_phrasing_shows_no_node_id() -> None:
+    esco = AgentResult(
+        capability="locate", suite="esco", nodes=[_node("esco", "chef")], confidence=0.95
+    )
+    # The other suite is still picking, so the ESCO hit renders as its own card.
+    reply = handle_line(new_session(), "chef", runner=_runner(esco, _nurses("onet")))
+
+    assert "esco:occupation:chef" not in reply.text
+    assert "Map record: **chef** (Occupation, confidence 95%)" in reply.text

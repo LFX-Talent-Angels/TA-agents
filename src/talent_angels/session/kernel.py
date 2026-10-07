@@ -626,6 +626,8 @@ def _render_unique_block(
         if hint and hint not in body:
             body = f"{body}\n\n{hint}"
     else:
+        # The CLI summary carries node ids; chat shows the record line instead.
+        fallback = _locate_fact_line(result) or fallback
         phrased = phrase_map(
             llm_client,
             question=question,

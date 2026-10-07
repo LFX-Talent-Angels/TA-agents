@@ -42,5 +42,7 @@ class SessionState(BaseModel):
     pending: list[PendingChoice] = Field(default_factory=list)
     #: A profile statement ("I am a X") waiting on the user's pick from ``pending``.
     pending_profile_intent: str | None = None
+    #: Titles resolved in this conversation, as searched, newest last (working set).
+    recent: list[str] = Field(default_factory=list)
     last_result: AgentResult | None = None
     last_results: list[AgentResult] = Field(default_factory=list)

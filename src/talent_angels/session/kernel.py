@@ -75,6 +75,7 @@ from talent_angels.session.store import (
     sessions_dir,
 )
 from talent_angels.session.switch import SwitchError, apply, load_catalogue, resolve
+from talent_angels.session.working_set import pair_followup, remember
 from talent_angels.skills.connect.compare import CAPABILITY_COMPARE
 
 _NO_PENDING = "There's no numbered list to pick from. Type a job title first."
@@ -428,6 +429,7 @@ def _handle_pick(
             _record(state, "assistant", _BAD_PICK)
             return _reply(state, _BAD_PICK)
         _set_bind(state, node)
+        state.recent = remember(state.recent, node.pref_label)
         _apply_profile_intent(state.pending_profile_intent, node)
         state.pending_profile_intent = None
         _write_picker_event(
@@ -644,6 +646,21 @@ def _render_unique_block(
     return body
 
 
+def _remember_topic(state: SessionState, draft: PlanDraft | None, node: NodeRef) -> None:
+    """Add this turn's title to the working set, as the user searched it."""
+    subject = draft.subject if draft is not None and draft.subject else node.pref_label
+    state.recent = remember(state.recent, subject)
+
+
+def _remember_compared(state: SessionState, draft: PlanDraft | None, result: AgentResult) -> None:
+    if draft is not None and draft.subject and draft.secondary_subject:
+        titles = [draft.subject, draft.secondary_subject]
+    else:
+        titles = [node.pref_label for node in result.nodes[:2]]
+    for title in titles:
+        state.recent = remember(state.recent, title)
+
+
 def _searched_for(question: str, draft: PlanDraft | None) -> str:
     """The words the search used ("nurse"), not the whole question, for a picker."""
     subject = draft.subject if draft is not None else None
@@ -693,6 +710,7 @@ def _from_single_outcome(
         )
     elif result.capability == "locate" and result.nodes:
         _set_bind(state, result.nodes[0])
+        _remember_topic(state, draft, result.nodes[0])
         _draft = getattr(outcome, "plan_draft", None)
         _apply_profile_intent(_draft.profile_intent if _draft else None, result.nodes[0])
         state.pending = []
@@ -710,6 +728,7 @@ def _from_single_outcome(
             text = record
     elif result.capability == "connect" and result.nodes:
         _set_bind(state, result.nodes[0])
+        _remember_topic(state, draft, result.nodes[0])
         fallback = _map_answer(outcome.answer)
         if not uses_chat_phrasing(llm_client):
             fallback = f"{fallback}\n\n{MAP_NEXT_STEP}"
@@ -728,6 +747,7 @@ def _from_single_outcome(
             text = f"{text}\n\n{hint}"
     elif result.capability == CAPABILITY_COMPARE:
         state.pending = []
+        _remember_compared(state, draft, result)
         text = render_compare(result)
     elif any(w.startswith("capability_not_implemented") for w in result.warnings):
         text = PATHFIND_REDIRECT
@@ -923,6 +943,11 @@ def _from_outcome(
         _apply_profile_intent(intent, unique_bind)
         intent = None  # goal/reject are written once, not again on a later pick
     state.pending_profile_intent = intent if pending_all else None
+    if unique_bind is not None:
+        _remember_topic(state, _draft, unique_bind)
+    compared = next((r for r in results if r.capability == CAPABILITY_COMPARE), None)
+    if compared is not None:
+        _remember_compared(state, _draft, compared)
 
     if pending_all:
         state.pending = pending_all
@@ -1098,9 +1123,12 @@ def _handle_map(
     _record(state, "user", text)
     bound = state.binding.node if state.binding is not None else None
     bound_nodes = dict(state.bindings) if state.bindings else None
-    if bound_nodes and is_describe_followup(text, bound_nodes):
+    # "compare the two" names its titles in code, from the working set.
+    pair = pair_followup(text, state.recent)
+    if pair is None and bound_nodes and is_describe_followup(text, bound_nodes):
         return _describe_bound(state, text, llm_client=llm_client)
-    outcome = runner(text, bound_node=bound, bound_nodes=bound_nodes)
+    question = pair or text
+    outcome = runner(question, bound_node=bound, bound_nodes=bound_nodes)
     # Semantic suite switch: LLM detected user wants to see cached results on a specific suite.
     # Re-render from state.last_results (previous turn) without running a new query.
     _draft = getattr(outcome, "plan_draft", None)

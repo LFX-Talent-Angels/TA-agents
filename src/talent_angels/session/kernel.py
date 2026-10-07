@@ -13,6 +13,7 @@ from typing import Literal, Protocol
 from talent_angels.assistant.answer import CONNECT_PREVIEW_CAP, summarize_result
 from talent_angels.assistant.connect_request import followup_connect_request, is_describe_followup
 from talent_angels.assistant.intent import CAPABILITY_CONNECT
+from talent_angels.assistant.llm_plan import PlanDraft
 from talent_angels.assistant.merge import suite_heading
 from talent_angels.assistant.suite_select import resolve_show_token
 from talent_angels.assistant.synthesize import synthesize, synthesize_structured
@@ -639,6 +640,12 @@ def _render_unique_block(
     return body
 
 
+def _searched_for(question: str, draft: PlanDraft | None) -> str:
+    """The words the search used ("nurse"), not the whole question, for a picker."""
+    subject = draft.subject if draft is not None else None
+    return subject.strip() if subject and subject.strip() else question
+
+
 def _from_single_outcome(
     state: SessionState,
     result: AgentResult,
@@ -658,16 +665,17 @@ def _from_single_outcome(
         state.pending_profile_intent = draft.profile_intent if draft else None
         state.binding = None
         state.bindings.clear()
+        searched = _searched_for(question, draft)
         intro = phrase_chat(
             llm_client,
             user_text=question,
-            fallback=f'I found several matches for "{question}". Which one did you mean?',
+            fallback=f'I found several matches for "{searched}". Which one did you mean?',
             hint=ambiguous_intro_card(
-                question, [choice.node.pref_label for choice in pending], omitted=omitted
+                searched, [choice.node.pref_label for choice in pending], omitted=omitted
             ),
             mode="intro",
         )
-        text = render_picker(question, pending, omitted=omitted, intro=intro)
+        text = render_picker(searched, pending, omitted=omitted, intro=intro)
     elif "not_found" in result.warnings:
         text = phrase_chat(
             llm_client,
@@ -837,6 +845,7 @@ def _from_outcome(
     any_hit = False
     all_miss = True
     _draft = getattr(outcome, "plan_draft", None)
+    searched = _searched_for(question, _draft)
 
     for result in results:
         heading = suite_heading(result.suite) if result.suite else "Map"
@@ -849,17 +858,17 @@ def _from_outcome(
                 llm_client,
                 user_text=question,
                 fallback=(
-                    f'I found several {heading} matches for "{question}". Which one did you mean?'
+                    f'I found several {heading} matches for "{searched}". Which one did you mean?'
                 ),
                 hint=ambiguous_intro_card(
-                    question,
+                    searched,
                     [choice.node.pref_label for choice in choices],
                     omitted=omitted,
                 ),
                 mode="intro",
             )
             picker = render_picker(
-                question,
+                searched,
                 choices,
                 omitted=omitted,
                 intro=intro,
@@ -873,8 +882,16 @@ def _from_outcome(
             all_miss = False
             continue
         if not result.nodes or "not_found" in result.warnings:
-            blocks.append(f"## {heading}\n\n{LOCATE_MISS}")
-            miss_blocks.append(f"## {heading}\n\n{LOCATE_MISS}")
+            # A follow-up ("its skills") with nothing chosen in this suite is
+            # not a search miss: the user still has to pick from its list.
+            message = (
+                f"No {heading} occupation is chosen yet. Pick one from its list or name one, "
+                "then ask again."
+                if {"bind_required", "no_subject"} & set(result.warnings)
+                else LOCATE_MISS
+            )
+            blocks.append(f"## {heading}\n\n{message}")
+            miss_blocks.append(f"## {heading}\n\n{message}")
             continue
         all_miss = False
         any_hit = True

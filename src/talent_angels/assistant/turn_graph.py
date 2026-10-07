@@ -37,7 +37,7 @@ from talent_angels.assistant.intent import (
     CAPABILITY_LOCATE,
     Capability,
 )
-from talent_angels.assistant.llm_plan import PlanDraft, interpret_question
+from talent_angels.assistant.llm_plan import PlanDraft, interpret_question, is_compare
 from talent_angels.assistant.memo import TurnMemo, append_bounded, memo_for
 from talent_angels.assistant.merge import merge_answers
 from talent_angels.assistant.planning import ExecutionPlan
@@ -47,6 +47,8 @@ from talent_angels.contracts import AgentResult, NodeRef
 from talent_angels.llm import LLMClient
 from talent_angels.memory.cache import CachedSuite
 from talent_angels.runlog import StageUsage, ToolCall
+from talent_angels.skills.connect import ConnectRequest, connect
+from talent_angels.skills.connect.compare import compare_result
 from talent_angels.skills.locate import locate
 from talent_angels.skills.locate.rank import group_and_sort_locate
 from talent_angels.suites.measured import MeasuredSuite
@@ -154,6 +156,43 @@ def locate_one(
     return result, measured.tool_calls, False
 
 
+def compare_one(
+    suite: SuiteTools, suite_name: str, first: str, second: str
+) -> tuple[AgentResult, list[ToolCall]]:
+    """Locate both titles and Connect each, in code; no tool loop, no model.
+
+    A title with several matches comes back as that locate result, so the user
+    picks it first — a compare never guesses one side.
+    """
+    measured = MeasuredSuite(suite)
+    schema = suite.suite_schema
+    sides: list[AgentResult] = []
+    for subject in (first, second):
+        located = locate(measured, suite_name, subject, kind="occupation")
+        located = group_and_sort_locate(
+            measured,
+            located,
+            subject,
+            suite_name=suite_name,
+            group_rel_type=schema.group_rel_type,
+            group_node_kinds=schema.group_node_kinds,
+        )
+        if not located.nodes or "ambiguous" in located.warnings:
+            return located, measured.tool_calls
+        sides.append(
+            connect(
+                measured,
+                suite_name,
+                located.nodes[0],
+                request=ConnectRequest(subject=subject, rel_types=schema.skill_rel_types),
+                confidence=located.confidence,
+                locate_evidence=located.evidence,
+                optional_rel_values=schema.optional_rel_values,
+            )
+        )
+    return compare_result(sides[0], sides[1]), measured.tool_calls
+
+
 def _plan(state: TurnState, rt: TurnRuntime) -> dict[str, Any]:
     question = state["question"]
     registry = rt.registry
@@ -222,6 +261,7 @@ def _dispatch(state: TurnState, rt: TurnRuntime) -> dict[str, Any]:
         "heuristic_intent": state.get("heuristic_intent", True),
         "llm_stages": stages,
     }
+    draft = state.get("plan_draft")
     for name in state.get("selected") or []:
         prior = len(stages)
         bound = _bound_for_suite(name, bound_node, bound_nodes)
@@ -234,6 +274,14 @@ def _dispatch(state: TurnState, rt: TurnRuntime) -> dict[str, Any]:
                     cache_hit = cache_hit or hit
                     collected.append(one)
                     tools.extend(one_tools)
+                    continue
+                if draft is not None and is_compare(draft) and not state.get("force_capability"):
+                    assert draft.subject and draft.secondary_subject
+                    pair, pair_tools = compare_one(
+                        runtime.suite, name, draft.subject, draft.secondary_subject
+                    )
+                    collected.append(pair)
+                    tools.extend(pair_tools)
                     continue
                 dispatched = dispatch_plan(
                     cast(AssistantState, {**seed, "bound_node": bound}),

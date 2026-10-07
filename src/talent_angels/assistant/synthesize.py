@@ -20,6 +20,7 @@ from talent_angels.llm.protocol import uses_chat_phrasing
 from talent_angels.memory.agent_notes import notes_prefix
 from talent_angels.memory.profile import profile_prefix
 from talent_angels.memory.retrieval import recall_prefix
+from talent_angels.skills.connect.compare import CAPABILITY_COMPARE, skill_overlap
 
 _NODE_ID_RE = re.compile(
     r"\b(?:esco|onet|sfia|bls):[a-z0-9][a-z0-9_.:-]*",
@@ -121,6 +122,12 @@ def _suite_line(result: AgentResult, *, list_ambiguous: bool = True) -> str | No
         return None
     if result.capability == "connect":
         return f"{heading}: {_connect_line(result)}"
+    if result.capability == CAPABILITY_COMPARE:
+        o = skill_overlap(result)
+        return (
+            f"{heading}: {o.a.pref_label} vs {o.b.pref_label} — {len(o.shared)} shared, "
+            f"{len(o.only_a)} only {o.a.pref_label}, {len(o.only_b)} only {o.b.pref_label}"
+        )
     top = result.nodes[0]
     confidence = f", confidence {result.confidence:.0%}" if result.confidence is not None else ""
     return f"{heading}: {top.pref_label} ({top.kind}{confidence})"

@@ -80,7 +80,7 @@ from talent_angels.session.store import (
     sessions_dir,
 )
 from talent_angels.session.switch import SwitchError, apply, load_catalogue, resolve
-from talent_angels.session.working_set import pair_followup, remember
+from talent_angels.session.working_set import pair_followup, refers_to_one, remember
 from talent_angels.skills.connect.compare import CAPABILITY_COMPARE
 
 _NO_PENDING = "There's no numbered list to pick from. Type a job title first."
@@ -670,6 +670,14 @@ def _remember_topic(state: SessionState, draft: PlanDraft | None, node: NodeRef)
     state.recent = remember(state.recent, subject)
 
 
+def _compared_last(state: SessionState) -> bool:
+    return (
+        not state.bindings
+        and len(state.recent) >= 2
+        and any(result.capability == CAPABILITY_COMPARE for result in state.last_results)
+    )
+
+
 def _remember_compared(state: SessionState, draft: PlanDraft | None, result: AgentResult) -> None:
     if draft is not None and draft.subject and draft.secondary_subject:
         titles = [draft.subject, draft.secondary_subject]
@@ -677,6 +685,9 @@ def _remember_compared(state: SessionState, draft: PlanDraft | None, result: Age
         titles = [node.pref_label for node in result.nodes[:2]]
     for title in titles:
         state.recent = remember(state.recent, title)
+    # After a compare, "it" could be either title: nothing stays bound.
+    state.binding = None
+    state.bindings.clear()
 
 
 def _searched_for(question: str, draft: PlanDraft | None) -> str:
@@ -1154,6 +1165,13 @@ def _handle_map(
         _record(state, "assistant", message)
         return _reply(state, message)
     pair = question or pair_followup(text, state.recent)
+    if pair is None and _compared_last(state) and refers_to_one(text):
+        first, second = state.recent[-2:]
+        message = (
+            f"Which one do you mean: **{first}** or **{second}**? Name it and I'll look it up."
+        )
+        _record(state, "assistant", message)
+        return _reply(state, message)
     if pair is None and bound_nodes and is_describe_followup(text, bound_nodes):
         return _describe_bound(state, text, llm_client=llm_client)
     question = pair or text

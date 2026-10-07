@@ -47,3 +47,11 @@ def pair_followup(text: str, recent: list[str]) -> str | None:
     if len(recent) >= 2 and any(pattern.search(text) for pattern in _PAIR_FOLLOWUPS):
         return f"compare {recent[-2]} and {recent[-1]}"
     return None
+
+
+_ONE = re.compile(r"\b(?:it|its|this\s+one|that\s+one)\b", re.IGNORECASE)
+
+
+def refers_to_one(text: str) -> bool:
+    """ "what skills does it need?" — a single, unnamed title."""
+    return bool(_ONE.search(text))

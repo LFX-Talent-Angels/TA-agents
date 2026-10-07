@@ -110,3 +110,17 @@ def test_a_suite_still_picking_shows_its_list_next_to_the_compare() -> None:
     assert "1 shared skill" in reply.text
     assert "Music Teachers" in reply.text
     assert len(state.pending) == 2
+
+
+def test_it_after_a_compare_asks_which_title() -> None:
+    state = new_session()
+    state.bindings["esco"] = _node("esco", "nurse", "Occupation")
+    handle_line(state, "chef vs baker", runner=_runner(_chef_vs_baker()))
+
+    def no_search(question: str, **_kwargs: object) -> TurnOutcome:
+        raise AssertionError("must ask, not search")
+
+    reply = handle_line(state, "what skills does it need?", runner=no_search)
+
+    assert state.bindings == {}
+    assert reply.text.startswith("Which one do you mean: **chef** or **baker**?")

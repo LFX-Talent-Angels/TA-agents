@@ -58,14 +58,15 @@ Examples:
 {"target":"pathfind","subject":"data analyst","secondary_subject":"data scientist"}
 
 Same connect shape for: "what skills does a X need", "what skills I need to be
-a X", "skills I need to become a X", "I want to be a X".
+a X", "skills I need to become a X".
 Same locate shape for: "what is a X", "what does a X do", "where is X".
 Same pathfind shape for: "path from X to Y", "skill gap from X to Y",
 "how to become X from Y", "how do I move from X to Y".
 
 profile_intent rules:
 - Set "goal" when the user states a career destination:
-  "my goal is X", "I want to become X", "I am working toward X".
+  "my goal is X", "I want to become X", "I want to be a X", "I am working toward X".
+  A stated destination is a goal even without the word "goal"; do not list skills.
   Set subject to ONLY the destination occupation name (e.g. "data scientist").
   target must be "locate". Example:
   "my goal is data scientist" →
@@ -142,7 +143,7 @@ class InterpretedPlan:
 
 
 _GOAL_RE = re.compile(
-    r"^(?:my\s+goal\s+is|i\s+want\s+to\s+become|i\s+am\s+working\s+toward)"
+    r"^(?:my\s+goal\s+is|i\s+want\s+to\s+(?:become|be)|i\s+am\s+working\s+toward)"
     r"\s+(?:a\s+|an\s+)?(.+)$",
     re.IGNORECASE,
 )

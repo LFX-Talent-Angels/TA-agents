@@ -140,3 +140,16 @@ def test_profile_heuristic_reads_statements(question: str, intent: str, subject:
 @pytest.mark.parametrize("question", ["I am looking for a job", "I'm interested in tech", "chef"])
 def test_profile_heuristic_ignores_non_statements(question: str) -> None:
     assert _profile_intent_heuristic(question) is None
+
+
+@pytest.mark.parametrize(
+    "question", ["I want to become a web developer", "I want to be a web developer"]
+)
+def test_wanting_to_become_is_a_goal_not_a_skills_list(question: str) -> None:
+    draft = _profile_intent_heuristic(question)
+    assert draft is not None
+    assert (draft.target, draft.profile_intent, draft.subject) == (
+        "locate",
+        "goal",
+        "web developer",
+    )

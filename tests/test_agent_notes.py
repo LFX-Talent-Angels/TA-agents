@@ -27,3 +27,31 @@ def test_append_note_evicts_oldest_when_over_cap(tmp_path):
         # oldest (a) evicted first, newest (b) retained
         assert "- " + "a" * 25 not in content
         assert "- " + "b" * 25 in content
+
+
+def test_retired_developer_notes_stay_out_of_prompts(memory_home):
+    from talent_angels.memory import agent_notes as notes
+
+    memory_home.memory_md.write_text(
+        "- Pathfind not yet implemented — redirect gracefully\n- prefers short answers\n"
+    )
+
+    prefix = notes.notes_prefix()
+
+    assert "Pathfind not yet implemented" not in prefix
+    assert "- prefers short answers" in prefix
+
+
+def test_only_retired_notes_means_no_block(memory_home):
+    from talent_angels.memory import agent_notes as notes
+
+    memory_home.memory_md.write_text("- Pathfind not yet implemented — redirect gracefully\n")
+
+    assert notes.notes_prefix() == ""
+
+
+def test_starting_the_tui_does_not_seed_developer_notes(memory_home):
+    from talent_angels.tui import app
+
+    assert not hasattr(app, "_seed_memory_if_new")
+    assert not memory_home.memory_md.exists()

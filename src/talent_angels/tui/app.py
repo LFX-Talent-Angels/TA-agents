@@ -16,8 +16,6 @@ from talent_angels.assistant.turn import persist_turn_record, with_extra_stages
 from talent_angels.env import load_local_dotenv
 from talent_angels.llm import LLMClient
 from talent_angels.llm.factory import get_llm_client
-from talent_angels.memory.agent_notes import append_note
-from talent_angels.memory.paths import memory_md
 from talent_angels.query_details import write_query_details
 from talent_angels.session.catalog import render_catalogue
 from talent_angels.session.copy import WELCOME
@@ -128,21 +126,6 @@ def _read_line(console: Console) -> str:
     return "\n".join(parts)
 
 
-_SEED_NOTES = [
-    "O*NET USES_SOFTWARE edges have relation_type=None — always include in essential filter",
-    "Exact pref_label matches (e.g. 'software developer') auto-select — no picker shown",
-    "Ambiguous queries (e.g. 'developer', 'nurse') correctly show a numbered picker",
-    "Pathfind not yet implemented — redirect gracefully",
-]
-
-
-def _seed_memory_if_new() -> None:
-    """Write seed notes to MEMORY.md on first run only."""
-    if not memory_md().exists():
-        for note in _SEED_NOTES:
-            append_note(note)
-
-
 def _sync_runlog_path(state: SessionState, previous_key: str) -> str:
     """Keep ``RUNLOG_PATH`` pointing at the session that is actually live.
 
@@ -162,7 +145,6 @@ def _sync_runlog_path(state: SessionState, previous_key: str) -> str:
 def main(argv: Sequence[str] | None = None, *, registry: SuiteRegistry | None = None) -> int:
     del argv
     load_local_dotenv()
-    _seed_memory_if_new()
     selected = registry or default_suite_registry()
     console = Console()
 

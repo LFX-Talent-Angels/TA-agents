@@ -449,6 +449,13 @@ def _terms(question: str) -> list[str]:
     return [f'"{token}"' for token in seen]
 
 
+def _has_episodes(conn: sqlite3.Connection) -> bool:
+    try:
+        return conn.execute("SELECT 1 FROM episodes LIMIT 1").fetchone() is not None
+    except sqlite3.Error:
+        return False
+
+
 class Fts5EpisodeRetriever:
     """Keyword search over past questions."""
 
@@ -534,6 +541,15 @@ class Fts5EpisodeRetriever:
             return []
         try:
             rows = conn.execute(_SELECT, (_JOIN.join(terms), limit)).fetchall()
+        except sqlite3.OperationalError as exc:
+            if "no such table" in str(exc) and not _has_episodes(conn):
+                # A new user's first turn: the index is created with the first
+                # recorded episode, so there is nothing to recall yet. A legacy
+                # database *with* episodes still warns below.
+                logger.debug("fts5 recall: nothing recorded yet")
+                return []
+            logger.warning("fts5 recall failed; continuing without recall", exc_info=True)
+            return []
         except sqlite3.Error:
             # A database with no fts5 build, an index that was never
             # backfilled, a locked or truncated file, a MATCH expression this

@@ -6,8 +6,10 @@ import pytest
 
 from talent_angels.assistant.llm_plan import (
     PLAN_SYSTEM,
+    PlanDraft,
     _profile_intent_heuristic,
     interpret_question,
+    is_compare,
     parse_plan_text,
     uses_llm_planner,
 )
@@ -157,3 +159,46 @@ def test_wanting_to_become_is_a_goal_not_a_skills_list(question: str) -> None:
         "goal",
         "web developer",
     )
+
+
+@pytest.mark.parametrize(
+    ("question", "first", "second"),
+    [
+        ("data analyst vs data scientist", "data analyst", "data scientist"),
+        ("a nurse versus a midwife?", "nurse", "midwife"),
+        ("compare accountant and software developer", "accountant", "software developer"),
+        (
+            "compare accountant and software developer and help me choose",
+            "accountant",
+            "software developer",
+        ),
+        ("compare a chef with a baker", "chef", "baker"),
+        (
+            "what is the difference between a web developer and a software developer?",
+            "web developer",
+            "software developer",
+        ),
+    ],
+)
+def test_compare_heuristic_reads_two_titles(question: str, first: str, second: str) -> None:
+    draft = _profile_intent_heuristic(question)
+    assert draft is not None
+    assert (draft.target, draft.subject, draft.secondary_subject) == ("connect", first, second)
+    assert is_compare(draft)
+
+
+@pytest.mark.parametrize(
+    "question", ["what skills does a chef need?", "skills of a salt and pepper cook"]
+)
+def test_one_title_is_not_a_compare(question: str) -> None:
+    assert not is_compare(_profile_intent_heuristic(question))
+
+
+def test_pathfind_with_two_ends_is_not_a_compare() -> None:
+    draft = PlanDraft(target="pathfind", subject="teacher", secondary_subject="data analyst")
+    assert not is_compare(draft)
+
+
+def test_planner_prompt_teaches_the_compare_shape() -> None:
+    assert '"secondary_subject":"software developer"' in PLAN_SYSTEM
+    assert '"X vs Y" or "X and Y" as two titles is locate' not in PLAN_SYSTEM

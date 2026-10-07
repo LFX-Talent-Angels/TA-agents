@@ -9,6 +9,7 @@ from dataclasses import dataclass
 from pydantic import BaseModel, ConfigDict, Field, ValidationError, field_validator
 
 from talent_angels.assistant.intent import (
+    CAPABILITY_CONNECT,
     CAPABILITY_LOCATE,
     Capability,
 )
@@ -24,7 +25,7 @@ PLAN_SYSTEM = """You are the LFX Talent Angels planner. Return ONLY a JSON objec
 Keys:
 - target: locate | connect | pathfind
 - subject: short search phrase, or null
-- secondary_subject: second pathfind endpoint, or null
+- secondary_subject: second pathfind endpoint, or the second title to compare, or null
 - kind: occupation | skill | null
 - rel_types: array of relationship names, or null
 - relation_filter: essential | optional | null
@@ -37,7 +38,9 @@ How to choose target:
   ("what skills does X need", "essential skills", "neighbors of X")
 - pathfind = a route or gap between TWO things
   ("path from A to B", "skill gap from A to B", "how to become X from Y")
-- "X vs Y" or "X and Y" as two titles is locate
+- compare = two titles side by side ("X vs Y", "compare X and Y", "difference
+  between X and Y", "help me choose between X and Y"): target connect, subject X,
+  secondary_subject Y
 
 If the user asks for skills, neighbors, or what someone needs, target MUST be
 connect, not locate. Put only the occupation or skill name in subject — never
@@ -56,6 +59,8 @@ Examples:
 {"target":"connect","subject":"software developer","kind":"occupation",
  "rel_types":["HAS_SKILL"],"relation_filter":"essential"}
 {"target":"pathfind","subject":"data analyst","secondary_subject":"data scientist"}
+{"target":"connect","subject":"accountant","secondary_subject":"software developer",
+ "kind":"occupation"}
 
 Same connect shape for: "what skills does a X need", "what skills I need to be
 a X", "skills I need to become a X".
@@ -177,8 +182,51 @@ _REJECT_RE = re.compile(
 )
 
 
+_A = r"(?:an?\s+)?"
+_COMPARE_RES = (
+    re.compile(rf"^(?:compare\s+)?{_A}(.+?)\s+(?:vs\.?|versus)\s+{_A}(.+)$", re.IGNORECASE),
+    re.compile(rf"^compare\s+{_A}(.+?)\s+(?:and|with|to)\s+{_A}(.+)$", re.IGNORECASE),
+    re.compile(
+        rf"^(?:what(?:'s|\s+is)\s+the\s+)?difference\s+between\s+{_A}(.+?)\s+and\s+{_A}(.+)$",
+        re.IGNORECASE,
+    ),
+)
+#: "compare X and Y and help me choose": the second title ends before the ask.
+_COMPARE_TAIL = re.compile(r"\s+(?:and|to)\s+(?:help|tell)\b.*$|[?.!]+$", re.IGNORECASE)
+
+
+def is_compare(draft: PlanDraft | None) -> bool:
+    """Two titles side by side: a connect plan with a second subject."""
+    return (
+        draft is not None
+        and draft.target == CAPABILITY_CONNECT
+        and bool(draft.subject)
+        and bool(draft.secondary_subject)
+    )
+
+
+def _compare_heuristic(question: str) -> PlanDraft | None:
+    text = question.strip()
+    for pattern in _COMPARE_RES:
+        m = pattern.match(text)
+        if m:
+            first = m.group(1).strip()
+            second = _COMPARE_TAIL.sub("", m.group(2)).strip()
+            if first and second:
+                return PlanDraft(
+                    target=CAPABILITY_CONNECT,
+                    subject=first,
+                    secondary_subject=second,
+                    kind="occupation",
+                )
+    return None
+
+
 def _profile_intent_heuristic(question: str) -> PlanDraft | None:
-    """Return a PlanDraft for goal/reject/standing patterns when the LLM planner fails."""
+    """Return a PlanDraft for compare/goal/reject/standing patterns when the LLM planner fails."""
+    compare = _compare_heuristic(question)
+    if compare is not None:
+        return compare
     m = _GOAL_RE.match(question.strip())
     if m:
         return PlanDraft(

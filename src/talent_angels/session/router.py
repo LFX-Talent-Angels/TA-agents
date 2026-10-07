@@ -37,6 +37,13 @@ _HELP_PLAIN_RE = re.compile(
 )
 
 _PICK_NUM_RE = re.compile(r"^\s*(\d+)\s*[.)]?\s*$")
+#: "actually I meant 5", "no, number 3", "make it #2": a correction is a pick.
+_PICK_CORRECTION_RE = re.compile(
+    r"^\s*(?:(?:actually|sorry|oops|no)[,.!]?\s+)*"
+    r"(?:i\s+meant|i\s+mean|make\s+it|pick|choose|number)?\s*"
+    r"(?:number\s+|no\.\s*|#\s*)?(\d+)\s*[.!)]?\s*$",
+    re.IGNORECASE,
+)
 _PICK_FIRST_RE = re.compile(
     r"^\s*(the\s+)?first(\s+one)?\s*[.!]?\s*$",
     re.IGNORECASE,
@@ -121,6 +128,10 @@ def route_line(text: str) -> RoutedLine:
         return RoutedLine(kind="help_plain", text=stripped)
 
     m = _PICK_NUM_RE.match(stripped)
+    if m:
+        return RoutedLine(kind="pick", text=stripped, pick=int(m.group(1)))
+
+    m = _PICK_CORRECTION_RE.match(stripped)
     if m:
         return RoutedLine(kind="pick", text=stripped, pick=int(m.group(1)))
 

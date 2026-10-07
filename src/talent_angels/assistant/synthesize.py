@@ -37,7 +37,10 @@ def _phrasing_is_unsafe(text: str) -> bool:
 
 _SYNTH_SYSTEM = """You phrase taxonomy map facts for a terminal user.
 Rules:
-- Use only titles, ids, skills, and descriptions in the FACT CARD.
+- First reply to the user's own words in one sentence; never assume a goal or
+  a wish the user did not state.
+- Use only titles, skills, and descriptions in the FACT CARD.
+- Do not invent demand, pay, outlook, or study advice.
 - Do not say two records are the same id or the same node.
 - If two maps name similar titles, say they are separate official records.
 - Do not invent occupations, skills, or people.

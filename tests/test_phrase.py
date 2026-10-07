@@ -363,3 +363,62 @@ def test_phrase_map_no_profile_when_user_md_absent(tmp_path: Path) -> None:
     system_msg = client.calls[0][0].content
     assert "STANDING" not in system_msg
     assert "GOAL" not in system_msg
+
+
+def _connect_result() -> AgentResult:
+    skills = [
+        NodeRef(
+            id=f"esco:skill:{i}",
+            suite="esco",
+            source="esco",
+            source_id=f"s{i}",
+            kind="Skill",
+            pref_label=f"skill {i}",
+        )
+        for i in range(4)
+    ]
+    return AgentResult(capability="connect", suite="esco", nodes=[_occ(), *skills], edges=[])
+
+
+def test_connect_phrasing_drops_a_bullet_list_the_table_already_shows() -> None:
+    reply = (
+        "You want the skills of a software developer. Here they are:\n"
+        "- skill 0\n- skill 1\n• skill 2\n* skill 3\n"
+        "Ask for optional skills next."
+    )
+    text = phrase_map(
+        ScriptedClient(reply),
+        question="what skills does a software developer need?",
+        result=_connect_result(),
+        fallback="fallback",
+        card=connect_card(_connect_result()),
+    )
+    assert "skill 0" not in text
+    assert text.startswith("You want the skills of a software developer.")
+    assert "Ask for optional skills next." in text
+
+
+def test_connect_phrasing_keeps_a_short_mention() -> None:
+    reply = "A software developer's map includes:\n- skill 0\n- skill 1"
+    text = phrase_map(
+        ScriptedClient(reply),
+        question="skills?",
+        result=_connect_result(),
+        fallback="fallback",
+        card=connect_card(_connect_result()),
+    )
+    assert text == reply
+
+
+def test_map_prompt_answers_first_and_forbids_invented_people() -> None:
+    client = ScriptedClient("ok")
+    phrase_map(
+        client,
+        question="show only ESCO results for electrician",
+        result=_connect_result(),
+        fallback="fallback",
+        card=connect_card(_connect_result()),
+    )
+    system = client.calls[0][0].content
+    assert "First reply to the user's own words" in system
+    assert "Do not invent people" in system

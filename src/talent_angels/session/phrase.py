@@ -27,7 +27,14 @@ Keep replies to 2–4 short sentences unless listing facts you were given."""
 
 _MAP_SYSTEM = """You are LFX Talent Angels. Phrase the FACT CARD for a terminal user.
 Rules:
+- First reply to the user's own words in one sentence, then the facts; 2-4
+  sentences in total. If they only named a title, just describe it. Never
+  assume a goal or a wish the user did not state.
 - Cite only titles, skills, and description written in the card. Do not invent any.
+- Do not invent people, names, demand, pay, outlook, or study advice. Say nothing
+  about the user unless the profile block above states it.
+- A table of the skills is printed under your text: do not list them; name at
+  most three as examples.
 - If a description is on the card, paraphrase it in 1-2 sentences. Do not add duties.
 - Do not list skills unless they are on the card. Locate cards have no skills.
 - Never write the product name (not "LFX", not "Talent Angels").
@@ -117,6 +124,8 @@ def phrase_map(
         return fallback
     if _names_the_product(text):
         return fallback
+    if result.capability == "connect":
+        text = _without_bullet_list(text) or fallback
     return text
 
 
@@ -156,6 +165,7 @@ def connect_card(result: AgentResult, *, shown: int = CONNECT_PREVIEW_CAP) -> st
     lines.extend(
         [
             "shown skills: " + "; ".join(skills) if skills else "shown skills: none",
+            "these skills are printed as a table under your reply; do not list them",
             "tags in parentheses (essential/optional/tool) come from the graph — "
             "repeat them as given, do not invent a tag for a skill that has none",
         ]
@@ -226,6 +236,16 @@ def _has_extra_job_title(text: str, result: AgentResult) -> bool:
 def _names_the_product(text: str) -> bool:
     lowered = text.casefold()
     return "lfx" in lowered or "talent angels" in lowered
+
+
+def _without_bullet_list(text: str) -> str:
+    """Drop a bulleted list the model wrote anyway; the facts table shows it once."""
+    bullet = re.compile(r"^\s*[-*•]\s+\S")
+    lines = text.splitlines()
+    if sum(1 for line in lines if bullet.match(line)) < 3:
+        return text
+    kept = "\n".join(line for line in lines if not bullet.match(line))
+    return re.sub(r"\n{3,}", "\n\n", kept).strip()
 
 
 def _looks_like_numbered_list(text: str) -> bool:

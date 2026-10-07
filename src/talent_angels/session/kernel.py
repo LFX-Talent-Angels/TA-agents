@@ -24,7 +24,6 @@ from talent_angels.memory.profile import (
     read_user_profile,
     write_goal,
     write_rejected,
-    write_standing,
 )
 from talent_angels.session.budget import model_view
 from talent_angels.session.catalog import FreeModel
@@ -205,7 +204,6 @@ def _set_bind(state: SessionState, node: NodeRef) -> None:
         return
     state.bindings[node.suite] = node
     state.binding = LastBinding(node=node)
-    write_standing(node)
 
 
 def _bound_status(state: SessionState) -> str | None:

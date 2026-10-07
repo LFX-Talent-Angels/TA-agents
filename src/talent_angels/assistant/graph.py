@@ -270,8 +270,10 @@ def dispatch_plan(
                 suite_name=suite_name,
                 llm_client=llm_client,
                 # The planner's kind ("skill" for "what is machine learning?")
-                # unless the caller fixed one.
-                kind=state.get("kind") or (draft.kind if draft is not None else None),
+                # unless the caller fixed one. A follow-up on a bound node keeps
+                # that node: "what skills does it need?" is not a skill search.
+                kind=state.get("kind")
+                or (draft.kind if draft is not None and bound_node is None else None),
                 bound_node=bound_node,
                 intent=plan.intent.target if plan is not None else None,
                 subject_hint=subject_hint,

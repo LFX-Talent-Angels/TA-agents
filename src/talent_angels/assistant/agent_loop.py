@@ -339,7 +339,7 @@ def run_tool_loop(
 
     measured = MeasuredSuite(suite)
     user_content = question if kind is None else f"{question}\nkind={kind}"
-    if subject_hint and subject_hint.strip():
+    if subject_hint and subject_hint.strip() and bound_node is None:
         # The planner's English title: "enfermero" is searched as "nurse".
         user_content += f"\nsubject={subject_hint.strip()}"
     if bound_node is not None:

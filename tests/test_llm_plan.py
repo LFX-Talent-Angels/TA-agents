@@ -129,6 +129,10 @@ def test_planner_prompt_asks_for_english_subjects() -> None:
         ("my job is data analyst", "standing", "data analyst"),
         ("I am not a teacher", "reject", "teacher"),
         ("I am working toward data analyst", "goal", "data analyst"),
+        ("I want to move into marketing", "goal", "marketing"),
+        ("I'd like to switch to nursing", "goal", "nursing"),
+        ("I want to work as a chef", "goal", "chef"),
+        ("I'm aiming for data scientist", "goal", "data scientist"),
     ],
 )
 def test_profile_heuristic_reads_statements(question: str, intent: str, subject: str) -> None:

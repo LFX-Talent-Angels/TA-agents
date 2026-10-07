@@ -65,7 +65,9 @@ Same pathfind shape for: "path from X to Y", "skill gap from X to Y",
 
 profile_intent rules:
 - Set "goal" when the user states a career destination:
-  "my goal is X", "I want to become X", "I want to be a X", "I am working toward X".
+  "my goal is X", "I want to become X", "I want to be a X", "I am working toward X",
+  "I want to move into X", "I'd like to switch to X", "I want to work as X",
+  "I'm aiming for X".
   A stated destination is a goal even without the word "goal"; do not list skills.
   Set subject to ONLY the destination occupation name (e.g. "data scientist").
   target must be "locate". Example:
@@ -143,7 +145,9 @@ class InterpretedPlan:
 
 
 _GOAL_RE = re.compile(
-    r"^(?:my\s+goal\s+is|i\s+want\s+to\s+(?:become|be)|i\s+am\s+working\s+toward)"
+    r"^(?:my\s+goal\s+is|i\s+am\s+working\s+toward|i'?m\s+aiming\s+for|"
+    r"i(?:\s+want|\s+would\s+like|'d\s+like)\s+to\s+"
+    r"(?:become|be|work\s+as|move\s+into|switch\s+to|transition\s+into|get\s+into))"
     r"\s+(?:a\s+|an\s+)?(.+)$",
     re.IGNORECASE,
 )

@@ -10,6 +10,7 @@ from talent_angels.assistant.graph import build_graph
 from talent_angels.assistant.intent import (
     CAPABILITY_CONNECT,
     CAPABILITY_LOCATE,
+    CAPABILITY_PATHFIND,
     classify_capability,
     extract_locate_subject,
 )
@@ -26,6 +27,7 @@ from talent_angels.assistant.turn import TurnOutcome, run_turn
 __all__ = [
     "CAPABILITY_CONNECT",
     "CAPABILITY_LOCATE",
+    "CAPABILITY_PATHFIND",
     "AssistantState",
     "ExecutionPlan",
     "Intent",

@@ -8,7 +8,7 @@ from datetime import UTC, datetime
 from pathlib import Path
 from uuid import uuid4
 
-from talent_angels.contracts import AgentResult
+from talent_angels.contracts import AgentResult, NodeRef
 from talent_angels.session.models import (
     LastBinding,
     PendingChoice,
@@ -54,6 +54,8 @@ def save_session(state: SessionState, *, name: str | None = None) -> Path:
         "node": state.binding.node.model_dump() if state.binding is not None else None,
         "pending": [choice.model_dump() for choice in state.pending],
         "last_result": state.last_result.model_dump() if state.last_result is not None else None,
+        "bindings": {suite: node.model_dump() for suite, node in state.bindings.items()},
+        "last_results": [r.model_dump() for r in state.last_results],
     }
     (path / _BINDING).write_text(json.dumps(binding_payload, indent=2) + "\n", encoding="utf-8")
 
@@ -75,6 +77,8 @@ def load_session(name: str) -> SessionState:
     binding: LastBinding | None = None
     pending: list[PendingChoice] = []
     last_result = None
+    bindings: dict[str, NodeRef] = {}
+    last_results: list[AgentResult] = []
     binding_path = path / _BINDING
     if binding_path.is_file():
         payload = json.loads(binding_path.read_text(encoding="utf-8"))
@@ -85,6 +89,10 @@ def load_session(name: str) -> SessionState:
         raw_result = payload.get("last_result")
         if raw_result is not None:
             last_result = AgentResult.model_validate(raw_result)
+        for suite, raw_node in (payload.get("bindings") or {}).items():
+            bindings[suite] = NodeRef.model_validate(raw_node)
+        for raw_r in payload.get("last_results") or []:
+            last_results.append(AgentResult.model_validate(raw_r))
 
     return SessionState(
         session_id=meta["session_id"],
@@ -93,6 +101,8 @@ def load_session(name: str) -> SessionState:
         binding=binding,
         pending=pending,
         last_result=last_result,
+        bindings=bindings,
+        last_results=last_results,
     )
 
 

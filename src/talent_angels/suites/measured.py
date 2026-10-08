@@ -8,6 +8,7 @@ from talent_angels.runlog import ToolCall
 from talent_angels.skills.connect.reveal import NeighborResult
 from talent_angels.skills.locate.resolve import SearchResult
 from talent_angels.suites.protocol import SuiteTools
+from talent_angels.suites.schema import SuiteSchema
 
 
 class MeasuredSuite:
@@ -16,6 +17,10 @@ class MeasuredSuite:
     def __init__(self, suite: SuiteTools) -> None:
         self._suite = suite
         self.tool_calls: list[ToolCall] = []
+
+    @property
+    def suite_schema(self) -> SuiteSchema:
+        return self._suite.suite_schema
 
     def search_nodes(self, text: str, kind: str | None = None) -> SearchResult:
         start = time.perf_counter()

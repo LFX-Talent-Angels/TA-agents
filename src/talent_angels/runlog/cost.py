@@ -85,7 +85,7 @@ def estimate_turn_cost_usd(
 ) -> CostBreakdown:
     """Sum per-stage costs. Any unpriced stage makes the roll-up unknown."""
     if not stages:
-        return estimate_llm_cost_usd(LLMUsage(), fallback_model, rate_card=rate_card)
+        return CostBreakdown(known=True, total=0.0, rate_card="no_llm_calls")
 
     known = True
     llm = 0.0

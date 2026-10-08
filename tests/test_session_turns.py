@@ -13,11 +13,23 @@ from talent_angels.llm.stub_client import StubLLMClient
 from talent_angels.session.models import LastBinding, PendingChoice
 from talent_angels.session.store import new_session, save_session
 from talent_angels.suites import SuiteRegistry, SuiteRuntime
+from talent_angels.suites.schema import SuiteSchema
 from tests.fakes.taxonomy import FakeCandidate, FakeEdge, FakeNode, FakeToolResult
+
+_DEFAULT_SCHEMA = SuiteSchema(
+    skill_rel_types=("HAS_SKILL", "USES_SOFTWARE"),
+    optional_rel_values=frozenset({"optional", "transferable"}),
+    group_rel_type="CLASSIFIED_UNDER",
+    group_node_kinds=frozenset({"ISCOGroup", "isco group"}),
+)
 
 
 class RecordingFakeSuite:
     """Returns ambiguous multi-node locate hits and records search texts."""
+
+    @property
+    def suite_schema(self) -> SuiteSchema:
+        return _DEFAULT_SCHEMA
 
     def __init__(
         self,

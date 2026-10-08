@@ -7,6 +7,7 @@ from talent_angels.suites.registry import (
     UnknownSuiteError,
     default_suite_registry,
 )
+from talent_angels.suites.schema import SuiteSchema
 
 __all__ = [
     "SuiteFactory",
@@ -14,4 +15,5 @@ __all__ = [
     "SuiteRuntime",
     "UnknownSuiteError",
     "default_suite_registry",
+    "SuiteSchema",
 ]

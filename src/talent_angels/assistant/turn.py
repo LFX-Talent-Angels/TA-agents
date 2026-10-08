@@ -15,7 +15,7 @@ from talent_angels.assistant.cache import ResultCache
 from talent_angels.assistant.graph import build_graph, dispatch_plan
 from talent_angels.assistant.honesty import honesty_warnings
 from talent_angels.assistant.intent import CAPABILITY_LOCATE, Capability
-from talent_angels.assistant.llm_plan import interpret_question
+from talent_angels.assistant.llm_plan import PlanDraft, interpret_question
 from talent_angels.assistant.merge import merge_answers
 from talent_angels.assistant.planning import (
     ExecutionPlan,
@@ -69,6 +69,7 @@ class TurnOutcome:
     answer: str
     record: RunLogRecord
     results: tuple[AgentResult, ...] = field(default_factory=tuple)
+    plan_draft: PlanDraft | None = None
 
     def __post_init__(self) -> None:
         if not self.results:
@@ -399,4 +400,5 @@ def run_turn(
         answer=answer,
         record=record,
         results=result_tuple,
+        plan_draft=interpreted.draft,
     )

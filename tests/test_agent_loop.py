@@ -10,7 +10,15 @@ from talent_angels.assistant.agent_loop import (
 from talent_angels.assistant.graph import build_graph
 from talent_angels.contracts import AgentResult, EdgeRef, NodeRef
 from talent_angels.llm.protocol import LLMResult, LLMUsage, Message
+from talent_angels.suites.schema import SuiteSchema
 from tests.fakes.taxonomy import FakeCandidate, FakeEdge, FakeNode, FakeToolResult
+
+_DEFAULT_SCHEMA = SuiteSchema(
+    skill_rel_types=("HAS_SKILL", "USES_SOFTWARE"),
+    optional_rel_values=frozenset({"optional", "transferable"}),
+    group_rel_type=None,
+    group_node_kinds=frozenset(),
+)
 
 
 class FakeSuite:
@@ -21,6 +29,10 @@ class FakeSuite:
         self._neighbor_result = neighbor_result or FakeToolResult(warnings=["no_neighbors"])
         self.search_calls: list[tuple[str, str | None]] = []
         self.neighbor_calls: list[tuple[str, list[str] | None]] = []
+
+    @property
+    def suite_schema(self) -> SuiteSchema:
+        return _DEFAULT_SCHEMA
 
     def search_nodes(self, text: str, kind: str | None = None) -> FakeToolResult:
         self.search_calls.append((text, kind))

@@ -1,15 +1,33 @@
-"""Heuristic intent routing (MVP plan Sec 5) — zero tokens, keyword-based."""
+"""Heuristic intent routing (MVP plan Sec 5) — zero tokens, keyword-based.
+
+A question that routes to `pathfind` returns a typed result with a
+`capability_not_implemented` warning rather than silently answering with
+Locate (ARCHITECTURE.md: never invent; warnings are how "no" is said).
+"""
 
 from __future__ import annotations
 
 import re
 from typing import Literal
 
-Capability = Literal["locate", "connect"]
+Capability = Literal["locate", "connect", "pathfind"]
 CAPABILITY_LOCATE: Capability = "locate"
 CAPABILITY_CONNECT: Capability = "connect"
+CAPABILITY_PATHFIND: Capability = "pathfind"
 
-_COMPARE_RE = re.compile(r"\b(vs\.?|versus)\b", re.I)
+_PATHFIND_KEYWORDS = (
+    "gap",
+    "path between",
+    "path from",
+    "path to",
+    "skill path",
+    "career path",
+    "learning path",
+    "route from",
+    "route to",
+    "→",
+    "->",
+)
 _CONNECT_KEYWORDS = (
     "skills for",
     "skills does",
@@ -84,10 +102,11 @@ def extract_locate_subject(question: str) -> str:
 
 def classify_capability(question: str) -> Capability:
     q = question.lower()
-    if _COMPARE_RE.search(q):
-        if any(k in q for k in _CONNECT_KEYWORDS):
-            return CAPABILITY_CONNECT
-        return CAPABILITY_LOCATE
+    padded = f" {q} "
+    if any(k in q for k in _PATHFIND_KEYWORDS):
+        return CAPABILITY_PATHFIND
+    if " from " in padded and " to " in padded:
+        return CAPABILITY_PATHFIND
     if any(k in q for k in _CONNECT_KEYWORDS):
         return CAPABILITY_CONNECT
     return CAPABILITY_LOCATE

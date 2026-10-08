@@ -19,6 +19,7 @@ from talent_angels.assistant.synthesize import synthesize
 from talent_angels.assistant.turn import TurnOutcome
 from talent_angels.contracts import AgentResult, NodeRef
 from talent_angels.llm import LLMClient
+from talent_angels.memory.profile import write_goal, write_rejected, write_standing
 from talent_angels.session.budget import model_view
 from talent_angels.session.catalog import FreeModel
 from talent_angels.session.commands import UnknownCommand, parse_command
@@ -31,6 +32,7 @@ from talent_angels.session.copy import (
     HELP_TEXT,
     LOCATE_MISS,
     MAP_NEXT_STEP,
+    PATHFIND_REDIRECT,
     UNKNOWN_COMMAND,
 )
 from talent_angels.session.followup import (
@@ -181,6 +183,7 @@ def _record(state: SessionState, role: Literal["user", "assistant", "system"], t
 def _set_bind(state: SessionState, node: NodeRef) -> None:
     state.bindings[node.suite] = node
     state.binding = LastBinding(node=node)
+    write_standing(node)
 
 
 def _bound_status(state: SessionState) -> str | None:
@@ -531,6 +534,12 @@ def _from_single_outcome(
         )
     elif result.capability == "locate" and result.nodes:
         _set_bind(state, result.nodes[0])
+        _draft = getattr(outcome, "plan_draft", None)
+        if _draft is not None:
+            if _draft.profile_intent == "goal":
+                write_goal(result.nodes[0])
+            elif _draft.profile_intent == "reject":
+                write_rejected(result.nodes[0])
         state.pending = []
         record = f"{_map_answer(outcome.answer)}\n\n{MAP_NEXT_STEP}"
         phrased = phrase_map(
@@ -556,6 +565,8 @@ def _from_single_outcome(
             fallback=fallback,
             card=connect_card(result),
         )
+    elif any(w.startswith("capability_not_implemented") for w in result.warnings):
+        text = PATHFIND_REDIRECT
     else:
         text = _map_answer(outcome.answer)
     source = result.suite.upper() if result.suite else None
@@ -671,12 +682,22 @@ def _from_outcome(
             blocks.append(f"## {heading}\n\n{picker}")
             pending_all.extend(choices)
             continue
+        if any(w.startswith("capability_not_implemented") for w in result.warnings):
+            blocks.append(f"## {heading}\n\n{PATHFIND_REDIRECT}")
+            all_miss = False
+            continue
         if not result.nodes or "not_found" in result.warnings:
             blocks.append(f"## {heading}\n\n{LOCATE_MISS}")
             continue
         all_miss = False
         any_hit = True
         _set_bind(state, result.nodes[0])
+        _draft = getattr(outcome, "plan_draft", None)
+        if _draft is not None:
+            if _draft.profile_intent == "goal":
+                write_goal(result.nodes[0])
+            elif _draft.profile_intent == "reject":
+                write_rejected(result.nodes[0])
         if unique_bind is None:
             unique_bind = result.nodes[0]
         unique_cards.append(
@@ -702,6 +723,7 @@ def _from_outcome(
             hint=(
                 "Search missed. One or two sentences. It is a miss, not a maybe. "
                 "Do not name occupations or skills as facts. Do not list related jobs."
+                + _bound_title_hint(state)
             ),
             mode="miss",
         )
@@ -715,7 +737,11 @@ def _from_outcome(
         if extras:
             text = text + "\n\n---\n\n" + "\n\n---\n\n".join(extras)
     else:
-        text = synthesize(results, question=question, llm_client=llm_client)
+        has_connect = any(r.capability == "connect" and r.nodes for r in results)
+        if has_connect and unique_cards:
+            text = "\n\n---\n\n".join(unique_cards)
+        else:
+            text = synthesize(results, question=question, llm_client=llm_client)
         if unique_bind is not None and MAP_NEXT_STEP not in text:
             text = f"{text}\n\n{MAP_NEXT_STEP}"
 
@@ -737,13 +763,17 @@ def _handle_expand(state: SessionState, text: str, *, runner: TurnRunner) -> Cha
         source = result.suite.upper() if result.suite else None
         return _reply(state, message, source_note=source)
     if not can_expand_connect(result) and state.binding is not None:
+        bn = dict(state.bindings) if len(state.bindings) > 1 else None
         outcome = runner(
             "list the skills",
-            bound_node=state.binding.node,
+            bound_nodes=bn,
+            bound_node=state.binding.node if not bn else None,
             force_capability=CAPABILITY_CONNECT,
         )
         result = outcome.result
         state.last_result = result
+        if outcome.results:
+            state.last_results = list(outcome.results)
         if result.nodes:
             state.binding = LastBinding(node=result.nodes[0])
     if not can_expand_connect(result):
@@ -805,6 +835,26 @@ def _handle_map(
         )
     else:
         outcome = runner(text, bound_node=bound, bound_nodes=bound_nodes)
+    # Semantic suite switch: LLM detected user wants to see cached results on a specific suite.
+    # Re-render from state.last_results (previous turn) without running a new query.
+    _draft = getattr(outcome, "plan_draft", None)
+    if _draft and _draft.suite_override and state.last_results:
+        token = _draft.suite_override
+        known = tuple(
+            dict.fromkeys([item.suite for item in state.last_results] + list(state.bindings))
+        )
+        resolved = resolve_show_token(token, known)
+        if resolved and resolved != "all":
+            cached = next((r for r in state.last_results if r.suite == resolved), None)
+            if cached is not None:
+                heading = suite_heading(resolved)
+                # Use structured output (no LLM) to match _handle_show — avoids the
+                # LLM reading the profile prefix instead of the skill card.
+                message = _render_unique_block(
+                    cached, question=text, llm_client=None, heading=heading
+                )
+                _record(state, "assistant", message)
+                return _reply(state, message, source_note=heading)
     reply = _from_outcome(state, outcome, question=text, llm_client=llm_client)
     _record(state, "assistant", reply.text)
     return reply

@@ -1,3 +1,9 @@
+"""Tests for LLM phrasing functions — cards, guards, and profile injection."""
+from __future__ import annotations
+
+from pathlib import Path
+from unittest.mock import patch
+
 from talent_angels.contracts import AgentResult, NodeRef
 from talent_angels.llm.protocol import LLMResult, LLMUsage, Message
 from talent_angels.llm.stub_client import StubLLMClient
@@ -21,6 +27,24 @@ class _Scripted:
     def complete(self, messages: list[Message], **_kwargs: object) -> LLMResult:
         self.calls.append(messages)
         return LLMResult(text=self.text, provider=self.provider, model=self.model, usage=LLMUsage())
+
+
+class ScriptedClient:
+    provider = "litellm"
+    model = "test"
+
+    def __init__(self, response: str) -> None:
+        self.calls: list[list[Message]] = []
+        self._response = response
+
+    def complete(self, messages: list[Message]) -> LLMResult:
+        self.calls.append(messages)
+        return LLMResult(
+            text=self._response,
+            provider=self.provider,
+            model=self.model,
+            usage=LLMUsage(input_tokens=5, output_tokens=5),
+        )
 
 
 def _occ() -> NodeRef:
@@ -153,3 +177,102 @@ def test_connect_card_counts_omitted_skills() -> None:
     card = connect_card(result, shown=5)
     assert "software developer" in card
     assert "3 more skills" in card
+
+
+# --- Profile injection tests ---
+
+
+def test_phrase_chat_injects_user_profile(tmp_path: Path) -> None:
+    """phrase_chat system prompt must include USER.md content when it exists."""
+    user_md = tmp_path / "USER.md"
+    user_md.write_text(
+        "STANDING[onet]: Software Developers  [onet:15-1252.00]   since: 2026-09-20\n"
+    )
+    client = ScriptedClient("You were looking at software developers.")
+    with patch("talent_angels.memory.profile.USER_MD", user_md):
+        phrase_chat(
+            client,
+            user_text="what was I looking for?",
+            fallback="miss",
+            hint="Search missed.",
+        )
+
+    system_msg = client.calls[0][0].content
+    assert "STANDING[onet]" in system_msg
+
+
+def test_phrase_chat_no_profile_when_user_md_absent(tmp_path: Path) -> None:
+    """phrase_chat must not crash and must omit profile block when USER.md is absent."""
+    absent_md = tmp_path / "USER.md"  # does not exist
+    client = ScriptedClient("No match found.")
+    with patch("talent_angels.memory.profile.USER_MD", absent_md):
+        phrase_chat(
+            client,
+            user_text="pharmacist",
+            fallback="miss",
+            hint="Search missed.",
+        )
+
+    system_msg = client.calls[0][0].content
+    assert "STANDING" not in system_msg
+
+
+def test_phrase_map_injects_user_profile(tmp_path: Path) -> None:
+    """phrase_map system prompt must include USER.md content when it exists."""
+    from talent_angels.contracts.models import NodeRef
+
+    user_md = tmp_path / "USER.md"
+    user_md.write_text("GOAL: Data Scientists  [onet:15-2051.00]\n")
+
+    node = NodeRef(
+        id="onet:occ:1",
+        suite="onet",
+        source="onet",
+        source_id="15-1252.00",
+        kind="Occupation",
+        pref_label="Software Developers",
+    )
+    result = AgentResult(capability="locate", suite="onet", nodes=[node], confidence=0.95)
+    client = ScriptedClient("Software Developers is on the map.")
+
+    with patch("talent_angels.memory.profile.USER_MD", user_md):
+        phrase_map(
+            client,
+            question="software developer",
+            result=result,
+            fallback="fallback",
+            card="occupation: Software Developers",
+        )
+
+    system_msg = client.calls[0][0].content
+    assert "GOAL:" in system_msg
+
+
+def test_phrase_map_no_profile_when_user_md_absent(tmp_path: Path) -> None:
+    """phrase_map must not crash and must omit profile block when USER.md is absent."""
+    from talent_angels.contracts.models import NodeRef
+
+    absent_md = tmp_path / "USER.md"
+    node = NodeRef(
+        id="onet:occ:1",
+        suite="onet",
+        source="onet",
+        source_id="15-1252.00",
+        kind="Occupation",
+        pref_label="Nurse",
+    )
+    result = AgentResult(capability="locate", suite="onet", nodes=[node], confidence=0.90)
+    client = ScriptedClient("Nurse is on the map.")
+
+    with patch("talent_angels.memory.profile.USER_MD", absent_md):
+        phrase_map(
+            client,
+            question="nurse",
+            result=result,
+            fallback="fallback",
+            card="occupation: Nurse",
+        )
+
+    system_msg = client.calls[0][0].content
+    assert "STANDING" not in system_msg
+    assert "GOAL" not in system_msg

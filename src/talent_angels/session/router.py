@@ -47,7 +47,10 @@ _CATALOGUE_RE = re.compile(
 )
 
 
-_SHOW_RE = re.compile(r"^\s*show\s+(.+?)\s*$", re.IGNORECASE)
+_SHOW_RE = re.compile(
+    r"^\s*show(?:\s+me)?\s+([^\s]+)\s*$",
+    re.IGNORECASE,
+)
 
 
 @dataclass(frozen=True, slots=True)

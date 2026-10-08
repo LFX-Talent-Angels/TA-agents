@@ -9,6 +9,7 @@ from pydantic import BaseModel, ConfigDict, field_validator, model_validator
 from talent_angels.assistant.intent import (
     CAPABILITY_CONNECT,
     CAPABILITY_LOCATE,
+    CAPABILITY_PATHFIND,
     Capability,
     classify_capability,
 )
@@ -16,6 +17,7 @@ from talent_angels.assistant.intent import (
 _CAPABILITY_SEQUENCE: dict[Capability, tuple[Capability, ...]] = {
     CAPABILITY_LOCATE: (CAPABILITY_LOCATE,),
     CAPABILITY_CONNECT: (CAPABILITY_LOCATE, CAPABILITY_CONNECT),
+    CAPABILITY_PATHFIND: (CAPABILITY_PATHFIND,),
 }
 
 

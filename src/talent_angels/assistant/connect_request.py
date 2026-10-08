@@ -34,7 +34,11 @@ _NEIGHBORS_OF = re.compile(
 )
 
 
-def extract_connect_request(question: str) -> ConnectRequest:
+def extract_connect_request(
+    question: str,
+    *,
+    skill_rel_types: tuple[str, ...] = ("HAS_SKILL", "USES_SOFTWARE"),
+) -> ConnectRequest:
     """Extract only the explicitly supported zero-token Connect query forms."""
     cleaned = question.strip()
     lowered = cleaned.lower()
@@ -52,7 +56,7 @@ def extract_connect_request(question: str) -> ConnectRequest:
     if match:
         return ConnectRequest(
             subject=match.group(1).strip(),
-            rel_types=("HAS_SKILL", "USES_SOFTWARE"),
+            rel_types=skill_rel_types,
             relation_kind=relation_kind,
         )
 
@@ -154,7 +158,12 @@ def is_describe_followup(question: str, bindings: dict[str, NodeRef]) -> bool:
     return False
 
 
-def followup_connect_request(question: str, bound: NodeRef) -> ConnectRequest | None:
+def followup_connect_request(
+    question: str,
+    bound: NodeRef,
+    *,
+    skill_rel_types: tuple[str, ...] = ("HAS_SKILL", "USES_SOFTWARE"),
+) -> ConnectRequest | None:
     """Build a Connect request for a short follow-up around an already-bound node.
 
     Returns None when the user names a different occupation than ``bound.pref_label``
@@ -164,36 +173,36 @@ def followup_connect_request(question: str, bound: NodeRef) -> ConnectRequest | 
     if normalized in _FOLLOWUP_ESSENTIAL:
         return ConnectRequest(
             subject=bound.pref_label,
-            rel_types=("HAS_SKILL", "USES_SOFTWARE"),
+            rel_types=skill_rel_types,
             relation_kind="essential",
         )
     if normalized in _FOLLOWUP_OPTIONAL:
         return ConnectRequest(
             subject=bound.pref_label,
-            rel_types=("HAS_SKILL", "USES_SOFTWARE"),
+            rel_types=skill_rel_types,
             relation_kind="optional",
         )
     if normalized in _FOLLOWUP_SKILLS:
-        return ConnectRequest(subject=bound.pref_label, rel_types=("HAS_SKILL", "USES_SOFTWARE"))
+        return ConnectRequest(subject=bound.pref_label, rel_types=skill_rel_types)
     if normalized in _FOLLOWUP_NEIGHBORS:
         return ConnectRequest(subject=bound.pref_label)
     if re.search(r"\b(become|becoming)\s+(an?\s+)?(one|that|this|it)\b", normalized):
         return ConnectRequest(
             subject=bound.pref_label,
-            rel_types=("HAS_SKILL", "USES_SOFTWARE"),
+            rel_types=skill_rel_types,
             relation_kind="essential",
         )
     if re.search(r"how\s+(do\s+i\s+|can\s+i\s+|to\s+)become\s*$", normalized):
         return ConnectRequest(
             subject=bound.pref_label,
-            rel_types=("HAS_SKILL", "USES_SOFTWARE"),
+            rel_types=skill_rel_types,
             relation_kind="essential",
         )
 
     try:
-        request = extract_connect_request(question)
+        request = extract_connect_request(question, skill_rel_types=skill_rel_types)
     except UnsupportedConnectQuery:
-        return _bound_skills_followup(normalized, bound)
+        return _bound_skills_followup(normalized, bound, skill_rel_types=skill_rel_types)
     subj = request.subject.casefold().strip()
     if subj == bound.pref_label.casefold():
         return request
@@ -202,22 +211,27 @@ def followup_connect_request(question: str, bound: NodeRef) -> ConnectRequest | 
     return None
 
 
-def _bound_skills_followup(normalized: str, bound: NodeRef) -> ConnectRequest | None:
+def _bound_skills_followup(
+    normalized: str,
+    bound: NodeRef,
+    *,
+    skill_rel_types: tuple[str, ...] = ("HAS_SKILL", "USES_SOFTWARE"),
+) -> ConnectRequest | None:
     """Map a skills question with no extracted subject onto the bound occupation."""
     if re.search(r"\bessential\s+skills?\b", normalized) or (
         re.search(r"\bskills?\b", normalized) and re.search(r"\bneed\b", normalized)
     ):
         return ConnectRequest(
             subject=bound.pref_label,
-            rel_types=("HAS_SKILL", "USES_SOFTWARE"),
+            rel_types=skill_rel_types,
             relation_kind="essential",
         )
     if re.search(r"\boptional\s+skills?\b", normalized):
         return ConnectRequest(
             subject=bound.pref_label,
-            rel_types=("HAS_SKILL", "USES_SOFTWARE"),
+            rel_types=skill_rel_types,
             relation_kind="optional",
         )
     if re.search(r"\bskills\b", normalized):
-        return ConnectRequest(subject=bound.pref_label, rel_types=("HAS_SKILL", "USES_SOFTWARE"))
+        return ConnectRequest(subject=bound.pref_label, rel_types=skill_rel_types)
     return None

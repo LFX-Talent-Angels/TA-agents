@@ -14,7 +14,15 @@ from talent_angels.api.app import create_app
 from talent_angels.cli import main
 from talent_angels.llm.protocol import LLMResult, LLMUsage, Message
 from talent_angels.suites import SuiteRegistry, SuiteRuntime
+from talent_angels.suites.schema import SuiteSchema
 from tests.fakes.taxonomy import FakeCandidate, FakeEdge, FakeNode, FakeToolResult
+
+_DEFAULT_SCHEMA = SuiteSchema(
+    skill_rel_types=("HAS_SKILL", "USES_SOFTWARE"),
+    optional_rel_values=frozenset({"optional", "transferable"}),
+    group_rel_type=None,
+    group_node_kinds=frozenset(),
+)
 
 
 class RecordingLLMClient:
@@ -37,6 +45,10 @@ class RecordingLLMClient:
 class FakeSuite:
     def __init__(self) -> None:
         self.last_node: FakeNode | None = None
+
+    @property
+    def suite_schema(self) -> SuiteSchema:
+        return _DEFAULT_SCHEMA
 
     def search_nodes(self, text: str, kind: str | None = None) -> FakeToolResult:
         node = FakeNode(

@@ -392,7 +392,7 @@ def test_run_turn_persists_an_episode(monkeypatch: pytest.MonkeyPatch, tmp_path)
     monkeypatch.setenv("RUNLOG_PATH", str(tmp_path / "runlog.jsonl"))
     monkeypatch.setenv("LLM_PROVIDER", "none")
     memory_db = tmp_path / "memory.db"
-    monkeypatch.setattr("talent_angels.memory.episodes.DB_PATH", memory_db)
+    monkeypatch.setattr("talent_angels.memory.episodes.db_path", lambda: memory_db)
 
     run_turn(
         suite=FakeSuite(FakeToolResult(nodes=[_occupation_node()])),
@@ -565,25 +565,23 @@ def test_multisuite_turn_does_not_double_count_llm_stages() -> None:
         default="suite_a",
     )
 
-    # One interpret + per-suite (search act) + per-suite answer, each producing a stage.
+    # One interpret + one search act per suite. The multi-suite path writes the
+    # merged answer in code, so no per-suite "final" phrasing round is requested.
     from tests.test_agent_loop import ScriptedToolClient
 
     client = ScriptedToolClient(
         [
             LLMResult(text='{"kind":"occupation"}', provider="litellm", model="actual"),
-            LLMResult(text='{"kind":"occupation"}', provider="litellm", model="actual"),
             LLMResult(
                 text='{"tool":"search_nodes","text":"software developer","kind":"occupation"}',
                 provider="litellm",
                 model="actual",
             ),
-            LLMResult(text='{"final":"found"}', provider="litellm", model="actual"),
             LLMResult(
                 text='{"tool":"search_nodes","text":"software developer","kind":"occupation"}',
                 provider="litellm",
                 model="actual",
             ),
-            LLMResult(text='{"final":"found"}', provider="litellm", model="actual"),
         ]
     )
 
@@ -595,9 +593,7 @@ def test_multisuite_turn_does_not_double_count_llm_stages() -> None:
     )
 
     stage_labels = [stage.stage for stage in outcome.record.gen_ai.stages]
-    # 6 scripted LLM replies => 6 stages, each counted exactly once. The buggy
-    # pre-fix code re-appended suite A's stages after suite B and recorded 9.
-    assert len(stage_labels) == 6
-    assert stage_labels.count("act") == 2
-    assert stage_labels.count("intent") == 1
-    assert outcome.record.gen_ai.calls == 6
+    # 3 scripted LLM replies => 3 stages, each counted exactly once. The buggy
+    # pre-fix code re-appended suite A's stages after suite B.
+    assert stage_labels == ["intent", "act", "act"]
+    assert outcome.record.gen_ai.calls == 3

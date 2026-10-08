@@ -10,7 +10,15 @@ import threading
 from collections.abc import Callable, Iterator, Mapping
 from typing import Any
 
-from talent_angels.llm.protocol import LLMResult, LLMUsage, Message, ToolInvocation
+from talent_angels.llm.protocol import (
+    LLMError,
+    LLMResult,
+    LLMUsage,
+    Message,
+    ToolInvocation,
+    llm_num_retries,
+    llm_timeout_seconds,
+)
 
 DEFAULT_MAX_TOKENS = 1024
 LOCAL_MODEL_COST_MAP_ENV = "LITELLM_LOCAL_MODEL_COST_MAP"
@@ -33,30 +41,27 @@ def ensure_local_model_cost_map() -> None:
 ensure_local_model_cost_map()
 
 
-class _MuteThread:
-    """A stdout stand-in that drops writes from one thread and forwards the rest.
+class _MuteThreads:
+    """A stdout/stderr stand-in that drops writes from muted threads only.
 
-    LiteLLM prints a provider banner during a completion, and the obvious cure
-    — `redirect_stdout` around the call — swaps a process-global. Any other
-    thread writing during that window lands in the discarded buffer, so a
-    terminal spinner drawn while the request is in flight paints nowhere and
-    reads as a freeze until the call returns.
-
-    Muting by thread keeps the banner hidden without taking the terminal away
-    from everything else in the process.
+    LiteLLM prints a provider banner during a completion. Swapping
+    ``sys.stdout`` per call is unsafe on the API threadpool: two overlapping
+    calls each save and restore the global, and the second restore can leave a
+    stale wrapper installed forever. Instead one wrapper per stream is
+    installed while *any* call is in flight, and it mutes exactly the threads
+    currently inside a completion.
     """
 
-    def __init__(self, target: object, muted_thread: int) -> None:
+    def __init__(self, target: object) -> None:
         self._target = target
-        self._muted = muted_thread
 
     def write(self, text: str) -> int:
-        if threading.get_ident() == self._muted:
+        if threading.get_ident() in _MUTED_THREADS:
             return len(text)
         return int(self._target.write(text))  # type: ignore[attr-defined]
 
     def flush(self) -> None:
-        if threading.get_ident() != self._muted:
+        if threading.get_ident() not in _MUTED_THREADS:
             self._target.flush()  # type: ignore[attr-defined]
 
     def __getattr__(self, name: str) -> object:
@@ -73,16 +78,29 @@ class _MuteThread:
         return self._target.encoding  # type: ignore[attr-defined,no-any-return]
 
 
+_MUTE_LOCK = threading.Lock()
+_MUTED_THREADS: set[int] = set()
+_SAVED_STREAMS: list[object] = []
+
+
 @contextlib.contextmanager
 def _quiet_stdio() -> Iterator[None]:
     """Hide LiteLLM's banners without hiding anyone else's output."""
     here = threading.get_ident()
-    out, err = sys.stdout, sys.stderr
-    sys.stdout, sys.stderr = _MuteThread(out, here), _MuteThread(err, here)
+    with _MUTE_LOCK:
+        if not _MUTED_THREADS:
+            _SAVED_STREAMS[:] = [sys.stdout, sys.stderr]
+            sys.stdout = _MuteThreads(sys.stdout)  # type: ignore[assignment]
+            sys.stderr = _MuteThreads(sys.stderr)  # type: ignore[assignment]
+        _MUTED_THREADS.add(here)
     try:
         yield
     finally:
-        sys.stdout, sys.stderr = out, err
+        with _MUTE_LOCK:
+            _MUTED_THREADS.discard(here)
+            if not _MUTED_THREADS and _SAVED_STREAMS:
+                sys.stdout, sys.stderr = _SAVED_STREAMS  # type: ignore[assignment]
+                _SAVED_STREAMS.clear()
 
 
 def _silence_litellm_runtime() -> None:
@@ -188,6 +206,8 @@ class LiteLLMClient:
             "model": self.model,
             "messages": [message.model_dump(exclude_none=True) for message in messages],
             "max_tokens": DEFAULT_MAX_TOKENS,
+            "timeout": llm_timeout_seconds(),
+            "num_retries": llm_num_retries(),
         }
         if tools:
             # OpenAI-shaped tools only. Do not send tool_choice="auto": some
@@ -209,12 +229,20 @@ class LiteLLMClient:
                     with _quiet_stdio():
                         raw = self._completion(**kwargs)
                 except Exception as exc:
-                    raise RuntimeError(f"LiteLLM provider request failed: {exc}") from exc
+                    raise LLMError(f"LiteLLM provider request failed: {exc}") from exc
             else:
-                raise RuntimeError(f"LiteLLM provider request failed: {first}") from first
+                raise LLMError(f"LiteLLM provider request failed: {first}") from first
+        try:
+            return self._parse(raw)
+        except LLMError:
+            raise
+        except (ValueError, TypeError, KeyError) as exc:
+            raise LLMError(f"LiteLLM response unusable: {exc}") from exc
+
+    def _parse(self, raw: object) -> LLMResult:
         body = _mapping(raw)
         if body.get("error") is not None:
-            raise RuntimeError("LiteLLM response contained a provider generation error")
+            raise LLMError("LiteLLM response contained a provider generation error")
 
         response_model = body.get("model")
         if not isinstance(response_model, str) or not response_model:
@@ -225,7 +253,7 @@ class LiteLLMClient:
             raise ValueError("LiteLLM response did not contain a text choice")
         first_choice = _mapping(choices[0])
         if first_choice.get("finish_reason") == "error" or first_choice.get("error") is not None:
-            raise RuntimeError("LiteLLM response contained a provider generation error")
+            raise LLMError("LiteLLM response contained a provider generation error")
         message = _mapping(first_choice.get("message"))
         text = message.get("content")
         if text is None:

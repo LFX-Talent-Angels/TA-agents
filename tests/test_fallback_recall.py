@@ -166,13 +166,17 @@ def test_a_good_hit_beyond_the_limit_is_still_found(caplog: pytest.LogCaptureFix
 def test_the_default_floor_is_the_calibrated_value() -> None:
     """Pinned so a casual edit to the constant is a visible test failure.
 
-    -1.10 is a measurement: the 7 questions sharing nothing with any turn scored
-    between -1.303 and -1.197, and the 36 answerable ones between -1.018 and
-    -0.234. Anything outside (-1.197, -1.018] either leaks irrelevance or
-    discards answerable questions, so re-calibrating is a deliberate act that
-    should have to be argued for in a commit message.
+    -0.70 is a measurement for the local default (all-MiniLM-L6-v2, cosine):
+    the 7 questions sharing nothing with any turn topped out in
+    [-0.899, -0.794], every answerable query's gold turn scored in
+    [-0.515, -0.009]. Re-calibrating is a deliberate act that should have to be
+    argued for in a commit message (`evals.recall --vector --calibrate`).
     """
-    assert MIN_RELEVANCE_SCORE == pytest.approx(-1.10)
+    from talent_angels.memory.vector_retriever import RELEVANCE_FLOORS, relevance_floor
+
+    assert RELEVANCE_FLOORS["all-MiniLM-L6-v2"] == pytest.approx(-0.70)
+    assert relevance_floor("all-MiniLM-L6-v2") == pytest.approx(-0.70)
+    assert MIN_RELEVANCE_SCORE == pytest.approx(-0.70)
 
 
 def test_the_floor_is_a_cosine_similarity_and_not_a_bm25_score() -> None:
@@ -287,6 +291,8 @@ def test_hybrid_mode_builds_a_ladder_with_the_floor_underneath(
     from talent_angels.env import episode_retriever
 
     monkeypatch.setenv("TA_RECALL", "hybrid")
+    # A hosted model is an explicit opt-in now (the default is the local one).
+    monkeypatch.setenv("TA_EMBEDDING_MODEL", "openai/text-embedding-3-small")
     monkeypatch.setenv("OPENROUTER_API_KEY", "sk-or-v-not-a-real-key")
     monkeypatch.setattr(env, "_warned_unavailable", set())
     _build_a_vector_index(memory_home)
@@ -323,6 +329,8 @@ def test_building_the_hybrid_embeds_nothing(
     from talent_angels.env import episode_retriever
 
     monkeypatch.setenv("TA_RECALL", "hybrid")
+    # A hosted model is an explicit opt-in now (the default is the local one).
+    monkeypatch.setenv("TA_EMBEDDING_MODEL", "openai/text-embedding-3-small")
     monkeypatch.setenv("OPENROUTER_API_KEY", "sk-or-v-not-a-real-key")
     monkeypatch.setattr(env, "_warned_unavailable", set())
     _build_a_vector_index(memory_home)
@@ -383,29 +391,43 @@ def test_hybrid_without_credentials_degrades_to_keyword(
     )
 
 
-def test_hybrid_without_an_index_degrades_to_keyword(
-    memory_home: MemoryHome, monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
+def test_hybrid_without_an_index_keeps_the_ladder_and_recalls_nothing_extra(
+    memory_home: MemoryHome, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """Credentials but no built index: same downgrade, different fix.
+    """No index yet is the normal first-run state, not a misconfiguration.
 
-    The two cases get separate messages because the remedy differs — a key is
-    not a rebuild, and a rebuild is not a key. An operator told the wrong one
-    would set a key and see no change, then conclude recall is broken.
+    With the local embedder the index is built as turns are recorded, so the
+    ladder is built anyway; its vector rung returns nothing until then.
     """
     from talent_angels import env
     from talent_angels.env import episode_retriever
 
     monkeypatch.setenv("TA_RECALL", "hybrid")
+    monkeypatch.setenv("TA_EMBEDDING_MODEL", "openai/text-embedding-3-small")
     monkeypatch.setenv("OPENROUTER_API_KEY", "sk-or-v-not-a-real-key")
+    monkeypatch.setattr(env, "_warned_unavailable", set())
+
+    retriever = episode_retriever()
+
+    assert isinstance(retriever, FallbackEpisodeRetriever)
+    assert retriever._fallback.search("anything") == []
+
+
+def test_hybrid_without_any_embedder_degrades_to_keyword_and_names_the_fix(
+    memory_home: MemoryHome, monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
+) -> None:
+    from talent_angels import env
+    from talent_angels.env import episode_retriever
+
+    monkeypatch.setenv("TA_RECALL", "hybrid")
+    monkeypatch.setenv("TA_EMBEDDING_MODEL", "none")
     monkeypatch.setattr(env, "_warned_unavailable", set())
 
     with caplog.at_level(logging.WARNING, logger="talent_angels.env"):
         retriever = episode_retriever()
 
     assert not isinstance(retriever, FallbackEpisodeRetriever)
-    assert "recall-rebuild --vector" in caplog.text, (
-        "the message must name the command that fixes it"
-    )
+    assert "local-embed" in caplog.text, "the message must name the free fix"
 
 
 def test_the_downgrade_warning_is_emitted_once(

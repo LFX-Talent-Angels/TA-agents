@@ -9,9 +9,11 @@ from __future__ import annotations
 import re
 
 from talent_angels.assistant.answer import CONNECT_PREVIEW_CAP
+from talent_angels.assistant.llm_call import measure_complete
 from talent_angels.contracts import AgentResult, NodeRef
 from talent_angels.env import episode_retriever
 from talent_angels.llm import LLMClient, Message
+from talent_angels.llm.protocol import uses_chat_phrasing
 from talent_angels.memory.agent_notes import notes_prefix
 from talent_angels.memory.profile import profile_prefix
 from talent_angels.memory.retrieval import recall_prefix
@@ -33,13 +35,6 @@ Rules:
 - Do not number options. Do not pick rank 1.
 - Do not suggest related job titles that are not in the FACT CARD.
 - Do not repeat the id/confidence block; that is printed under your text."""
-
-
-def uses_chat_phrasing(client: LLMClient | None) -> bool:
-    if client is None:
-        return False
-    provider = str(getattr(client, "provider", "none") or "none").lower()
-    return provider not in {"none", "stub", "test"}
 
 
 def phrase_chat(
@@ -73,8 +68,8 @@ def phrase_chat(
         Message(role="user", content=user_text),
     ]
     try:
-        result = client.complete(messages)
-    except (RuntimeError, OSError, ValueError):
+        result, _ = measure_complete(client, messages, stage="phrase")
+    except RuntimeError:
         return fallback
     text = (result.text or "").strip()
     if not text:
@@ -110,8 +105,8 @@ def phrase_map(
         Message(role="user", content=f"User: {question}\n\nFACT CARD:\n{card}"),
     ]
     try:
-        llm_result = client.complete(messages)
-    except (RuntimeError, OSError, ValueError):
+        llm_result, _ = measure_complete(client, messages, stage="phrase")
+    except RuntimeError:
         return fallback
     text = (llm_result.text or "").strip()
     if not text:

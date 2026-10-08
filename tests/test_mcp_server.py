@@ -118,7 +118,7 @@ def test_every_tool_declares_its_inputs_and_a_structured_output(
 ) -> None:
     expected = {
         "search_nodes": {"text", "kind", "suite"},
-        "get_neighbors": {"node_id", "rel_types", "suite"},
+        "get_neighbors": {"node_id", "rel_types", "suite", "limit"},
         "enumerate_paths": {"from_id", "to_id", "max_depth", "max_paths", "suite"},
         "score_paths": {"paths", "policy_name", "policy_version", "suite"},
     }
@@ -193,3 +193,31 @@ def test_an_unavailable_suite_never_leaks_the_driver_message(
 
 def test_a_suite_call_failure_never_leaks_its_error_message(served: dict[str, Any]) -> None:
     assert served["suite_broken"]["warnings"] == ["suite_unavailable:RuntimeError"]
+
+
+def test_neighbours_are_bounded_and_the_cut_is_counted() -> None:
+    """Unbounded, one O*NET hop was ~1.4 MB of tool output."""
+    from talent_angels.mcp.mapping import neighbors_payload
+    from tests.fakes.taxonomy import FakeEdge, FakeNode, FakeToolResult
+
+    center = FakeNode(id="c", kind="Occupation", label="dev", source="onet", source_id="c")
+    skills = [
+        FakeNode(id=f"s{i}", kind="Skill", label=f"skill {i}", source="onet", source_id=f"s{i}")
+        for i in range(10)
+    ]
+    edges = [
+        FakeEdge(type="HAS_SKILL", from_id="c", to_id=f"s{i}", properties={"importance": float(i)})
+        for i in range(10)
+    ]
+    payload = neighbors_payload(
+        FakeToolResult(nodes=[center, *skills], edges=edges), suite="onet", center_id="c", limit=3
+    )
+
+    assert payload.pruning is not None
+    assert (payload.pruning.considered, payload.pruning.returned, payload.pruning.pruned) == (
+        10,
+        3,
+        7,
+    )
+    assert [n.id for n in payload.nodes] == ["c", "s9", "s8", "s7"]
+    assert "truncated:7" in payload.warnings

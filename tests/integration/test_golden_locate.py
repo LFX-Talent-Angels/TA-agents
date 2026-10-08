@@ -1,4 +1,4 @@
-"""Golden Locate eval — hit@1 accuracy against the ESCO fixture.
+"""Golden Locate eval — hit@1 / candidate recall against full ESCO.
 
 Skipped (not failed) when Neo4j isn't reachable, per CONTRIBUTING.md.
 """
@@ -70,6 +70,6 @@ def test_golden_locate_metrics() -> None:
 
     result = metrics.as_dict()
     assert result["hit_at_1_accuracy"] == 1.0
-    assert result["hit_at_1_questions"] == 10
+    assert result["hit_at_1_questions"] == 8
     assert result["candidate_recall"] == 1.0
-    assert result["candidate_recall_questions"] == 1
+    assert result["candidate_recall_questions"] == 3

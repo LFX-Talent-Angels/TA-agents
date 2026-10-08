@@ -24,6 +24,22 @@ def load_rate_card() -> dict[str, Any]:
     return yaml.safe_load(text)
 
 
+def resolve_rates(models: dict[str, Any], model: str) -> tuple[str, dict[str, Any] | None]:
+    """Exact rate-card key first, then the base model behind a routing prefix.
+
+    LiteLLM model strings carry the route (``azure_ai/claude-sonnet-4-6``,
+    ``anthropic/claude-opus-4-6``); the price belongs to the base model, which
+    Azure AI Foundry and Anthropic bill at the same list rate. Without this an
+    Azure-routed Claude reported every turn as an unpriced $0.
+    """
+    if model in models:
+        return model, models[model]
+    base = model.rsplit("/", 1)[-1]
+    if base != model and base in models:
+        return base, models[base]
+    return model, None
+
+
 def estimate_llm_cost_usd(
     usage: LLMUsage, model: str, *, rate_card: dict[str, Any] | None = None
 ) -> CostBreakdown:
@@ -34,7 +50,7 @@ def estimate_llm_cost_usd(
     unpriced model is never reported as a priced $0 stub.
     """
     card = rate_card or load_rate_card()
-    rates = card["models"].get(model)
+    priced_as, rates = resolve_rates(card["models"], model)
     if rates is None:
         return CostBreakdown(
             known=False,
@@ -63,7 +79,11 @@ def estimate_llm_cost_usd(
         llm=uncached_baseline,
         llm_with_cache_savings=total,
         total=total,
-        rate_card=f"rate_card.yaml#{card['version']}",
+        rate_card=(
+            f"rate_card.yaml#{card['version']}"
+            if priced_as == model
+            else f"rate_card.yaml#{card['version']}:{priced_as}"
+        ),
     )
 
 

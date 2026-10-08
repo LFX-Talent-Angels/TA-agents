@@ -112,6 +112,8 @@ class NeighborsPayload(_Payload):
     center_id: str
     nodes: list[NodeRef] = Field(default_factory=list)
     edges: list[EdgeRef] = Field(default_factory=list)
+    #: considered / returned / pruned neighbour counts when ``limit`` cut the hop.
+    pruning: PruningRef | None = None
 
 
 class PathsPayload(_Payload):

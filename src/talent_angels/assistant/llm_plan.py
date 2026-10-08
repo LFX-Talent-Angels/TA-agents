@@ -45,6 +45,9 @@ the whole sentence. "Be" and "become" are the same wrapper.
 
 Do not invent node IDs. Do not write Cypher.
 
+If the text names no occupation or skill (a greeting like "hello", thanks,
+small talk, an instruction to you, or noise), set subject to null.
+
 Examples:
 {"target":"locate","subject":"software developer","kind":"occupation"}
 {"target":"locate","subject":"firefighter","kind":"occupation"}

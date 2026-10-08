@@ -111,16 +111,22 @@ def connect(
     for edge in edges:
         kept_ids.update((edge.from_id, edge.to_id))
 
-    # Order skill nodes so tech-tool rel_types (e.g. USES_SOFTWARE) appear before
-    # generic ones (e.g. HAS_SKILL). The last rel_type in request.rel_types gets
-    # priority 0, so its skills surface first in the compacted LLM context window.
-    _rel_priority: dict[str, int] = {rt: i for i, rt in enumerate(reversed(request.rel_types))}
-    node_rel_priority: dict[str, int] = {}
+    # Deterministic ranking (ARCHITECTURE: truncate with principled ranking,
+    # e.g. O*NET importance). Primary: the order of request.rel_types, so the
+    # asked-for relation (skills) precedes the rest (software). Then O*NET
+    # importance, then hot/in-demand technology flags, then label.
+    _rel_priority: dict[str, int] = {rt: i for i, rt in enumerate(request.rel_types)}
+    node_rank: dict[str, tuple[int, float, int]] = {}
     for edge in edges:
         nid = edge.to_id if edge.from_id == center.id else edge.from_id
-        pri = _rel_priority.get(edge.type, len(request.rel_types))
-        if nid not in node_rel_priority or pri < node_rel_priority[nid]:
-            node_rel_priority[nid] = pri
+        props = edge.properties
+        importance = props.get("importance")
+        weight = -float(importance) if isinstance(importance, int | float) else 0.0
+        flagged = props.get("hot_technology") == "Y" or props.get("in_demand") == "Y"
+        rank = (_rel_priority.get(edge.type, len(request.rel_types)), weight, 0 if flagged else 1)
+        if nid not in node_rank or rank < node_rank[nid]:
+            node_rank[nid] = rank
+    _unranked = (len(request.rel_types), 0.0, 1)
 
     nodes = [center]
     skill_nodes = sorted(
@@ -129,7 +135,7 @@ def connect(
             for node in raw.nodes
             if node.id != center.id and node.id in kept_ids
         ),
-        key=lambda n: node_rel_priority.get(n.id, len(request.rel_types)),
+        key=lambda n: node_rank.get(n.id, _unranked),  # stable: suite order breaks ties
     )
     nodes.extend(skill_nodes)
 

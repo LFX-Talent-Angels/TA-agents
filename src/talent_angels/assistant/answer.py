@@ -25,10 +25,28 @@ def is_terminal_locate(result: AgentResult) -> bool:
     return "ambiguous" in result.warnings or "not_found" in result.warnings
 
 
+PATHFIND_UNAVAILABLE = (
+    "Routes between two occupations (Pathfind) are not available yet, so no path "
+    "was computed. Ask what skills each occupation needs and compare them."
+)
+NO_SUBJECT = (
+    "Which occupation or skill do you mean? For example: "
+    "“What skills does a nurse need?” or “Where is data scientist?”"
+)
+
+
+def is_pathfind_unavailable(result: AgentResult) -> bool:
+    return any(w.startswith("capability_not_implemented") for w in result.warnings)
+
+
 def summarize_result(result: AgentResult) -> str:
     """Deterministic user-facing text from a typed result (no LLM)."""
     if "bind_required" in result.warnings:
         return "Name or pick an occupation first, then ask for skills."
+    if "no_subject" in result.warnings:
+        return NO_SUBJECT
+    if is_pathfind_unavailable(result):
+        return PATHFIND_UNAVAILABLE
     if not result.nodes:
         warning = result.warnings[0] if result.warnings else "not_found"
         return f"No match found for capability '{result.capability}' ({warning})."

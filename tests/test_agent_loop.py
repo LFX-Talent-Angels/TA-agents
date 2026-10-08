@@ -220,7 +220,8 @@ def test_tool_loop_executes_xml_get_neighbors_after_search() -> None:
     assert outcome.plan.capabilities == ("locate", "connect")
     assert outcome.result.capability == "connect"
     assert suite.search_calls == [("software developer", "occupation")]
-    assert suite.neighbor_calls == [(occupation.id, ["HAS_SKILL"])]
+    # rel types come from the suite schema, not the model (determinism in code)
+    assert suite.neighbor_calls == [(occupation.id, ["HAS_SKILL", "USES_SOFTWARE"])]
     assert [stage.stage for stage in outcome.stages] == ["act", "act", "answer"]
     assert outcome.answer == "A software developer needs computer programming."
     assert [tool.name for tool in outcome.tool_calls] == ["search_nodes", "get_neighbors"]
@@ -296,7 +297,8 @@ def test_tool_loop_runs_laguna_xml_get_neighbors() -> None:
     )
 
     assert outcome.result.capability == "connect"
-    assert suite.neighbor_calls == [(occupation.id, ["HAS_SKILL"])]
+    # rel types come from the suite schema, not the model (determinism in code)
+    assert suite.neighbor_calls == [(occupation.id, ["HAS_SKILL", "USES_SOFTWARE"])]
     assert "computer programming" in outcome.answer
     assert "<tool_call>" not in outcome.answer
 

@@ -1,6 +1,6 @@
 {
   "suite": "esco",
-  "note": "Expected values captured from a live run against the ESCO fixture (TA-taxonomies fixture.json) — see NOTES.md. Re-capture if the fixture changes. expected_warnings are the required set; full-graph Locate may also emit truncated / match_count_capped (asserted as allowed extras in test_golden_locate).",
+  "note": "Expected values captured from a live run against FULL ESCO v1.2.1 (3,039 occupations; re-captured 2026-09-30, previously the 6-occupation fixture). On the full graph 'programmer' and 'CISO' are genuinely ambiguous: 'CISO' is an alias of both 'ICT security administrator' and 'chief ICT security officer', and 'programmer' also matches e.g. 'venue programmer'. Both are scored by candidate_recall (the expected node must be among the candidates) with the ambiguous warning required. expected_warnings are the required set; full-graph Locate may also emit truncated / match_count_capped (asserted as allowed extras in test_golden_locate).",
   "cases": [
     {
       "question": "software developer",
@@ -56,7 +56,8 @@
       "expected_top_id": "esco:occupation:f2b15a0e-e65a-438a-affb-29b9d50b77d1",
       "expected_confidence": 0.90,
       "expected_method": "exact_alt",
-      "expected_warnings": []
+      "expected_warnings": ["ambiguous"],
+      "metric": "candidate_recall"
     },
     {
       "question": "data expert",
@@ -72,7 +73,8 @@
       "expected_top_id": "esco:occupation:0464b062-cea6-4164-b10d-956c61956ae7",
       "expected_confidence": 0.90,
       "expected_method": "exact_alt",
-      "expected_warnings": []
+      "expected_warnings": ["ambiguous"],
+      "metric": "candidate_recall"
     },
     {
       "question": "Software Developer",

@@ -6,10 +6,12 @@ Never called on Locate alone. Node IDs + labels only — no prose descriptions.
 
 from __future__ import annotations
 
+from collections.abc import Callable
 from datetime import date
 
 from talent_angels.contracts.models import NodeRef
-from talent_angels.memory.paths import USER_MD
+from talent_angels.memory.files import MEMORY_FILE_LOCK, atomic_write_text, read_text_or_empty
+from talent_angels.memory.paths import user_md
 
 
 def _node_id_str(node: NodeRef) -> str:
@@ -37,9 +39,7 @@ def _node_id_str(node: NodeRef) -> str:
 
 def read_user_profile() -> str:
     """Returns raw USER.md content, empty string if not found."""
-    if USER_MD.exists():
-        return USER_MD.read_text()
-    return ""
+    return read_text_or_empty(user_md())
 
 
 # Hermes-style caps (docs: Persistent Memory). USER.md holds the user profile.
@@ -87,6 +87,13 @@ def _prune_to_limit(content: str, limit: int | None = None) -> str:
     return "\n".join(kept) if len("\n".join(kept)) <= limit else kept[-1]
 
 
+def _rewrite(update: Callable[[list[str]], list[str]]) -> None:
+    """Read-modify-write USER.md under the memory-file lock, atomically."""
+    with MEMORY_FILE_LOCK:
+        lines = update(read_user_profile().splitlines())
+        atomic_write_text(user_md(), _prune_to_limit("\n".join(lines)) + "\n")
+
+
 def write_standing(node: NodeRef) -> None:
     """Called on explicit confirm. Updates STANDING line in USER.md.
 
@@ -101,16 +108,14 @@ def write_standing(node: NodeRef) -> None:
     today = date.today().isoformat()
     new_line = f"STANDING[{node.suite}]: {label}  [{tag}]   since: {today}"
 
-    content = read_user_profile()
-    lines = content.splitlines()
-    for i, line in enumerate(lines):
-        if line.startswith(f"STANDING[{node.suite}]:"):
-            lines[i] = new_line
-            break
-    else:
-        # No existing STANDING line — insert at top
-        lines.insert(0, new_line)
-    USER_MD.write_text(_prune_to_limit("\n".join(lines)) + "\n")
+    def update(lines: list[str]) -> list[str]:
+        for i, line in enumerate(lines):
+            if line.startswith(f"STANDING[{node.suite}]:"):
+                lines[i] = new_line
+                return lines
+        return [new_line, *lines]
+
+    _rewrite(update)
 
 
 def write_rejected(node: NodeRef) -> None:
@@ -121,20 +126,17 @@ def write_rejected(node: NodeRef) -> None:
     label = _node_label(node)
     if not label:
         return
-    tag = _node_id_str(node)
-    entry = f"{label} [{tag}]"
+    entry = f"{label} [{_node_id_str(node)}]"
 
-    content = read_user_profile()
-    lines = content.splitlines()
-    for i, line in enumerate(lines):
-        if line.startswith("REJECTED:"):
-            existing = line[len("REJECTED:") :].strip()
-            lines[i] = f"REJECTED: {existing}, {entry}" if existing else f"REJECTED: {entry}"
-            break
-    else:
-        # No REJECTED line yet — append
-        lines.append(f"REJECTED: {entry}")
-    USER_MD.write_text(_prune_to_limit("\n".join(lines)) + "\n")
+    def update(lines: list[str]) -> list[str]:
+        for i, line in enumerate(lines):
+            if line.startswith("REJECTED:"):
+                existing = line[len("REJECTED:") :].strip()
+                lines[i] = f"REJECTED: {existing}, {entry}" if existing else f"REJECTED: {entry}"
+                return lines
+        return [*lines, f"REJECTED: {entry}"]
+
+    _rewrite(update)
 
 
 def write_goal(node: NodeRef) -> None:
@@ -145,18 +147,22 @@ def write_goal(node: NodeRef) -> None:
     label = _node_label(node)
     if not label:
         return
-    tag = _node_id_str(node)
-    new_line = f"GOAL: {label}  [{tag}]"
+    new_line = f"GOAL: {label}  [{_node_id_str(node)}]"
 
-    content = read_user_profile()
-    lines = content.splitlines()
-    for i, line in enumerate(lines):
-        if line.startswith("GOAL:"):
-            lines[i] = new_line
-            break
-    else:
-        lines.append(new_line)
-    USER_MD.write_text(_prune_to_limit("\n".join(lines)) + "\n")
+    def update(lines: list[str]) -> list[str]:
+        for i, line in enumerate(lines):
+            if line.startswith("GOAL:"):
+                lines[i] = new_line
+                return lines
+        return [*lines, new_line]
+
+    _rewrite(update)
+
+
+#: Most-important first: a card truncated by line count must never lose the
+#: goal or the rejections to a pile of per-suite STANDING lines.
+_CARD_ORDER = ("GOAL:", "REJECTED:", "STANDING[")
+_CARD_MAX_LINES = 6
 
 
 def profile_prefix() -> str:
@@ -164,6 +170,13 @@ def profile_prefix() -> str:
     content = read_user_profile().strip()
     if not content:
         return ""
-    lines = content.splitlines()[:5]
-    card = "\n".join(lines)
+    lines = [line for line in content.splitlines() if line.strip()]
+
+    def rank(line: str) -> int:
+        for i, prefix in enumerate(_CARD_ORDER):
+            if line.startswith(prefix):
+                return i
+        return len(_CARD_ORDER)
+
+    card = "\n".join(sorted(lines, key=rank)[:_CARD_MAX_LINES])
     return f"[User profile — confirmed by user, not from taxonomy]\n{card}\n\n"

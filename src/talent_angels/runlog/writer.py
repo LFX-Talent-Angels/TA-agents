@@ -9,13 +9,18 @@ from __future__ import annotations
 import os
 from pathlib import Path
 
+from talent_angels.memory.paths import default_runlog_path
 from talent_angels.runlog.models import RunLogRecord
-
-DEFAULT_RUNLOG_PATH = "runlog.jsonl"
 
 
 def runlog_path() -> Path:
-    return Path(os.environ.get("RUNLOG_PATH", DEFAULT_RUNLOG_PATH))
+    """``RUNLOG_PATH`` or ``<memory home>/runlog.jsonl``.
+
+    The run-log holds users' raw questions, so it lives in the memory home that
+    ``/reset-all`` erases rather than wherever the process was launched.
+    """
+    raw = os.environ.get("RUNLOG_PATH", "").strip()
+    return Path(raw).expanduser() if raw else default_runlog_path()
 
 
 def append_record(record: RunLogRecord, *, path: Path | None = None) -> None:

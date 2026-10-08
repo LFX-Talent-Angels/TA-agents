@@ -16,6 +16,7 @@ from typing import Literal
 
 from talent_angels.assistant.llm_call import measure_complete
 from talent_angels.llm import LLMClient, Message
+from talent_angels.session.i18n import plural, t
 from talent_angels.session.models import AreaChoice, PendingChoice
 from talent_angels.session.phrase import uses_chat_phrasing
 from talent_angels.skills.locate.areas import Area
@@ -87,11 +88,11 @@ def render_areas(choices: Sequence[AreaChoice]) -> str:
     """The "which area?" block printed under a pick list."""
     if not choices:
         return ""
-    lines = ["**Or narrow it down by area:**", ""]
+    lines = [t("areas_head"), ""]
     for choice in choices:
-        noun = "title" if choice.count == 1 else "titles"
+        noun = plural(choice.count, "area_title", "area_titles")
         lines.append(f"{choice.letter}. {choice.label} ({choice.count} {noun})")
-    lines.extend(["", "Reply with a letter, or describe the work you have in mind."])
+    lines.extend(["", t("areas_foot")])
     return "\n".join(lines)
 
 

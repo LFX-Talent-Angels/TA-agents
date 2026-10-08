@@ -1662,14 +1662,13 @@ def _seed_recallable_episode(db_path: Path) -> None:
     _record(db_path, "r1", "what skills does a nurse need?", ("nurse",))
 
 
-def test_phrase_chat_carries_the_recall_block_when_recall_is_on(
+def test_phrase_chat_never_carries_past_turns(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """The wiring itself: the block has to arrive in the system prompt.
+    """Even with recall on, a reply prompt gets no earlier turns.
 
-    A retriever that nothing calls is a library, not a feature, and this is the
-    only assertion that would notice the call being dropped from a prompt site —
-    every other test in the file passes with the wiring deleted.
+    Given them, the model invented a past exchange ("you asked this and the
+    answer was X", 2026-10-08). Recall questions are answered in code.
     """
     from talent_angels.llm.protocol import LLMResult, LLMUsage, Message
     from talent_angels.memory import episodes as episodes_module
@@ -1693,21 +1692,14 @@ def test_phrase_chat_carries_the_recall_block_when_recall_is_on(
     phrase.phrase_chat(client, user_text="nurse skills", fallback="miss", hint="Search missed.")
 
     system_prompt = client.calls[0][0].content
-    assert "what skills does a nurse need?" in system_prompt
-    assert "not taxonomy fact" in system_prompt
-    # The block sits between the other prefixes and the instructions, not at the
-    # end where it would read as part of the trailing hint.
-    assert system_prompt.index("not taxonomy fact") < system_prompt.index("You are LFX")
+    assert "what skills does a nurse need?" not in system_prompt
+    assert "not taxonomy fact" not in system_prompt
 
 
-def test_phrase_map_carries_the_recall_block_when_recall_is_on(
+def test_phrase_map_never_carries_past_turns(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """Same for the second site, which is the one that actually answers questions.
-
-    `phrase_map` runs on every successful lookup, so it is where "we covered this
-    before" would be felt; `phrase_chat` covers the misses.
-    """
+    """Same for the card phrasing, where the invented exchange was seen."""
     from talent_angels.contracts import AgentResult, NodeRef
     from talent_angels.llm.protocol import LLMResult, LLMUsage, Message
     from talent_angels.memory import episodes as episodes_module
@@ -1749,10 +1741,10 @@ def test_phrase_map_carries_the_recall_block_when_recall_is_on(
         client, question="nurse skills", result=result, fallback="fb", card="occupation: nurse"
     )
 
-    assert "what skills does a nurse need?" in client.calls[0][0].content
+    assert "what skills does a nurse need?" not in client.calls[0][0].content
 
 
-def test_the_tool_loop_prompt_matches_the_question_not_the_decorated_prompt(
+def test_the_tool_loop_prompt_carries_no_past_turns(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     """The loop's own prompt text must not be part of the recall query.
@@ -1804,16 +1796,8 @@ def test_the_tool_loop_prompt_matches_the_question_not_the_decorated_prompt(
     )
 
     system_prompt = client.calls[0][0][0].content
-    assert "what skills does a nurse need? → nurse" in system_prompt, (
-        "the tool-loop prompt did not carry a recalled turn"
-    )
-    # The discriminating half: the turn that shares a word with the decoration is
-    # the one the dilated query adds, so its presence is the fingerprint of
-    # `recall_prefix(user_content, …)`.
-    assert "occupation survey" not in system_prompt, (
-        "recall was queried on the decorated prompt: the bound-node decoration's "
-        "own words pulled in a turn the question never mentions"
-    )
+    assert "what skills does a nurse need? → nurse" not in system_prompt
+    assert "occupation survey" not in system_prompt
 
 
 def test_recall_only_reaches_a_prompt_when_it_has_something_to_say(
@@ -1902,11 +1886,9 @@ def test_every_recall_call_site_is_known_and_counted() -> None:
         if count:
             sites[path.relative_to(package_root).with_suffix("").as_posix()] = count
 
-    assert sites == {
-        "assistant/agent_loop": 1,
-        "assistant/synthesize": 1,
-        "session/phrase": 2,
-    }, f"the call sites changed; update this file's header and the tests for them: {sites}"
+    # None since 2026-10-08: past turns in a reply prompt let the model invent
+    # an exchange that never happened. A new site has to be a deliberate choice.
+    assert sites == {}, f"a prompt renders past turns again: {sites}"
 
 
 def test_intent_verbs_do_not_make_unrelated_turns_match() -> None:

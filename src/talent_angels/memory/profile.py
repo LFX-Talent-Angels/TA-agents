@@ -253,6 +253,24 @@ def profile_prefix() -> str:
     return f"[User profile — confirmed by user, not from taxonomy]\n{card}\n\n"
 
 
+def profile_entries() -> list[tuple[str, str, str]]:
+    """What the user told us as (kind, suite, titles): goal, current, rejected."""
+    entries: list[tuple[str, str, str]] = []
+    order = {"goal": 0, "rejected": 1, "current": 2}
+    for line in read_user_profile().splitlines():
+        head, _, rest = line.partition(":")
+        titles = re.sub(r"\s+since:.*$", "", re.sub(r"\s*\[[^\]]*\]", "", rest)).strip()
+        if not titles:
+            continue
+        if head == "GOAL":
+            entries.append(("goal", "", titles))
+        elif head == "REJECTED":
+            entries.append(("rejected", "", titles))
+        elif head.startswith("STANDING[") and head.endswith("]"):
+            entries.append(("current", head[len("STANDING[") : -1], titles))
+    return sorted(entries, key=lambda entry: order[entry[0]])
+
+
 def profile_facts() -> list[str]:
     """What the user told us, one readable line each, for showing back to them."""
     lines = [line for line in read_user_profile().splitlines() if line.strip()]

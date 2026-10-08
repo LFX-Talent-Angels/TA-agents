@@ -63,5 +63,9 @@ class SessionState(BaseModel):
     areas: list[AreaChoice] = Field(default_factory=list)
     #: What the open pick list was searched for ("engineer"); hints keep it.
     list_topic: str = ""
+    #: Compares waiting on a pick, per suite: suite -> [first, second, side].
+    pending_compare: dict[str, list[str]] = Field(default_factory=dict)
+    #: The language the user last wrote in; code-written sentences follow it.
+    language: str = "en"
     last_result: AgentResult | None = None
     last_results: list[AgentResult] = Field(default_factory=list)

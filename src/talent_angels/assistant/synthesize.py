@@ -14,12 +14,10 @@ from talent_angels.assistant.llm_call import measure_complete
 from talent_angels.assistant.merge import suite_heading
 from talent_angels.assistant.prose import prose_only
 from talent_angels.contracts import AgentResult
-from talent_angels.env import episode_retriever
 from talent_angels.llm import LLMClient, Message
 from talent_angels.llm.protocol import uses_chat_phrasing
 from talent_angels.memory.agent_notes import notes_prefix
 from talent_angels.memory.profile import profile_prefix
-from talent_angels.memory.retrieval import recall_prefix
 from talent_angels.skills.connect.compare import CAPABILITY_COMPARE, skill_overlap
 from talent_angels.skills.locate.rank import code_facts
 
@@ -58,6 +56,8 @@ Rules:
   correct yourself mid-answer.
 - ESCO and O*NET are separate taxonomies with no official link here: never say
   a record in one maps to, equals, or is the equivalent of one in the other.
+- Write in the same language as the user's message; keep job and skill titles
+  exactly as the card writes them.
 - 2-4 plain sentences: no tables, lists, headings, or code. Then stop; Sources
   used is printed in code."""
 
@@ -220,24 +220,10 @@ def synthesize(
     if not uses_chat_phrasing(llm_client) or not results:
         return fallback
     assert llm_client is not None
-    # The fourth site that renders `recall_prefix`. It belongs here for the same
-    # reason it is in the agent loop and the two phrasing calls in
-    # `session.phrase`: this is the prompt where the user's own words are
-    # restated back to them, so it is the site where "you asked about this
-    # before" is worth the most and costs the least. The user message already
-    # carries `question`, so this is the only place the turn's own text is
-    # available for retrieval — and it is the same string the loop recalls on,
-    # not `result` or the fact card, so the two prompts cannot disagree about
-    # what the user asked.
-    #
-    # `""` when no retriever is configured, so the prompt is byte-identical to
-    # before for anyone not opted in.
-    system_prompt = (
-        profile_prefix()
-        + notes_prefix()
-        + recall_prefix(question, retriever=episode_retriever())
-        + _SYNTH_SYSTEM
-    )
+    # No past-turn snippets: given them, the model invented a past exchange
+    # ("you asked which is most important and the answer was X", 2026-10-08).
+    # "What did we talk about?" is answered in code (session.recall).
+    system_prompt = profile_prefix() + notes_prefix() + _SYNTH_SYSTEM
     messages = [
         Message(role="system", content=system_prompt),
         Message(

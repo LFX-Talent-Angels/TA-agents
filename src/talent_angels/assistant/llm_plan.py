@@ -33,6 +33,7 @@ Keys:
 - suites: array of attached suite names (runtime fills this; do not drop
   a suite unless the user named one taxonomy)
 - candidates: array of 3 to 5 specific English job titles, or []
+- language: the two-letter code of the language the user wrote in ("en", "es", …)
 
 Vague requests:
 - When the user describes work or names a broad field instead of one title
@@ -155,6 +156,8 @@ class PlanDraft(BaseModel):
     #: Specific titles that may fit a vague subject. Model guesses: every one
     #: is looked up before it is offered (skills.locate.explore).
     candidates: tuple[str, ...] = Field(default=())
+    #: The language the user wrote in ("en", "es"); replies follow it.
+    language: str | None = None
 
     @field_validator("subject", "secondary_subject", "kind", "relation_filter", mode="before")
     @classmethod

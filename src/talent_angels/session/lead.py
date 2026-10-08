@@ -13,18 +13,15 @@ from collections.abc import Sequence
 from talent_angels.assistant.llm_plan import PlanDraft
 from talent_angels.assistant.merge import suite_heading
 from talent_angels.contracts import AgentResult
+from talent_angels.session.i18n import t
 
-_NEXT = {
-    "goal": "Pick the one you mean and I'll save it as your goal.",
-    "standing": "Pick the one you mean and I'll save it as your current job.",
-    "reject": "Pick the one you mean and I'll note that it is not your job.",
-}
+_NEXT = {"goal": "next_goal", "standing": "next_standing", "reject": "next_reject"}
 
 
-def _join(titles: Sequence[str]) -> str:
+def _join(titles: Sequence[str], word: str = "or") -> str:
     if len(titles) == 1:
         return titles[0]
-    return f"{', '.join(titles[:-1])} or {titles[-1]}"
+    return f"{', '.join(titles[:-1])} {t(word)} {titles[-1]}"
 
 
 def _on_the_map(candidate: str, results: Sequence[AgentResult]) -> bool:
@@ -45,33 +42,54 @@ def understood(question: str, draft: PlanDraft | None, results: Sequence[AgentRe
     not have is never shown to the user.
     """
     said = question.strip().rstrip("?.!")
+    side = next(
+        (
+            w.split(":", 1)[1]
+            for result in results
+            for w in result.warnings
+            if w.startswith("compare_side:")
+        ),
+        None,
+    )
+    if side and draft is not None and draft.subject and draft.secondary_subject:
+        # "compare nurse and doctor": say it is a compare, and which side needs a pick.
+        waiting = draft.subject if side == "1" else draft.secondary_subject
+        return t(
+            "compare_needs_pick",
+            first=draft.subject,
+            second=draft.secondary_subject,
+            subject=waiting,
+        )
     subject = (draft.subject or "").strip() if draft is not None else ""
     subject = subject or said
     if not subject:
         return ""
-    quoted = f'"{subject}"' if subject.casefold() == said.casefold() else "your request"
+    quoted = f'"{subject}"' if subject.casefold() == said.casefold() else t("your_request")
     confirmed = [c for c in (draft.candidates if draft else ()) if _on_the_map(c, results)]
     if confirmed:
-        return f"I read {quoted} as {_join(confirmed[:3])}."
+        return t("read_as_titles", quoted=quoted, titles=_join(confirmed[:3]))
     if subject.casefold() in said.casefold():
-        return f'I looked up "{subject}".'
-    return f'I read {quoted} as "{subject}".'
+        return t("looked_up", subject=subject)
+    return t("read_as_subject", quoted=quoted, subject=subject)
 
 
 def _found_one(result: AgentResult) -> str:
     heading = suite_heading(result.suite)
     if result.nodes and "ambiguous" in result.warnings:
         more = "+" if "truncated" in result.warnings else ""
-        noun = "title" if len(result.nodes) == 1 and not more else "titles"
+        many = len(result.nodes) > 1 or bool(more)
+        count = f"{len(result.nodes)}{more}"
         pointers = [pointer.pointer for pointer in result.evidence]
         if pointers and all(":search:hybrid:" in pointer for pointer in pointers):
             # Found by meaning, not by name: close, not matching.
-            return f"{heading} has no exact match; {len(result.nodes)}{more} close {noun}"
-        return f"{heading} has {len(result.nodes)}{more} matching {noun}"
+            noun = t("close_titles" if many else "close_title")
+            return t("found_close", suite=heading, count=count, noun=noun)
+        noun = t("matching_titles" if many else "matching_title")
+        return t("found_list", suite=heading, count=count, noun=noun)
     if result.nodes and result.capability in ("locate", "connect"):
-        return f"{heading} matched {result.nodes[0].pref_label}"
+        return t("found_one", suite=heading, title=result.nodes[0].pref_label)
     if "not_found" in result.warnings:
-        return f"{heading} has no match"
+        return t("found_none", suite=heading)
     return ""
 
 
@@ -80,9 +98,7 @@ def found(results: Sequence[AgentResult]) -> str:
     parts = [part for part in (_found_one(result) for result in results) if part]
     if not parts:
         return ""
-    if len(parts) == 1:
-        return f"{parts[0]}."
-    return f"{', '.join(parts[:-1])} and {parts[-1]}."
+    return f"{_join(parts, 'and')}."
 
 
 def pick_intent(draft: PlanDraft | None) -> str | None:
@@ -100,10 +116,7 @@ def pick_intent(draft: PlanDraft | None) -> str | None:
 
 def lead(question: str, draft: PlanDraft | None, results: Sequence[AgentResult]) -> str:
     """Two or three short sentences shown before any list."""
-    intent = pick_intent(draft)
-    next_step = _NEXT.get(
-        intent or "", "Pick the one you mean, or tell me more and I'll narrow it."
-    )
+    next_step = t(_NEXT.get(pick_intent(draft) or "", "next_default"))
     return " ".join(
         part for part in (understood(question, draft, results), found(results), next_step) if part
     )

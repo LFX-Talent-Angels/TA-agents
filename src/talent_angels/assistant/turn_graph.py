@@ -58,7 +58,7 @@ from talent_angels.skills.connect.compare import compare_result
 from talent_angels.skills.locate import locate
 from talent_angels.skills.locate.areas import Area, AreaRequest, area_summary, search_area
 from talent_angels.skills.locate.explore import explore
-from talent_angels.skills.locate.rank import group_and_sort_locate
+from talent_angels.skills.locate.rank import _near_pref_label, group_and_sort_locate
 from talent_angels.suites.measured import MeasuredSuite
 from talent_angels.suites.protocol import SuiteTools
 from talent_angels.suites.registry import SuiteRegistry, UnknownSuiteError
@@ -180,18 +180,27 @@ def compare_one(
     measured = MeasuredSuite(suite)
     schema = suite.suite_schema
     sides: list[AgentResult] = []
-    for subject in (first, second):
-        located = locate(measured, suite_name, subject, kind="occupation")
+    for side, subject in enumerate((first, second), start=1):
+        found = locate(measured, suite_name, subject, kind="occupation")
         located = group_and_sort_locate(
             measured,
-            located,
+            found,
             subject,
             suite_name=suite_name,
             group_rel_type=schema.group_rel_type,
             group_node_kinds=schema.group_node_kinds,
         )
+        if located.nodes and "ambiguous" not in located.warnings:
+            if not _near_pref_label(subject, located.nodes[0]) and len(found.nodes) > 1:
+                # Not the title the user typed ("doctor" -> "specialised
+                # doctor"): a compare never chooses a side for the user.
+                located = found.model_copy(update={"warnings": [*found.warnings, "ambiguous"]})
         if not located.nodes or "ambiguous" in located.warnings:
-            return located, measured.tool_calls
+            # Which side needs a pick, so the chat can finish the compare after it.
+            marked = located.model_copy(
+                update={"warnings": [*located.warnings, f"compare_side:{side}"]}
+            )
+            return marked, measured.tool_calls
         sides.append(
             connect(
                 measured,

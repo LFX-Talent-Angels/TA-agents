@@ -12,12 +12,10 @@ from talent_angels.assistant.answer import CONNECT_PREVIEW_CAP
 from talent_angels.assistant.llm_call import measure_complete
 from talent_angels.assistant.prose import prose_only
 from talent_angels.contracts import AgentResult, NodeRef
-from talent_angels.env import episode_retriever
 from talent_angels.llm import LLMClient, Message
 from talent_angels.llm.protocol import uses_chat_phrasing
 from talent_angels.memory.agent_notes import notes_prefix
 from talent_angels.memory.profile import profile_prefix
-from talent_angels.memory.retrieval import recall_prefix
 from talent_angels.session.followup import relation_tags
 from talent_angels.skills.locate.rank import code_facts
 
@@ -25,7 +23,8 @@ _CHAT_SYSTEM = """You are LFX Talent Angels, a concise assistant in a terminal.
 Warm and useful. You look up occupations and skills on a taxonomy map.
 Do not call yourself an ESCO desk or any other taxonomy's chatbot.
 Do not invent job titles or skills. Do not give personal career advice.
-Keep replies to 2–4 short sentences unless listing facts you were given."""
+Keep replies to 2–4 short sentences unless listing facts you were given.
+Write in the same language as the user's message."""
 
 _MAP_SYSTEM = """You are LFX Talent Angels. Phrase the FACT CARD for a terminal user.
 Rules:
@@ -50,7 +49,9 @@ Rules:
   say the card does not include it. Never state it from memory, and never
   correct yourself mid-answer.
 - ESCO and O*NET are separate taxonomies with no official link here: never say
-  a record in one maps to, equals, or is the equivalent of one in the other."""
+  a record in one maps to, equals, or is the equivalent of one in the other.
+- Write in the same language as the user's message; keep job and skill titles
+  exactly as the card writes them."""
 
 
 def phrase_chat(
@@ -68,18 +69,11 @@ def phrase_chat(
     messages = [
         Message(
             role="system",
-            # Recall sits between the memory blocks and the instructions: it is
-            # context about the user, like the profile and the notes, and not
-            # part of the brief. `""` unless a retriever is configured, so the
-            # prompt is byte-identical to before for everyone not opted in.
-            content=(
-                profile_prefix()
-                + notes_prefix()
-                + recall_prefix(user_text, retriever=episode_retriever())
-                + _CHAT_SYSTEM
-                + "\n"
-                + hint
-            ),
+            # No past-turn snippets here (or in any prompt that writes a
+            # reply): given them, the model told a user "you asked this before
+            # and the answer was X" about a conversation that never happened
+            # (2026-10-08). Recall questions are answered in code instead.
+            content=(profile_prefix() + notes_prefix() + _CHAT_SYSTEM + "\n" + hint),
         ),
         Message(role="user", content=user_text),
     ]
@@ -111,12 +105,7 @@ def phrase_map(
     messages = [
         Message(
             role="system",
-            content=(
-                profile_prefix()
-                + notes_prefix()
-                + recall_prefix(question, retriever=episode_retriever())
-                + _MAP_SYSTEM
-            ),
+            content=(profile_prefix() + notes_prefix() + _MAP_SYSTEM),
         ),
         Message(role="user", content=f"User: {question}\n\nFACT CARD:\n{card}"),
     ]

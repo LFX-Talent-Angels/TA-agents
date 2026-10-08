@@ -25,7 +25,7 @@ from talent_angels.memory.episodes import recent_episodes
 from talent_angels.memory.erase import erase_all, erase_session, erase_summary
 from talent_angels.memory.profile import (
     drop_standing_matching,
-    profile_facts,
+    profile_entries,
     profile_titles,
     write_goal,
     write_rejected,
@@ -44,9 +44,6 @@ from talent_angels.session.copy import (
     GREETING,
     HELP_INTRO,
     HELP_TEXT,
-    LOCATE_MISS,
-    MAP_NEXT_STEP,
-    PATHFIND_REDIRECT,
     UNKNOWN_COMMAND,
 )
 from talent_angels.session.followup import (
@@ -59,6 +56,7 @@ from talent_angels.session.followup import (
     skill_from_connect,
     skill_index_by_label,
 )
+from talent_angels.session.i18n import normalize_language, set_language, t
 from talent_angels.session.lead import lead, pick_intent
 from talent_angels.session.models import (
     AreaChoice,
@@ -137,6 +135,7 @@ class TurnRunner(Protocol):
         bound_nodes: dict[str, NodeRef] | None = None,
         force_capability: str | None = None,
         area: AreaRequest | None = None,
+        suite: str | None = None,
     ) -> TurnOutcome: ...
 
 
@@ -153,6 +152,7 @@ def handle_line(
     makes, from narrowing to phrasing, shares it.
     """
     with turn_deadline():
+        set_language(state.language)
         return _handle_line(state, text, runner=runner, llm_client=llm_client)
 
 
@@ -228,7 +228,14 @@ def _handle_line(
         )
         return _finish(state, text, said)
     if routed.kind == "pick":
-        return _handle_pick(state, text, routed.pick or 0, runner=runner, llm_client=llm_client)
+        return _handle_pick(
+            state,
+            text,
+            routed.pick or 0,
+            runner=runner,
+            llm_client=llm_client,
+            numbers=routed.picks,
+        )
     if is_expand_list(text) or (is_bare_yes(text) and can_expand_connect(state.last_result)):
         return _handle_expand(state, text, runner=runner)
     if routed.kind == "show_suite":
@@ -461,6 +468,14 @@ def _bound_title_hint(state: SessionState) -> str:
     return f" Bound title this session: {state.binding.node.pref_label}. Do not pretend you forgot."
 
 
+def _pick_example(pending: Sequence[PendingChoice]) -> str:
+    """ "1 11": the first number of each suite's list."""
+    firsts: dict[str, int] = {}
+    for choice in pending:
+        firsts.setdefault(choice.node.suite, choice.number)
+    return " ".join(str(number) for number in firsts.values())
+
+
 def _handle_pick(
     state: SessionState,
     text: str,
@@ -468,42 +483,87 @@ def _handle_pick(
     *,
     runner: TurnRunner,
     llm_client: LLMClient | None,
+    numbers: tuple[int, ...] = (),
 ) -> ChatReply:
-    if state.pending:
+    numbers = numbers or (number,)
+    if not state.pending:
+        if len(numbers) == 1 and can_expand_connect(state.last_result):
+            return _focus_skill(state, number, text, runner=runner, llm_client=llm_client)
         _record(state, "user", text)
-        try:
-            node = bind_pick(state.pending, number)
-        except ValueError:
-            if can_expand_connect(state.last_result):
-                return _focus_skill(
-                    state,
-                    number,
-                    text,
-                    runner=runner,
-                    llm_client=llm_client,
-                    record_user=False,
-                )
-            _record(state, "assistant", _BAD_PICK)
-            return _reply(state, _BAD_PICK)
+        _record(state, "assistant", _NO_PENDING)
+        return _reply(state, _NO_PENDING)
+    _record(state, "user", text)
+    try:
+        nodes = [bind_pick(state.pending, n) for n in numbers]
+    except ValueError:
+        if len(numbers) == 1 and can_expand_connect(state.last_result):
+            return _focus_skill(
+                state, number, text, runner=runner, llm_client=llm_client, record_user=False
+            )
+        _record(state, "assistant", _BAD_PICK)
+        return _reply(state, _BAD_PICK)
+    if len({node.suite for node in nodes}) != len(nodes):
+        message = t("one_per_suite", example=_pick_example(state.pending))
+        _record(state, "assistant", message)
+        return _reply(state, message)
+
+    picked_suites = {node.suite for node in nodes}
+    lists_before = list(state.pending)
+    for node in nodes:
         _set_bind(state, node)
         state.recent = remember(state.recent, node.pref_label)
         _apply_profile_intent(state.pending_profile_intent, node)
-        state.pending_profile_intent = None
-        state.areas = []
         _write_picker_event(
-            state,
-            query=_last_map_query(state),
-            pending=state.pending,
-            chosen_id=node.id,
+            state, query=_last_map_query(state), pending=lists_before, chosen_id=node.id
         )
-        message = f"Bound {node.pref_label}."
+    state.pending_profile_intent = None
+    state.areas = []
+
+    compares = [node for node in nodes if node.suite in state.pending_compare]
+    if not compares:
+        titles = [node.pref_label for node in nodes]
+        message = (
+            t("bound", title=titles[0])
+            if len(titles) == 1
+            else t("bound_many", titles=" · ".join(titles))
+        )
         _record(state, "assistant", message)
         return _reply(state, message)
-    if can_expand_connect(state.last_result):
-        return _focus_skill(state, number, text, runner=runner, llm_client=llm_client)
-    _record(state, "user", text)
-    _record(state, "assistant", _NO_PENDING)
-    return _reply(state, _NO_PENDING)
+
+    # The compares that waited on these picks: each runs in its own suite only,
+    # with the chosen title. A suite not picked keeps its list for later.
+    waiting = {
+        suite: value for suite, value in state.pending_compare.items() if suite not in picked_suites
+    }
+    other_lists = [c for c in lists_before if c.node.suite not in picked_suites]
+    # A snapshot: each resumed compare resets the session's own record.
+    to_resume = dict(state.pending_compare)
+    parts: list[str] = []
+    for node in compares:
+        first, second, side = to_resume[node.suite]
+        pair = (node.pref_label, second) if side == "1" else (first, node.pref_label)
+        reply = _handle_map(
+            state,
+            f"compare {pair[0]} and {pair[1]}",
+            runner=runner,
+            llm_client=llm_client,
+            suite=node.suite,
+        )
+        parts.append(reply.text)
+    if waiting and other_lists:
+        renumbered = _renumber_pending(other_lists, start=len(state.pending) + 1)
+        state.pending = [*state.pending, *renumbered]
+        state.pending_compare.update(waiting)
+        for suite in waiting:
+            choices = [c for c in renumbered if c.node.suite == suite]
+            if choices:
+                picker = render_picker("", choices, omitted=0, intro=" ", include_source=False)
+                block = f"{t('still_waiting', suite=suite_heading(suite))}\n\n{picker.strip()}"
+                parts.append(block)
+                _record(state, "assistant", block)
+    return _reply(
+        state, "\n\n---\n\n".join(parts), source_note=_source_note_for(tuple(state.last_results))
+    )
 
 
 def _focus_skill(
@@ -754,6 +814,7 @@ def _from_single_outcome(
         # narrow a list from several turns back.
         state.pending = []
         state.list_topic = ""
+        state.pending_compare = {}
     if "ambiguous" in result.warnings:
         pending = choices_from_result(result)
         omitted = max(0, len(result.nodes) - len(pending))
@@ -763,6 +824,7 @@ def _from_single_outcome(
         state.bindings.clear()
         searched = _searched_for(question, draft)
         state.list_topic = searched
+        _remember_pending_compare(state, draft, (result,))
         # What was understood and what happens next, written in code (lead.py).
         intro = lead(question, draft, [result])
         text = render_picker(searched, pending, omitted=omitted, intro=intro)
@@ -771,7 +833,7 @@ def _from_single_outcome(
         text = phrase_chat(
             llm_client,
             user_text=question,
-            fallback=LOCATE_MISS,
+            fallback=t("miss"),
             hint=(
                 "Search missed. One or two sentences. It is a miss, not a maybe. "
                 "Do not name occupations or skills as facts. Do not list related jobs."
@@ -784,7 +846,7 @@ def _from_single_outcome(
         _draft = getattr(outcome, "plan_draft", None)
         _apply_profile_intent(_draft.profile_intent if _draft else None, result.nodes[0])
         state.pending = []
-        record = f"{_map_answer(outcome.answer)}\n\n{MAP_NEXT_STEP}"
+        record = f"{_map_answer(outcome.answer)}\n\n{t('map_next')}"
         phrased = phrase_map(
             llm_client,
             question=question,
@@ -793,7 +855,7 @@ def _from_single_outcome(
             card=locate_card(result),
         )
         if uses_chat_phrasing(llm_client) and phrased.strip() != record.strip():
-            text = f"{phrased}\n\n{_locate_fact_line(result)}\n\n{MAP_NEXT_STEP}"
+            text = f"{phrased}\n\n{_locate_fact_line(result)}\n\n{t('map_next')}"
         else:
             text = record
     elif result.capability == "connect" and result.nodes:
@@ -801,7 +863,7 @@ def _from_single_outcome(
         _remember_topic(state, draft, result.nodes[0])
         fallback = _map_answer(outcome.answer)
         if not uses_chat_phrasing(llm_client):
-            fallback = f"{fallback}\n\n{MAP_NEXT_STEP}"
+            fallback = f"{fallback}\n\n{t('map_next')}"
         phrased = phrase_map(
             llm_client,
             question=question,
@@ -820,11 +882,28 @@ def _from_single_outcome(
         _remember_compared(state, draft, result)
         text = render_compare(result)
     elif any(w.startswith("capability_not_implemented") for w in result.warnings):
-        text = PATHFIND_REDIRECT
+        text = t("pathfind")
+    elif "no_subject" in result.warnings:
+        text = t("no_subject")
     else:
         text = _map_answer(outcome.answer)
     source = result.suite.upper() if result.suite else None
     return _reply(state, text, source_note=source)
+
+
+def _remember_pending_compare(
+    state: SessionState, draft: PlanDraft | None, results: Sequence[AgentResult]
+) -> None:
+    """Keep "compare X and Y" alive, per suite, while a side waits for a pick there."""
+    state.pending_compare = {}
+    if draft is None or not draft.subject or not draft.secondary_subject:
+        return
+    for result in results:
+        side = next(
+            (w.split(":", 1)[1] for w in result.warnings if w.startswith("compare_side:")), None
+        )
+        if side:
+            state.pending_compare[result.suite] = [draft.subject, draft.secondary_subject, side]
 
 
 def _with_areas(
@@ -941,17 +1020,15 @@ def _handle_narrow(
         if all(node.id != kept.id for kept in unique):
             unique.append(node)
     if not unique:
-        message = (
-            "None of the titles on the list fit that. Describe it another way, or name a title."
-        )
+        message = t("narrow_none")
         _record(state, "assistant", message)
         return _reply(state, message)
     choices = [PendingChoice(number=i, node=n) for i, n in enumerate(unique, start=1)]
     if chosen_areas and not options:
         names = ", ".join(f"**{a.label}**" for a in chosen_areas)
-        intro = f'{names}: titles matching "{chosen_areas[0].query}". Which one did you mean?'
+        intro = t("narrow_area", names=names, query=chosen_areas[0].query)
     else:
-        intro = f'These fit "{text.strip()}". Which one did you mean?'
+        intro = t("narrow_fit", text=text.strip())
     return _narrowed_reply(state, text, choices, intro)
 
 
@@ -1004,17 +1081,14 @@ def _handle_show(state: SessionState, text: str, token: str) -> ChatReply:
 
 
 def _profile_reply() -> str:
-    facts = profile_facts()
-    if not facts:
-        return (
-            'I don\'t have much about you yet. Tell me your current job ("I am a …") '
-            "or a job you're aiming for (\"my goal is …\") and I'll note it."
-        )
-    lines = "\n".join(f"- {fact}" for fact in facts)
-    return (
-        f"Here is what you've told me:\n\n{lines}\n\n"
-        "That is all I keep about you. Tell me your goal or current job to change it."
+    entries = profile_entries()
+    if not entries:
+        return t("profile_empty")
+    keys = {"goal": "profile_goal", "current": "profile_current", "rejected": "profile_rejected"}
+    lines = "\n".join(
+        f"- {t(keys[kind], suite=suite, title=titles)}" for kind, suite, titles in entries
     )
+    return f"{t('profile_head')}\n\n{lines}\n\n{t('profile_foot')}"
 
 
 def _handle_chat(
@@ -1062,6 +1136,9 @@ def _from_outcome(
     #: whenever another suite hit, while the footer still named both suites.
     miss_blocks: list[str] = []
     unique_cards: list[str] = []
+    #: The pick-list blocks themselves, kept by reference (never found by text,
+    #: which would break in any other language).
+    picker_blocks: list[str] = []
     pending_all: list[PendingChoice] = []
     unique_bind: NodeRef | None = None
     any_hit = False
@@ -1084,9 +1161,9 @@ def _from_outcome(
             # Written in code: a model call per suite for one fixed sentence
             # cost 4-9 seconds each and said nothing the list does not.
             intro = (
-                f"{heading} titles that fit your request. Which one did you mean?"
+                t("intro_guided", suite=heading)
                 if "guided" in result.warnings
-                else f'I found several {heading} matches for "{searched}". Which one did you mean?'
+                else t("intro_several", suite=heading, searched=searched)
             )
             picker = render_picker(
                 searched,
@@ -1096,10 +1173,11 @@ def _from_outcome(
                 include_source=False,
             )
             blocks.append(f"## {heading}\n\n{picker}")
+            picker_blocks.append(blocks[-1])
             pending_all.extend(choices)
             continue
         if any(w.startswith("capability_not_implemented") for w in result.warnings):
-            blocks.append(f"## {heading}\n\n{PATHFIND_REDIRECT}")
+            blocks.append(f"## {heading}\n\n{t('pathfind')}")
             all_miss = False
             continue
         if not result.nodes or "not_found" in result.warnings:
@@ -1109,7 +1187,7 @@ def _from_outcome(
                 f"No {heading} occupation is chosen yet. Pick one from its list or name one, "
                 "then ask again."
                 if {"bind_required", "no_subject"} & set(result.warnings)
-                else LOCATE_MISS
+                else t("miss")
             )
             blocks.append(f"## {heading}\n\n{message}")
             miss_blocks.append(f"## {heading}\n\n{message}")
@@ -1154,6 +1232,7 @@ def _from_outcome(
     if compared is not None:
         _remember_compared(state, _draft, compared)
 
+    _remember_pending_compare(state, _draft, results if pending_all else ())
     if pending_all:
         state.pending = pending_all
         state.list_topic = searched
@@ -1177,12 +1256,12 @@ def _from_outcome(
         # _hit_phrase() treats any zero-nodes result as "no hit" (GAP-PF was
         # closed for the tool loop and the single-suite reply in agent_loop.py /
         # _from_single_outcome; this merge path had the same bug independently).
-        text = PATHFIND_REDIRECT
+        text = t("pathfind")
     elif all_miss and not any_hit:
         text = phrase_chat(
             llm_client,
             user_text=question,
-            fallback=LOCATE_MISS,
+            fallback=t("miss"),
             hint=(
                 "Search missed. One or two sentences. It is a miss, not a maybe. "
                 "Do not name occupations or skills as facts. Do not list related jobs."
@@ -1206,9 +1285,8 @@ def _from_outcome(
         # next. Code-written, like the rest of a pick list (lead.py).
         text = lead(question, _draft, results)
         extras = [*unique_cards]
-        picker_blocks = [
-            block for block in blocks if "I won't pick" in block or "Which one" in block
-        ]
+        if len({choice.node.suite for choice in pending_all}) > 1:
+            picker_blocks.append(t("pick_per_suite", example=_pick_example(pending_all)))
         extras.extend(picker_blocks)
         extras.extend(miss_blocks)
         if extras:
@@ -1227,8 +1305,8 @@ def _from_outcome(
             text = synthesize(results, question=question, llm_client=llm_client)
         if has_connect and unique_cards and miss_blocks:
             text = text + "\n\n---\n\n" + "\n\n---\n\n".join(miss_blocks)
-        if unique_bind is not None and MAP_NEXT_STEP not in text:
-            text = f"{text}\n\n{MAP_NEXT_STEP}"
+        if unique_bind is not None and t("map_next") not in text:
+            text = f"{text}\n\n{t('map_next')}"
 
     return _reply(state, text, source_note=_source_note_for(results))
 
@@ -1329,8 +1407,12 @@ def _handle_map(
     llm_client: LLMClient | None,
     question: str | None = None,
     preface: str = "",
+    suite: str | None = None,
 ) -> ChatReply:
-    """``question`` replaces ``text`` for the search when code already rewrote it."""
+    """``question`` replaces ``text`` for the search when code already rewrote it.
+
+    ``suite`` limits the turn to one suite (a compare resumed after a pick there).
+    """
     _record(state, "user", text)
     bound = state.binding.node if state.binding is not None else None
     bound_nodes = dict(state.bindings) if state.bindings else None
@@ -1346,7 +1428,7 @@ def _handle_map(
                 del state.bindings[suite]
         if state.binding is not None and state.binding.node.pref_label.casefold() in gone:
             state.binding = None
-        message = f"Noted: {titles} is no longer saved as your current job."
+        message = t("noted_not_job", titles=titles)
         _record(state, "assistant", message)
         return _reply(state, message)
     pair = question or pair_followup(text, state.recent)
@@ -1360,7 +1442,17 @@ def _handle_map(
     if pair is None and bound_nodes and is_describe_followup(text, bound_nodes):
         return _describe_bound(state, text, llm_client=llm_client)
     question = pair or text
-    outcome = runner(question, bound_node=bound, bound_nodes=bound_nodes)
+    outcome = (
+        runner(question, bound_node=bound, bound_nodes=bound_nodes, suite=suite)
+        if suite
+        else runner(question, bound_node=bound, bound_nodes=bound_nodes)
+    )
+    spoken = normalize_language(getattr(getattr(outcome, "plan_draft", None), "language", None))
+    if spoken:
+        # The planner read this message's language: every code-written
+        # sentence of this reply, and the next lines, follow it.
+        state.language = spoken
+        set_language(spoken)
     # Semantic suite switch: LLM detected user wants to see cached results on a specific suite.
     # Re-render from state.last_results (previous turn) without running a new query.
     _draft = getattr(outcome, "plan_draft", None)

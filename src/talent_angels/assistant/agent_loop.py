@@ -21,11 +21,9 @@ from talent_angels.assistant.intent import (
 from talent_angels.assistant.llm_call import measure_complete
 from talent_angels.assistant.planning import ExecutionPlan, build_plan_for_capability
 from talent_angels.contracts import AgentResult, NodeRef
-from talent_angels.env import episode_retriever
 from talent_angels.llm import LLMClient, Message, ToolInvocation
 from talent_angels.memory.agent_notes import notes_prefix
 from talent_angels.memory.profile import profile_prefix
-from talent_angels.memory.retrieval import recall_prefix
 from talent_angels.runlog import StageUsage, ToolCall
 from talent_angels.skills.connect import connect
 from talent_angels.skills.connect.models import ConnectRequest
@@ -194,6 +192,7 @@ def _execute_tool(
             ),
             confidence=located.confidence if located is not None else None,
             locate_evidence=located.evidence if located is not None else (),
+            optional_rel_values=suite.suite_schema.optional_rel_values,
         )
 
     raise ValueError(f"unknown tool: {invocation.name}")
@@ -361,14 +360,7 @@ def run_tool_loop(
             # the user's actual question, and the bound-node site is exactly
             # where a user is most likely to repeat themselves. The question
             # alone is the query; the decoration is for the model, not the index.
-            content=(
-                profile_prefix()
-                + notes_prefix()
-                + recall_prefix(question, retriever=episode_retriever())
-                + LOOP_SYSTEM
-                + "\n"
-                + rel_hint
-            ),
+            content=(profile_prefix() + notes_prefix() + LOOP_SYSTEM + "\n" + rel_hint),
         ),
         Message(role="user", content=user_content),
     ]
@@ -489,6 +481,7 @@ def run_tool_loop(
             ),
             confidence=located.confidence,
             locate_evidence=located.evidence,
+            optional_rel_values=measured.suite_schema.optional_rel_values,
         )
         answer = summarize_result(last_result)
 

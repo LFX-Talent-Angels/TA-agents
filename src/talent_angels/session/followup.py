@@ -6,6 +6,7 @@ import re
 from collections.abc import Sequence
 
 from talent_angels.contracts import AgentResult, EdgeRef, NodeRef
+from talent_angels.session.i18n import plural, t
 
 _BARE_YES = re.compile(r"^\s*yes\s*[.!]?\s*$", re.IGNORECASE)
 
@@ -123,6 +124,16 @@ def relation_tags(edges: Sequence[EdgeRef], center_id: str) -> dict[str, str]:
     return tags
 
 
+def _skill_count(neighbors: Sequence[NodeRef], tags: dict[str, str]) -> str:
+    """ "24 skills and 416 tools": software is a tool, not a skill (O*NET)."""
+    tools = sum(1 for node in neighbors if tags.get(node.id) == "tool")
+    skills = len(neighbors) - tools
+    skill_part = f"{skills} {plural(skills, 'skill', 'skills')}"
+    if not tools:
+        return skill_part
+    return f"{skill_part} {t('and')} {tools} {plural(tools, 'tool', 'tools')}"
+
+
 def render_connect_list(result: AgentResult, *, cap: int = CONNECT_LIST_CAP) -> str:
     """Deterministic full-ish neighbor list. Not a model-authored curriculum."""
     if not result.nodes:
@@ -131,17 +142,15 @@ def render_connect_list(result: AgentResult, *, cap: int = CONNECT_LIST_CAP) -> 
     neighbors = result.nodes[1:]
     shown = neighbors[:cap]
     omitted = len(neighbors) - len(shown)
-    lines = [
-        f"**{center.pref_label}** — {len(neighbors)} skills on the map:",
-        "",
-    ]
     relations = relation_tags(result.edges, center.id)
+    counts = _skill_count(neighbors, relations)
+    lines = [t("connect_head", title=center.pref_label, counts=counts), ""]
     for index, node in enumerate(shown, start=1):
         tag = relations.get(node.id)
         suffix = f" ({tag})" if tag else ""
         lines.append(f"{index}. {node.pref_label}{suffix}")
     lines.append("")
     if omitted:
-        lines.append(f"{omitted} more are in query details.")
-    lines.append("These are graph neighbors, not a study plan.")
+        lines.append(t("connect_more", count=omitted))
+    lines.append(t("connect_foot"))
     return "\n".join(lines)

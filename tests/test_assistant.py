@@ -18,6 +18,7 @@ from talent_angels.assistant.agent_loop import LOOP_SYSTEM
 from talent_angels.assistant.llm_plan import PLAN_SYSTEM
 from talent_angels.llm.protocol import LLMResult, LLMUsage, Message
 from talent_angels.llm.stub_client import StubLLMClient  # noqa: E402
+from talent_angels.memory.episodes import recent_episodes
 from talent_angels.suites.schema import SuiteSchema
 from tests.fakes.taxonomy import (  # noqa: E402
     FakeCandidate,
@@ -385,6 +386,26 @@ def test_turn_separates_cache_and_runlog_by_suite(
     assert onet_cached.record.efficiency.result_cache_hit is True
     records = [json.loads(line) for line in runlog_path.read_text().splitlines()]
     assert [record["suite"] for record in records] == ["onet", "esco", "onet"]
+
+
+def test_run_turn_persists_an_episode(monkeypatch: pytest.MonkeyPatch, tmp_path) -> None:
+    monkeypatch.setenv("RUNLOG_PATH", str(tmp_path / "runlog.jsonl"))
+    monkeypatch.setenv("LLM_PROVIDER", "none")
+    memory_db = tmp_path / "memory.db"
+    monkeypatch.setattr("talent_angels.memory.episodes.DB_PATH", memory_db)
+
+    run_turn(
+        suite=FakeSuite(FakeToolResult(nodes=[_occupation_node()])),
+        suite_name="esco",
+        llm_client=StubLLMClient(),
+        question="software developer",
+        force_locate=True,
+    )
+
+    recorded = recent_episodes(db_path=memory_db)
+    assert len(recorded) == 1
+    assert recorded[0].question == "software developer"
+    assert recorded[0].suite == "esco"
 
 
 @pytest.mark.parametrize(

@@ -24,6 +24,7 @@ from talent_angels.assistant.planning import (
 from talent_angels.assistant.suite_select import named_unattached, select_suites
 from talent_angels.contracts import AgentResult, NodeRef
 from talent_angels.llm import LLMClient, LLMUsage
+from talent_angels.memory.episodes import record_episode
 from talent_angels.runlog import (
     EfficiencyInfo,
     GenAIUsage,
@@ -218,6 +219,7 @@ def _record_turn(
     )
     if persist:
         append_record(record)
+        record_episode(record)
     return record
 
 

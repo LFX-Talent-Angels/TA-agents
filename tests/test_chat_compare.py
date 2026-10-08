@@ -275,3 +275,45 @@ def test_two_picks_from_the_same_list_are_refused() -> None:
 def test_compare_groups_are_separate_paragraphs() -> None:
     text = render_compare(_chef_vs_baker())
     assert "\n\n**Only chef**" in text and "\n\n**Only baker**" in text
+
+
+def test_a_second_side_pick_list_names_the_second_side() -> None:
+    """compare_side:2 means the second subject needs a pick: its own list must
+    say so, not the first subject's name (the picker used to always show the
+    first subject, whichever side was actually ambiguous)."""
+    from talent_angels.assistant.llm_plan import PlanDraft
+
+    esco = AgentResult(
+        capability="locate",
+        suite="esco",
+        nodes=[
+            _node("esco", "general practitioner", "Occupation"),
+            _node("esco", "surgeon", "Occupation"),
+        ],
+        warnings=["ambiguous", "compare_side:2"],
+    )
+    onet = AgentResult(
+        capability="locate",
+        suite="onet",
+        nodes=[
+            _node("onet", "Family Medicine Physicians", "Occupation"),
+            _node("onet", "Surgeons", "Occupation"),
+        ],
+        warnings=["ambiguous", "compare_side:2"],
+    )
+
+    def runner(question: str, **_kwargs: object) -> TurnOutcome:
+        return TurnOutcome(
+            capability="connect",
+            plan=build_plan_for_capability("connect", suites=("esco", "onet")),
+            result=esco,
+            results=(esco, onet),
+            answer="ignored",
+            record=RunLogRecord(suite="esco,onet", plan=["connect"], question=question),
+            plan_draft=PlanDraft(target="connect", subject="nurse", secondary_subject="doctor"),
+        )
+
+    state = new_session()
+    reply = handle_line(state, "compare nurse and doctor", runner=runner)
+    assert 'matches for "doctor"' in reply.text
+    assert 'matches for "nurse"' not in reply.text

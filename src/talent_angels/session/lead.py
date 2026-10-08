@@ -35,6 +35,23 @@ def _on_the_map(candidate: str, results: Sequence[AgentResult]) -> bool:
     return False
 
 
+def compare_side_subject(result: AgentResult, draft: PlanDraft | None) -> str | None:
+    """Which named subject this result's compare-side ambiguity is about, if any.
+
+    A compare over two suites can have each suite ambiguous on a different
+    side, so the side must be read per result, never assumed from one shared
+    reading of the question.
+    """
+    if draft is None or not draft.subject or not draft.secondary_subject:
+        return None
+    side = next(
+        (w.split(":", 1)[1] for w in result.warnings if w.startswith("compare_side:")), None
+    )
+    if side is None:
+        return None
+    return draft.subject if side == "1" else draft.secondary_subject
+
+
 def understood(question: str, draft: PlanDraft | None, results: Sequence[AgentResult] = ()) -> str:
     """ "I read "SWE" as software engineer, software developer or web developer."
 
@@ -42,18 +59,12 @@ def understood(question: str, draft: PlanDraft | None, results: Sequence[AgentRe
     not have is never shown to the user.
     """
     said = question.strip().rstrip("?.!")
-    side = next(
-        (
-            w.split(":", 1)[1]
-            for result in results
-            for w in result.warnings
-            if w.startswith("compare_side:")
-        ),
+    waiting = next(
+        (subject for result in results if (subject := compare_side_subject(result, draft))),
         None,
     )
-    if side and draft is not None and draft.subject and draft.secondary_subject:
+    if waiting and draft is not None and draft.subject and draft.secondary_subject:
         # "compare nurse and doctor": say it is a compare, and which side needs a pick.
-        waiting = draft.subject if side == "1" else draft.secondary_subject
         return t(
             "compare_needs_pick",
             first=draft.subject,

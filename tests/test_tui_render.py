@@ -109,3 +109,33 @@ def test_render_welcome_and_assistant_use_color_when_terminal() -> None:
     assert "Hello from the map." in exported
     assert "source: ESCO" in exported
     assert "\x1b[" in exported  # ANSI, not extra LLM work
+
+
+def test_a_group_heading_never_swallows_the_next_choice() -> None:
+    from talent_angels.contracts import NodeRef
+    from talent_angels.session.models import PendingChoice
+    from talent_angels.session.picker import render_picker
+
+    def node(label: str) -> NodeRef:
+        return NodeRef(
+            id=label,
+            suite="esco",
+            source="esco",
+            source_id=label,
+            kind="Occupation",
+            pref_label=label,
+        )
+
+    text = render_picker(
+        "sde",
+        [
+            PendingChoice(
+                number=1, node=node("software developer"), group_label="Software developers"
+            ),
+            PendingChoice(
+                number=2, node=node("quality engineer"), group_label="Engineering professionals"
+            ),
+        ],
+        omitted=0,
+    )
+    assert "**Engineering professionals**\n\n2. quality engineer" in text

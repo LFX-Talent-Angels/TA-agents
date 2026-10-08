@@ -60,6 +60,9 @@ def render_picker(
                 if lines[-1] != "":
                     lines.append("")
                 lines.append(f"**{choice.group_label}**")
+                # And a blank line after: Markdown folds "2. x" straight under a
+                # paragraph into it ("Engineering professionals 2. quality engineer").
+                lines.append("")
             lines.append(f"{choice.number}. {choice.node.pref_label}")
         lines.append("")
         first = pending[0].number

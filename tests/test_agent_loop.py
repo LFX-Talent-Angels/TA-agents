@@ -636,3 +636,42 @@ def test_compact_result_truncates_neighbors_but_keeps_counts() -> None:
     assert payload["omitted_edges"] == 12
     assert len(payload["nodes"]) == 8
     assert len(payload["edges"]) == 8
+
+
+def test_loop_is_told_the_planners_english_subject() -> None:
+    client = ScriptedToolClient(
+        [LLMResult(text='{"final":"done"}', provider="litellm", model="m", usage=LLMUsage())]
+    )
+    run_tool_loop(
+        question="enfermero",
+        suite=FakeSuite(FakeToolResult(warnings=["not_found"])),
+        suite_name="esco",
+        llm_client=client,
+        kind="occupation",
+        subject_hint="nurse",
+    )
+    user_message = client.calls[0][0][1].content
+    assert user_message.endswith("kind=occupation\nsubject=nurse")
+
+
+def test_loop_with_a_bound_node_gets_no_subject_line() -> None:
+    client = ScriptedToolClient(
+        [LLMResult(text='{"final":"done"}', provider="litellm", model="m", usage=LLMUsage())]
+    )
+    bound = NodeRef(
+        id="esco:occupation:chef",
+        suite="esco",
+        source="esco",
+        source_id="chef",
+        kind="Occupation",
+        pref_label="chef",
+    )
+    run_tool_loop(
+        question="what skills does it need?",
+        suite=FakeSuite(FakeToolResult(warnings=["not_found"])),
+        suite_name="esco",
+        llm_client=client,
+        bound_node=bound,
+        subject_hint="chef",
+    )
+    assert "subject=" not in client.calls[0][0][1].content

@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import re
+
 from talent_angels.contracts import AgentResult, EdgeRef, NodeRef
 from talent_angels.skills.connect.reveal import ConnectableSuite
 from talent_angels.skills.locate.resolve import _node_ref
@@ -33,7 +35,8 @@ def lexical_rank(query: str, node: NodeRef) -> tuple[int, int, str]:
         tier = 0
     elif q in tokens:
         tier = 1
-    elif q and q in pref:
+    elif q and re.search(rf"(?<![a-z0-9]){re.escape(q)}", pref):
+        # From the start of a word: "it manager" is not inside "credit manager".
         tier = 2
     elif q in alts:
         tier = 3
@@ -108,13 +111,21 @@ def group_and_sort_locate(
         if parent is not None:
             parents[node.id] = parent
 
+    # Hits with no lexical match came from the suite's meaning search; its
+    # order is the relevance signal, so it replaces label length for them.
+    position = {node.id: index for index, node in enumerate(result.nodes)}
+
+    def sort_key(node: NodeRef) -> tuple[int, int, str]:
+        tier, length, node_id = lexical_rank(query, node)
+        return (tier, position[node.id] if tier == 5 else length, node_id)
+
     def group_id(node: NodeRef) -> str:
         parent = parents.get(node.id)
         return parent.id if parent is not None else ""
 
     def group_score(gid: str) -> tuple[int, int, str, str]:
         members = [node for node in result.nodes if group_id(node) == gid]
-        best = min(lexical_rank(query, node) for node in members)
+        best = min(sort_key(node) for node in members)
         label = (
             parents[members[0].id].pref_label.casefold()
             if gid and members[0].id in parents
@@ -127,16 +138,27 @@ def group_and_sort_locate(
     }
     ordered = sorted(
         result.nodes,
-        key=lambda node: (group_order[group_id(node)], lexical_rank(query, node)),
+        key=lambda node: (group_order[group_id(node)], sort_key(node)),
     )
     top_tier = lexical_rank(query, ordered[0])[0]
-    second_tier = lexical_rank(query, ordered[1])[0]
+    # The runner-up is the best of the rest, not the next node in group order:
+    # a weak member of the winning group must not hide an equal hit elsewhere.
+    second_tier = min(lexical_rank(query, node)[0] for node in ordered[1:])
     # A hit that names the query in its preferred label (tiers 0-2) or as an
     # exact alias (3), and beats the next hit's tier, is unique enough — extra
     # full-text noise is not a picker. An alias *substring* (4) or a hit with no
     # lexical match at all (5) is never auto-selected: "nurse" must not resolve
     # to "chief executive officer" because one alias is "senior nurse manager".
-    unique_enough = top_tier <= _MAX_AUTO_SELECT_TIER and top_tier < second_tier
+    # A truncated pool may have cut an equal hit, so only an exact title wins it.
+    # The suite flagged an alias its meaning search disagrees with ("AI
+    # engineer" as an alias of an insemination technician): the user picks.
+    truncated = "truncated" in result.warnings
+    unique_enough = (
+        top_tier <= _MAX_AUTO_SELECT_TIER
+        and top_tier < second_tier
+        and not (truncated and top_tier > 0)
+        and "alias_unconfirmed" not in result.warnings
+    )
     if unique_enough:
         extra = len(ordered) - 1
         winner = ordered[0]

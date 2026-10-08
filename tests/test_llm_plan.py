@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from talent_angels.assistant.llm_plan import (
+    PLAN_SYSTEM,
     interpret_question,
     parse_plan_text,
     uses_llm_planner,
@@ -111,3 +112,7 @@ def test_invalid_planner_json_falls_back_to_heuristic() -> None:
     assert interpreted.plan.capabilities == ("locate", "connect")
     assert interpreted.stage is not None
     assert interpreted.stage.output_tokens == 7
+
+
+def test_planner_prompt_asks_for_english_subjects() -> None:
+    assert '("enfermero" → "nurse")' in PLAN_SYSTEM

@@ -42,6 +42,8 @@ How to choose target:
 If the user asks for skills, neighbors, or what someone needs, target MUST be
 connect, not locate. Put only the occupation or skill name in subject — never
 the whole sentence. "Be" and "become" are the same wrapper.
+The map's titles are in English: write subject and secondary_subject in English,
+translating them if the user wrote another language ("enfermero" → "nurse").
 
 Do not invent node IDs. Do not write Cypher.
 

@@ -10,6 +10,7 @@ import re
 
 from talent_angels.assistant.answer import CONNECT_PREVIEW_CAP
 from talent_angels.assistant.llm_call import measure_complete
+from talent_angels.assistant.prose import prose_only
 from talent_angels.contracts import AgentResult, NodeRef
 from talent_angels.env import episode_retriever
 from talent_angels.llm import LLMClient, Message
@@ -27,7 +28,16 @@ Keep replies to 2–4 short sentences unless listing facts you were given."""
 
 _MAP_SYSTEM = """You are LFX Talent Angels. Phrase the FACT CARD for a terminal user.
 Rules:
+- First reply to the user's own words in one sentence, then the facts; 2-4
+  sentences in total. If they only named a title, just describe it. Never
+  assume a goal or a wish the user did not state.
 - Cite only titles, skills, and description written in the card. Do not invent any.
+- Do not invent people, names, demand, pay, outlook, or study advice. Say nothing
+  about the user unless the profile block above states it.
+- The profile may already hold what the user says in this message. Never claim
+  something was noted or said earlier unless a past-turns block shows it.
+- Write plain sentences only: no tables, lists, headings, or code. The app shows
+  the full list itself; name at most three skills as examples.
 - If a description is on the card, paraphrase it in 1-2 sentences. Do not add duties.
 - Do not list skills unless they are on the card. Locate cards have no skills.
 - Never write the product name (not "LFX", not "Talent Angels").
@@ -74,7 +84,7 @@ def phrase_chat(
     text = (result.text or "").strip()
     if not text:
         return fallback
-    if mode == "intro" and _looks_like_numbered_list(text):
+    if mode == "intro" and (_looks_like_numbered_list(text) or _too_long_for_intro(text)):
         return fallback
     if mode == "miss" and _looks_like_invented_miss(text):
         return fallback
@@ -108,7 +118,7 @@ def phrase_map(
         llm_result, _ = measure_complete(client, messages, stage="phrase")
     except RuntimeError:
         return fallback
-    text = (llm_result.text or "").strip()
+    text = prose_only(llm_result.text or "")
     if not text:
         return fallback
     if _looks_like_numbered_list(text):
@@ -156,6 +166,7 @@ def connect_card(result: AgentResult, *, shown: int = CONNECT_PREVIEW_CAP) -> st
     lines.extend(
         [
             "shown skills: " + "; ".join(skills) if skills else "shown skills: none",
+            "the app lists these skills itself; do not list them",
             "tags in parentheses (essential/optional/tool) come from the graph — "
             "repeat them as given, do not invent a tag for a skill that has none",
         ]
@@ -226,6 +237,15 @@ def _has_extra_job_title(text: str, result: AgentResult) -> bool:
 def _names_the_product(text: str) -> bool:
     lowered = text.casefold()
     return "lfx" in lowered or "talent angels" in lowered
+
+
+#: A pick-list intro is one sentence; a longer one has started answering for
+#: the user (live: an invented side-by-side table of "typical tasks").
+_INTRO_MAX_CHARS = 200
+
+
+def _too_long_for_intro(text: str) -> bool:
+    return len(text) > _INTRO_MAX_CHARS or "|" in text or "\n" in text.strip()
 
 
 def _looks_like_numbered_list(text: str) -> bool:

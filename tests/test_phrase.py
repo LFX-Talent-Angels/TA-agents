@@ -363,3 +363,109 @@ def test_phrase_map_no_profile_when_user_md_absent(tmp_path: Path) -> None:
     system_msg = client.calls[0][0].content
     assert "STANDING" not in system_msg
     assert "GOAL" not in system_msg
+
+
+def _connect_result() -> AgentResult:
+    skills = [
+        NodeRef(
+            id=f"esco:skill:{i}",
+            suite="esco",
+            source="esco",
+            source_id=f"s{i}",
+            kind="Skill",
+            pref_label=f"skill {i}",
+        )
+        for i in range(4)
+    ]
+    return AgentResult(capability="connect", suite="esco", nodes=[_occ(), *skills], edges=[])
+
+
+def test_connect_phrasing_drops_a_bullet_list_the_table_already_shows() -> None:
+    reply = (
+        "You want the skills of a software developer. Here they are:\n"
+        "- skill 0\n- skill 1\n• skill 2\n* skill 3\n"
+        "Ask for optional skills next."
+    )
+    text = phrase_map(
+        ScriptedClient(reply),
+        question="what skills does a software developer need?",
+        result=_connect_result(),
+        fallback="fallback",
+        card=connect_card(_connect_result()),
+    )
+    assert "skill 0" not in text
+    assert text.startswith("You want the skills of a software developer.")
+    assert "Ask for optional skills next." in text
+
+
+def test_connect_phrasing_keeps_a_short_mention() -> None:
+    reply = "A software developer's map includes:\n- skill 0\n- skill 1"
+    text = phrase_map(
+        ScriptedClient(reply),
+        question="skills?",
+        result=_connect_result(),
+        fallback="fallback",
+        card=connect_card(_connect_result()),
+    )
+    assert text == reply
+
+
+def test_map_prompt_answers_first_and_forbids_invented_people() -> None:
+    client = ScriptedClient("ok")
+    phrase_map(
+        client,
+        question="show only ESCO results for electrician",
+        result=_connect_result(),
+        fallback="fallback",
+        card=connect_card(_connect_result()),
+    )
+    system = client.calls[0][0].content
+    assert "First reply to the user's own words" in system
+    assert "Do not invent people" in system
+
+
+def test_connect_phrasing_drops_a_table_the_list_already_shows() -> None:
+    reply = "Software developers code.\n\n| Skill | Tag |\n|---|---|\n| skill 0 | essential |"
+    text = phrase_map(
+        ScriptedClient(reply),
+        question="what skills does a software developer need?",
+        result=_connect_result(),
+        fallback="fallback",
+        card=connect_card(_connect_result()),
+    )
+    assert text == "Software developers code."
+
+
+def test_picker_intro_that_answers_for_the_user_falls_back() -> None:
+    reply = (
+        "Here they are side by side:\n\n| | Baker | Cook |\n|---|---|---|\n"
+        "| Typical tasks | doughs | food |\n\nWhich one did you mean?"
+    )
+    text = phrase_chat(
+        _Scripted(reply),
+        user_text="compare it with a cook",
+        fallback="pick one",
+        hint="",
+        mode="intro",
+    )
+    assert text == "pick one"
+
+
+def test_picker_intro_of_one_sentence_is_kept() -> None:
+    reply = "I found a few cooks on the map. Which one did you mean?"
+    text = phrase_chat(
+        _Scripted(reply), user_text="cook", fallback="pick one", hint="", mode="intro"
+    )
+    assert text == reply
+
+
+def test_map_prompt_forbids_claiming_an_earlier_conversation() -> None:
+    client = ScriptedClient("ok")
+    phrase_map(
+        client,
+        question="I want to become a web developer",
+        result=_connect_result(),
+        fallback="fallback",
+        card=connect_card(_connect_result()),
+    )
+    assert "Never claim\n  something was noted or said earlier" in client.calls[0][0].content

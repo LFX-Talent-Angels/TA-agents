@@ -1914,3 +1914,19 @@ def test_intent_verbs_do_not_make_unrelated_turns_match() -> None:
     from talent_angels.memory.fts_retriever import _STOPWORDS
 
     assert {"want", "wants", "wanted"} <= _STOPWORDS
+
+
+def test_a_new_user_with_nothing_recorded_gets_no_warning(
+    db_path: Path, caplog: pytest.LogCaptureFixture
+) -> None:
+    """The first turn of a new install: an empty database, no index yet.
+
+    Live, this printed a traceback into the chat on a new user's first question.
+    There is nothing to recall and nothing to rebuild, so it is not worth a word.
+    """
+    sqlite3.connect(db_path).close()
+
+    with caplog.at_level(logging.WARNING, logger=LOGGER):
+        assert _search(db_path, "nurse") == []
+
+    assert not _warnings(caplog)

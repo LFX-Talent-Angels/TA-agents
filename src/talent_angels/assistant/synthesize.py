@@ -12,6 +12,7 @@ from collections.abc import Sequence
 from talent_angels.assistant.answer import NO_SUBJECT, PATHFIND_UNAVAILABLE, is_pathfind_unavailable
 from talent_angels.assistant.llm_call import measure_complete
 from talent_angels.assistant.merge import suite_heading
+from talent_angels.assistant.prose import prose_only
 from talent_angels.contracts import AgentResult
 from talent_angels.env import episode_retriever
 from talent_angels.llm import LLMClient, Message
@@ -37,14 +38,21 @@ def _phrasing_is_unsafe(text: str) -> bool:
 
 _SYNTH_SYSTEM = """You phrase taxonomy map facts for a terminal user.
 Rules:
-- Use only titles, ids, skills, and descriptions in the FACT CARD.
+- First reply to the user's own words in one sentence; never assume a goal or
+  a wish the user did not state.
+- Use only titles, skills, and descriptions in the FACT CARD.
+- Do not invent demand, pay, outlook, or study advice.
+- The profile may already hold what the user says in this message. Never claim
+  something was noted or said earlier unless a past-turns block shows it.
 - Do not say two records are the same id or the same node.
-- If two maps name similar titles, say they are separate official records.
+- If two maps name similar titles, say once, in a short clause, that they are
+  separate official records; do not repeat it.
 - Do not invent occupations, skills, or people.
 - Do not paste node ids (esco:…, onet:…). Titles only.
 - Do not suggest pathfinding, filtering by category, or any interactive capability.
 - Do not write LFX or Talent Angels.
-- 3-6 sentences. Then stop; Sources used is printed in code."""
+- 2-4 plain sentences: no tables, lists, headings, or code. Then stop; Sources
+  used is printed in code."""
 
 
 def sources_line(
@@ -227,7 +235,7 @@ def synthesize(
         llm_result, _ = measure_complete(llm_client, messages, stage="synthesize")
     except RuntimeError:
         return fallback
-    text = (llm_result.text or "").strip()
+    text = prose_only(llm_result.text or "")
     if not text or _phrasing_is_unsafe(text):
         return fallback
     sources = sources_line(results, extra_warnings=extra_warnings)

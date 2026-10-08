@@ -70,7 +70,10 @@ def test_parse_command_table() -> None:
     assert parse_command("/save").argument is None
     assert parse_command("/resume last").argument == "last"
     assert parse_command("/resume").argument == "last"
-    assert parse_command("/clear").name == "clear"
+    assert parse_command("/clear").name == "reset"
+    assert parse_command("/reset").name == "reset"
+    assert parse_command("/reset-all").name == "reset-all"
+    assert parse_command("/forget").name == "reset-all"
     assert parse_command(" /help ").name == "help"
     assert parse_command("developer") is None
     with pytest.raises(UnknownCommand):

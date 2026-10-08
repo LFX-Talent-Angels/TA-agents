@@ -13,6 +13,7 @@ from talent_angels.assistant.answer import (
 from talent_angels.assistant.intent import (
     CAPABILITY_CONNECT,
     CAPABILITY_LOCATE,
+    CAPABILITY_PATHFIND,
     Capability,
     classify_capability,
     extract_locate_subject,
@@ -20,9 +21,11 @@ from talent_angels.assistant.intent import (
 from talent_angels.assistant.llm_call import measure_complete
 from talent_angels.assistant.planning import ExecutionPlan, build_plan_for_capability
 from talent_angels.contracts import AgentResult, NodeRef
+from talent_angels.env import episode_retriever
 from talent_angels.llm import LLMClient, Message, ToolInvocation
 from talent_angels.memory.agent_notes import notes_prefix
 from talent_angels.memory.profile import profile_prefix
+from talent_angels.memory.retrieval import recall_prefix
 from talent_angels.runlog import StageUsage, ToolCall
 from talent_angels.skills.connect import connect
 from talent_angels.skills.connect.models import ConnectRequest
@@ -298,6 +301,25 @@ def run_tool_loop(
     kind: str | None = None,
     bound_node: NodeRef | None = None,
 ) -> AgentLoopOutcome:
+    intent = classify_capability(question)
+    if intent == CAPABILITY_PATHFIND:
+        # Mirror _dispatch_heuristic's guard exactly (assistant/graph.py): a
+        # pathfind-intent question must never reach the model or the suite.
+        # Without this, LOOP_SYSTEM only knows search_nodes/get_neighbors, so
+        # the model would search one of the two named occupations and return
+        # a plain skills list instead of an honest "not implemented" — the
+        # gate the heuristic path had was silently absent on this path.
+        result = AgentResult(
+            capability=CAPABILITY_PATHFIND,
+            suite=suite_name,
+            warnings=["capability_not_implemented:pathfind"],
+        )
+        return AgentLoopOutcome(
+            answer=summarize_result(result),
+            result=result,
+            plan=build_plan_for_capability(CAPABILITY_PATHFIND, suites=(suite_name,)),
+        )
+
     measured = MeasuredSuite(suite)
     user_content = question if kind is None else f"{question}\nkind={kind}"
     if bound_node is not None:
@@ -310,7 +332,23 @@ def run_tool_loop(
     messages: list[Message] = [
         Message(
             role="system",
-            content=profile_prefix() + notes_prefix() + LOOP_SYSTEM + "\n" + rel_hint,
+            # Recalled on `question`, never on `user_content`. The terms are
+            # joined with OR, so this is not about a query being unsatisfiable —
+            # it is about what the query is *about*. `user_content` carries
+            # `kind=occupation` and `[Currently bound: …]`, and every one of
+            # those words is in the index, so OR-ing them in returns the turns
+            # that happen to mention "kind" or "bound" alongside the ones about
+            # the user's actual question, and the bound-node site is exactly
+            # where a user is most likely to repeat themselves. The question
+            # alone is the query; the decoration is for the model, not the index.
+            content=(
+                profile_prefix()
+                + notes_prefix()
+                + recall_prefix(question, retriever=episode_retriever())
+                + LOOP_SYSTEM
+                + "\n"
+                + rel_hint
+            ),
         ),
         Message(role="user", content=user_content),
     ]
@@ -319,7 +357,6 @@ def run_tool_loop(
     located: AgentResult | None = None
     answer = ""
     searched: set[tuple[str, str | None]] = set()
-    intent = classify_capability(question)
     stop_tools = False
 
     for round_index in range(MAX_TOOL_ROUNDS):

@@ -11,6 +11,11 @@ dependencies = [
   # Stack per TA-workspace ADR-0005 (versions pinned as code lands).
   "pydantic>=2",
   "langgraph",
+  # Durable checkpointer for the API's per-session threads. The graph state a
+  # `thread_id` enables has to outlive the process, and langgraph's own
+  # MemorySaver (what this replaced) is a dict that dies with the interpreter.
+  # Pulls aiosqlite + sqlite-vec transitively; neither is imported here.
+  "langgraph-checkpoint-sqlite",
   "anthropic",
   "fastapi",
   "uvicorn",

@@ -5,7 +5,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Literal
 
-CommandName = Literal["help", "quit", "save", "resume", "clear", "reset", "model", "login"]
+CommandName = Literal["help", "quit", "save", "resume", "reset", "reset-all", "model", "login"]
 
 _NAME_MAP: dict[str, CommandName] = {
     "help": "help",
@@ -13,8 +13,14 @@ _NAME_MAP: dict[str, CommandName] = {
     "exit": "quit",
     "save": "save",
     "resume": "resume",
-    "clear": "clear",
+    # `/clear` is kept as an alias for the session-scoped `/reset`: it did
+    # exactly that job before the two scopes were named, and removing it would
+    # break muscle memory for no gain.
+    "clear": "reset",
     "reset": "reset",
+    "reset-all": "reset-all",
+    "resetall": "reset-all",
+    "forget": "reset-all",
     "model": "model",
     "login": "login",
 }

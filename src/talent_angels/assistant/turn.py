@@ -24,6 +24,7 @@ from talent_angels.assistant.planning import (
 from talent_angels.assistant.suite_select import named_unattached, select_suites
 from talent_angels.contracts import AgentResult, NodeRef
 from talent_angels.llm import LLMClient, LLMUsage
+from talent_angels.memory.cache import CachedSuite
 from talent_angels.memory.episodes import record_episode
 from talent_angels.runlog import (
     EfficiencyInfo,
@@ -89,6 +90,18 @@ def _bound_for_suite(
     if bound_node is not None and not bound_nodes:
         return bound_node
     return None
+
+
+def _served_from_cache(suite: object) -> bool:
+    """True when this suite's turn read from the persistent neighbor cache.
+
+    Reports memory.cache.CachedSuite into the run-log's existing
+    ``result_cache_hit`` field so ``ta-agent report`` shows the cache working.
+    Without this the cache is invisible: a wrapper that silently stopped
+    matching would look exactly like a cold one — which is how a fully tested
+    cache layer went a whole sprint without ever firing in production.
+    """
+    return isinstance(suite, CachedSuite) and suite.hits > 0
 
 
 def _locate_one(
@@ -361,6 +374,7 @@ def run_turn(
                     llm_client=llm_client,
                     bound_node=_bound_for_suite(name, bound_node, bound_nodes),
                 )
+                cache_hit = cache_hit or _served_from_cache(runtime.suite)
                 collected.append(dispatched["result"])
                 tools.extend(dispatched.get("tool_calls") or [])
                 stages.extend((dispatched.get("llm_stages") or [])[prior_stages_len:])

@@ -135,6 +135,7 @@ class TurnRunner(Protocol):
         bound_nodes: dict[str, NodeRef] | None = None,
         force_capability: str | None = None,
         area: AreaRequest | None = None,
+        suite: str | None = None,
     ) -> TurnOutcome: ...
 
 
@@ -227,7 +228,14 @@ def _handle_line(
         )
         return _finish(state, text, said)
     if routed.kind == "pick":
-        return _handle_pick(state, text, routed.pick or 0, runner=runner, llm_client=llm_client)
+        return _handle_pick(
+            state,
+            text,
+            routed.pick or 0,
+            runner=runner,
+            llm_client=llm_client,
+            numbers=routed.picks,
+        )
     if is_expand_list(text) or (is_bare_yes(text) and can_expand_connect(state.last_result)):
         return _handle_expand(state, text, runner=runner)
     if routed.kind == "show_suite":
@@ -460,6 +468,14 @@ def _bound_title_hint(state: SessionState) -> str:
     return f" Bound title this session: {state.binding.node.pref_label}. Do not pretend you forgot."
 
 
+def _pick_example(pending: Sequence[PendingChoice]) -> str:
+    """ "1 11": the first number of each suite's list."""
+    firsts: dict[str, int] = {}
+    for choice in pending:
+        firsts.setdefault(choice.node.suite, choice.number)
+    return " ".join(str(number) for number in firsts.values())
+
+
 def _handle_pick(
     state: SessionState,
     text: str,
@@ -467,54 +483,87 @@ def _handle_pick(
     *,
     runner: TurnRunner,
     llm_client: LLMClient | None,
+    numbers: tuple[int, ...] = (),
 ) -> ChatReply:
-    if state.pending:
+    numbers = numbers or (number,)
+    if not state.pending:
+        if len(numbers) == 1 and can_expand_connect(state.last_result):
+            return _focus_skill(state, number, text, runner=runner, llm_client=llm_client)
         _record(state, "user", text)
-        try:
-            node = bind_pick(state.pending, number)
-        except ValueError:
-            if can_expand_connect(state.last_result):
-                return _focus_skill(
-                    state,
-                    number,
-                    text,
-                    runner=runner,
-                    llm_client=llm_client,
-                    record_user=False,
-                )
-            _record(state, "assistant", _BAD_PICK)
-            return _reply(state, _BAD_PICK)
+        _record(state, "assistant", _NO_PENDING)
+        return _reply(state, _NO_PENDING)
+    _record(state, "user", text)
+    try:
+        nodes = [bind_pick(state.pending, n) for n in numbers]
+    except ValueError:
+        if len(numbers) == 1 and can_expand_connect(state.last_result):
+            return _focus_skill(
+                state, number, text, runner=runner, llm_client=llm_client, record_user=False
+            )
+        _record(state, "assistant", _BAD_PICK)
+        return _reply(state, _BAD_PICK)
+    if len({node.suite for node in nodes}) != len(nodes):
+        message = t("one_per_suite", example=_pick_example(state.pending))
+        _record(state, "assistant", message)
+        return _reply(state, message)
+
+    picked_suites = {node.suite for node in nodes}
+    lists_before = list(state.pending)
+    for node in nodes:
         _set_bind(state, node)
         state.recent = remember(state.recent, node.pref_label)
         _apply_profile_intent(state.pending_profile_intent, node)
-        state.pending_profile_intent = None
-        state.areas = []
         _write_picker_event(
-            state,
-            query=_last_map_query(state),
-            pending=state.pending,
-            chosen_id=node.id,
+            state, query=_last_map_query(state), pending=lists_before, chosen_id=node.id
         )
-        message = t("bound", title=node.pref_label)
-        if len(state.pending_compare) == 3:
-            # The compare that needed this pick: run it with the chosen title.
-            first, second, side = state.pending_compare
-            state.pending_compare = []
-            pair = (node.pref_label, second) if side == "1" else (first, node.pref_label)
-            return _handle_map(
-                state,
-                f"compare {pair[0]} and {pair[1]}",
-                runner=runner,
-                llm_client=llm_client,
-                preface=message,
-            )
+    state.pending_profile_intent = None
+    state.areas = []
+
+    compares = [node for node in nodes if node.suite in state.pending_compare]
+    if not compares:
+        titles = [node.pref_label for node in nodes]
+        message = (
+            t("bound", title=titles[0])
+            if len(titles) == 1
+            else t("bound_many", titles=" · ".join(titles))
+        )
         _record(state, "assistant", message)
         return _reply(state, message)
-    if can_expand_connect(state.last_result):
-        return _focus_skill(state, number, text, runner=runner, llm_client=llm_client)
-    _record(state, "user", text)
-    _record(state, "assistant", _NO_PENDING)
-    return _reply(state, _NO_PENDING)
+
+    # The compares that waited on these picks: each runs in its own suite only,
+    # with the chosen title. A suite not picked keeps its list for later.
+    waiting = {
+        suite: value for suite, value in state.pending_compare.items() if suite not in picked_suites
+    }
+    other_lists = [c for c in lists_before if c.node.suite not in picked_suites]
+    # A snapshot: each resumed compare resets the session's own record.
+    to_resume = dict(state.pending_compare)
+    parts: list[str] = []
+    for node in compares:
+        first, second, side = to_resume[node.suite]
+        pair = (node.pref_label, second) if side == "1" else (first, node.pref_label)
+        reply = _handle_map(
+            state,
+            f"compare {pair[0]} and {pair[1]}",
+            runner=runner,
+            llm_client=llm_client,
+            suite=node.suite,
+        )
+        parts.append(reply.text)
+    if waiting and other_lists:
+        renumbered = _renumber_pending(other_lists, start=len(state.pending) + 1)
+        state.pending = [*state.pending, *renumbered]
+        state.pending_compare.update(waiting)
+        for suite in waiting:
+            choices = [c for c in renumbered if c.node.suite == suite]
+            if choices:
+                picker = render_picker("", choices, omitted=0, intro=" ", include_source=False)
+                block = f"{t('still_waiting', suite=suite_heading(suite))}\n\n{picker.strip()}"
+                parts.append(block)
+                _record(state, "assistant", block)
+    return _reply(
+        state, "\n\n---\n\n".join(parts), source_note=_source_note_for(tuple(state.last_results))
+    )
 
 
 def _focus_skill(
@@ -765,7 +814,7 @@ def _from_single_outcome(
         # narrow a list from several turns back.
         state.pending = []
         state.list_topic = ""
-        state.pending_compare = []
+        state.pending_compare = {}
     if "ambiguous" in result.warnings:
         pending = choices_from_result(result)
         omitted = max(0, len(result.nodes) - len(pending))
@@ -845,20 +894,16 @@ def _from_single_outcome(
 def _remember_pending_compare(
     state: SessionState, draft: PlanDraft | None, results: Sequence[AgentResult]
 ) -> None:
-    """Keep "compare X and Y" alive while one side waits for the user's pick."""
-    side = next(
-        (
-            warning.split(":", 1)[1]
-            for result in results
-            for warning in result.warnings
-            if warning.startswith("compare_side:")
-        ),
-        None,
-    )
-    if side and draft is not None and draft.subject and draft.secondary_subject:
-        state.pending_compare = [draft.subject, draft.secondary_subject, side]
-    else:
-        state.pending_compare = []
+    """Keep "compare X and Y" alive, per suite, while a side waits for a pick there."""
+    state.pending_compare = {}
+    if draft is None or not draft.subject or not draft.secondary_subject:
+        return
+    for result in results:
+        side = next(
+            (w.split(":", 1)[1] for w in result.warnings if w.startswith("compare_side:")), None
+        )
+        if side:
+            state.pending_compare[result.suite] = [draft.subject, draft.secondary_subject, side]
 
 
 def _with_areas(
@@ -1240,6 +1285,8 @@ def _from_outcome(
         # next. Code-written, like the rest of a pick list (lead.py).
         text = lead(question, _draft, results)
         extras = [*unique_cards]
+        if len({choice.node.suite for choice in pending_all}) > 1:
+            picker_blocks.append(t("pick_per_suite", example=_pick_example(pending_all)))
         extras.extend(picker_blocks)
         extras.extend(miss_blocks)
         if extras:
@@ -1360,8 +1407,12 @@ def _handle_map(
     llm_client: LLMClient | None,
     question: str | None = None,
     preface: str = "",
+    suite: str | None = None,
 ) -> ChatReply:
-    """``question`` replaces ``text`` for the search when code already rewrote it."""
+    """``question`` replaces ``text`` for the search when code already rewrote it.
+
+    ``suite`` limits the turn to one suite (a compare resumed after a pick there).
+    """
     _record(state, "user", text)
     bound = state.binding.node if state.binding is not None else None
     bound_nodes = dict(state.bindings) if state.bindings else None
@@ -1391,7 +1442,11 @@ def _handle_map(
     if pair is None and bound_nodes and is_describe_followup(text, bound_nodes):
         return _describe_bound(state, text, llm_client=llm_client)
     question = pair or text
-    outcome = runner(question, bound_node=bound, bound_nodes=bound_nodes)
+    outcome = (
+        runner(question, bound_node=bound, bound_nodes=bound_nodes, suite=suite)
+        if suite
+        else runner(question, bound_node=bound, bound_nodes=bound_nodes)
+    )
     spoken = normalize_language(getattr(getattr(outcome, "plan_draft", None), "language", None))
     if spoken:
         # The planner read this message's language: every code-written

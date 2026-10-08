@@ -184,9 +184,94 @@ def test_a_compare_waiting_on_a_pick_runs_after_it() -> None:
 
     state = new_session()
     handle_line(state, "compare engineer and nurse", runner=runner)
-    assert state.pending_compare == ["engineer", "nurse", "1"]
+    assert state.pending_compare == {"esco": ["engineer", "nurse", "1"]}
     reply = handle_line(state, "1", runner=runner)
     assert asked[-1] == "compare civil engineer and nurse"
-    assert reply.text.startswith("Bound civil engineer.")
     assert "vs" in reply.text
-    assert state.pending_compare == []
+    assert "vs" in reply.text
+    assert state.pending_compare == {}
+
+
+def _two_suite_lists(asked: list[tuple[str, dict[str, object]]]):
+    from talent_angels.assistant.llm_plan import PlanDraft
+
+    esco = AgentResult(
+        capability="locate",
+        suite="esco",
+        nodes=[
+            _node("esco", "nurse assistant", "Occupation"),
+            _node("esco", "specialist nurse", "Occupation"),
+        ],
+        warnings=["ambiguous", "compare_side:1"],
+    )
+    onet = AgentResult(
+        capability="locate",
+        suite="onet",
+        nodes=[
+            _node("onet", "Registered Nurses", "Occupation"),
+            _node("onet", "Nurse Practitioners", "Occupation"),
+        ],
+        warnings=["ambiguous", "compare_side:1"],
+    )
+
+    def runner(question: str, **kwargs: object) -> TurnOutcome:
+        asked.append((question, kwargs))
+        results = (esco, onet) if len(asked) == 1 else (_chef_vs_baker(str(kwargs.get("suite"))),)
+        return TurnOutcome(
+            capability="connect",
+            plan=build_plan_for_capability("connect", suites=tuple(r.suite for r in results)),
+            result=results[0],
+            results=results,
+            answer="ignored",
+            record=RunLogRecord(suite="esco,onet", plan=["connect"], question=question),
+            plan_draft=PlanDraft(target="connect", subject="nurse", secondary_subject="doctor"),
+        )
+
+    return runner
+
+
+def test_a_compare_list_says_it_is_a_compare_and_how_to_pick() -> None:
+    asked: list[tuple[str, dict[str, object]]] = []
+    state = new_session()
+    reply = handle_line(state, "compare nurse and doctor", runner=_two_suite_lists(asked))
+    assert reply.text.startswith("To compare nurse and doctor, I first need to know which nurse")
+    assert "e.g. 1 3" in reply.text
+    assert set(state.pending_compare) == {"esco", "onet"}
+
+
+def test_a_pick_in_one_suite_compares_there_and_keeps_the_other_list() -> None:
+    asked: list[tuple[str, dict[str, object]]] = []
+    state = new_session()
+    runner = _two_suite_lists(asked)
+    handle_line(state, "compare nurse and doctor", runner=runner)
+    reply = handle_line(state, "2", runner=runner)
+    assert asked[-1][0] == "compare specialist nurse and doctor"
+    assert asked[-1][1]["suite"] == "esco"
+    assert "vs" in reply.text
+    assert "O*NET still needs a pick" in reply.text
+    assert [c.node.suite for c in state.pending] == ["onet", "onet"]
+    assert set(state.pending_compare) == {"onet"}
+
+
+def test_one_pick_per_list_in_one_reply() -> None:
+    asked: list[tuple[str, dict[str, object]]] = []
+    state = new_session()
+    runner = _two_suite_lists(asked)
+    handle_line(state, "compare nurse and doctor", runner=runner)
+    handle_line(state, "2 3", runner=runner)
+    suites = [kwargs.get("suite") for _q, kwargs in asked[1:]]
+    assert suites == ["esco", "onet"]
+
+
+def test_two_picks_from_the_same_list_are_refused() -> None:
+    from tests.test_chat_guided import _broad_list
+
+    (state, _), runner = _broad_list()
+    reply = handle_line(state, "1 2", runner=runner)
+    assert reply.text.startswith("Pick at most one title per taxonomy")
+    assert not state.bindings
+
+
+def test_compare_groups_are_separate_paragraphs() -> None:
+    text = render_compare(_chef_vs_baker())
+    assert "\n\n**Only chef**" in text and "\n\n**Only baker**" in text

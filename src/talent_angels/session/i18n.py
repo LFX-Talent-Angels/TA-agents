@@ -101,6 +101,14 @@ _EN: dict[str, str] = {
     "profile_current": "Current job ({suite}): {title}",
     "profile_rejected": "Not your job (you said so): {title}",
     "noted_not_job": "Noted: {titles} is no longer saved as your current job.",
+    "compare_needs_pick": (
+        "To compare {first} and {second}, I first need to know which {subject} you mean."
+    ),
+    "comparing": "Comparing {first} with {second}:",
+    "still_waiting": "{suite} still needs a pick to compare there too:",
+    "bound_many": "Bound {titles}.",
+    "one_per_suite": "Pick at most one title per taxonomy, e.g. {example}.",
+    "pick_per_suite": "You can pick one title from each list in one reply, e.g. {example}.",
 }
 
 _ES: dict[str, str] = {
@@ -183,6 +191,16 @@ _ES: dict[str, str] = {
     "profile_current": "Trabajo actual ({suite}): {title}",
     "profile_rejected": "No es tu trabajo (lo dijiste tú): {title}",
     "noted_not_job": "Anotado: {titles} ya no está guardado como tu trabajo actual.",
+    "compare_needs_pick": (
+        "Para comparar {first} y {second}, primero necesito saber a qué {subject} te refieres."
+    ),
+    "comparing": "Comparando {first} con {second}:",
+    "still_waiting": "{suite} todavía necesita que elijas uno para comparar ahí también:",
+    "bound_many": "Seleccionados: {titles}.",
+    "one_per_suite": "Elige como máximo un título por taxonomía, por ejemplo {example}.",
+    "pick_per_suite": (
+        "Puedes elegir un título de cada lista en una sola respuesta, por ejemplo {example}."
+    ),
 }
 
 _TABLES: dict[str, dict[str, str]] = {"en": _EN, "es": _ES}

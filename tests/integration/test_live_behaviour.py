@@ -57,7 +57,13 @@ class Chat:
 
     def say(self, line: str) -> ChatReply:
         def runner(
-            question, *, bound_node=None, bound_nodes=None, force_capability=None, area=None
+            question,
+            *,
+            bound_node=None,
+            bound_nodes=None,
+            force_capability=None,
+            area=None,
+            suite=None,
         ):
             outcome = run_turn(
                 registry=self.registry,
@@ -69,6 +75,7 @@ class Chat:
                 force_capability=force_capability,
                 persist=False,
                 area=area,
+                suite_override=suite,
             )
             persist_turn_record(outcome.record)
             return outcome

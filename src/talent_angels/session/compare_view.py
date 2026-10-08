@@ -41,8 +41,12 @@ def render_compare(result: AgentResult) -> str:
         [
             t("compare_head", first=a.pref_label, second=b.pref_label, shared=shared),
             "",
+            # A blank line between groups: single newlines are soft wraps in
+            # Markdown, and ran the three groups into one paragraph.
             _line(t("compare_shared"), overlap.shared, tags_a),
+            "",
             _line(t("compare_only", title=a.pref_label), overlap.only_a, tags_a),
+            "",
             _line(t("compare_only", title=b.pref_label), overlap.only_b, tags_b),
             "",
             t("compare_foot"),

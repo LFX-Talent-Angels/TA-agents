@@ -43,6 +43,10 @@ _HELP_PLAIN_RE = re.compile(
 )
 
 _PICK_NUM_RE = re.compile(r"^\s*(\d+)\s*[.)]?\s*$")
+#: One pick per list in one reply: "1 11", "1, 11", "1 and 11", "1 y 11".
+_PICK_MANY_RE = re.compile(
+    r"^\s*\d+(?:(?:\s*(?:,|&|\band\b|\by\b)\s*|\s+)\d+)+\s*[.!]?\s*$", re.IGNORECASE
+)
 #: "actually I meant 5", "no, number 3", "make it #2": a correction is a pick.
 _PICK_CORRECTION_RE = re.compile(
     r"^\s*(?:(?:actually|sorry|oops|no)[,.!]?\s+)*"
@@ -109,6 +113,8 @@ class RoutedLine:
     kind: LineKind
     text: str
     pick: int | None = None
+    #: Several numbers in one reply, one per list ("1 11").
+    picks: tuple[int, ...] = ()
     show_token: str | None = None
 
 
@@ -132,6 +138,10 @@ def route_line(text: str) -> RoutedLine:
 
     if _HELP_PLAIN_RE.match(stripped):
         return RoutedLine(kind="help_plain", text=stripped)
+
+    if _PICK_MANY_RE.match(stripped):
+        numbers = tuple(int(n) for n in re.findall(r"\d+", stripped))
+        return RoutedLine(kind="pick", text=stripped, pick=numbers[0], picks=numbers)
 
     m = _PICK_NUM_RE.match(stripped)
     if m:

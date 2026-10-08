@@ -42,6 +42,24 @@ def understood(question: str, draft: PlanDraft | None, results: Sequence[AgentRe
     not have is never shown to the user.
     """
     said = question.strip().rstrip("?.!")
+    side = next(
+        (
+            w.split(":", 1)[1]
+            for result in results
+            for w in result.warnings
+            if w.startswith("compare_side:")
+        ),
+        None,
+    )
+    if side and draft is not None and draft.subject and draft.secondary_subject:
+        # "compare nurse and doctor": say it is a compare, and which side needs a pick.
+        waiting = draft.subject if side == "1" else draft.secondary_subject
+        return t(
+            "compare_needs_pick",
+            first=draft.subject,
+            second=draft.secondary_subject,
+            subject=waiting,
+        )
     subject = (draft.subject or "").strip() if draft is not None else ""
     subject = subject or said
     if not subject:

@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from talent_angels.contracts import AgentResult, NodeRef
+from talent_angels.session.i18n import t
 from talent_angels.session.models import PendingChoice
 
 PICKER_LIMIT = 10
@@ -39,12 +40,10 @@ def render_picker(
     include_source: bool = True,
 ) -> str:
     """Markdown numbered list of pref_label; quiet source line; no auto-pick."""
-    heading = intro or f'I found several matches for "{question}". Which one did you mean?'
+    heading = intro or t("picker_heading", question=question)
     if not pending:
         suite = "unknown"
-        lines = [
-            heading if intro else f'I found several matches for "{question}", but none to show.'
-        ]
+        lines = [heading if intro else t("picker_empty", question=question)]
     else:
         suite = pending[0].node.suite
         lines = [
@@ -66,9 +65,9 @@ def render_picker(
         first = pending[0].number
         last = pending[-1].number
         if first == last:
-            hint = f"I won't pick for you — reply with {first}."
+            hint = t("picker_one", first=first)
         else:
-            hint = f"I won't pick for you — reply with {first}–{last}."
+            hint = t("picker_range", first=first, last=last)
         lines.append(hint)
 
     # Separate paragraphs: single newlines are soft wraps in Markdown and ran
@@ -77,8 +76,12 @@ def render_picker(
         lines.extend(
             [
                 "",
-                f"Showing {len(pending)} of {len(pending) + omitted} "
-                f"({omitted} more). The full list is in query details.",
+                t(
+                    "picker_showing",
+                    shown=len(pending),
+                    total=len(pending) + omitted,
+                    omitted=omitted,
+                ),
             ]
         )
 

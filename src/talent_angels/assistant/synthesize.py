@@ -58,6 +58,8 @@ Rules:
   correct yourself mid-answer.
 - ESCO and O*NET are separate taxonomies with no official link here: never say
   a record in one maps to, equals, or is the equivalent of one in the other.
+- Write in the same language as the user's message; keep job and skill titles
+  exactly as the card writes them.
 - 2-4 plain sentences: no tables, lists, headings, or code. Then stop; Sources
   used is printed in code."""
 

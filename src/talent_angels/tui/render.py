@@ -19,7 +19,9 @@ _NUMBERED = re.compile(
     re.IGNORECASE,
 )
 _GROUP = re.compile(r"^\*\*(.+?)\*\*\s*$")
-_SKILLS_HEAD = re.compile(r"—\s+\d+\s+skills", re.IGNORECASE)
+#: The skill-list title ("— 24 skills and 3 tools on the map"), in any language
+#: the app writes it in.
+_SKILLS_HEAD = re.compile(r"—\s+\d+\s+(?:skills?|habilidad(?:es)?)", re.IGNORECASE)
 
 
 @dataclass(frozen=True)
@@ -56,7 +58,7 @@ def parse_list_reply(text: str) -> ParsedReply:
             group = heading.group(1)
             if not seen_row:
                 # skill-list title line is markdown bold + em dash, not an ISCO group
-                if "skills on the map" in stripped.casefold():
+                if _SKILLS_HEAD.search(stripped):
                     intro.append(line)
                     continue
             if not seen_row and not rows:

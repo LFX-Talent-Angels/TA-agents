@@ -124,3 +124,69 @@ def test_it_after_a_compare_asks_which_title() -> None:
 
     assert state.bindings == {}
     assert reply.text.startswith("Which one do you mean: **chef** or **baker**?")
+
+
+def test_tools_are_counted_apart_from_skills() -> None:
+    from talent_angels.session.followup import render_connect_list
+
+    centre = _node("onet", "Software Developers", "Occupation")
+    skill = _node("onet", "Critical Thinking")
+    tools = [_node("onet", f"Tool {i}", "Software") for i in range(3)]
+    edges = [
+        EdgeRef(
+            type="HAS_SKILL",
+            suite="onet",
+            source_node_id=centre.id,
+            target_node_id=skill.id,
+            properties={"relation_type": "essential"},
+        ),
+        *(
+            EdgeRef(
+                type="USES_SOFTWARE", suite="onet", source_node_id=centre.id, target_node_id=t.id
+            )
+            for t in tools
+        ),
+    ]
+    result = AgentResult(
+        capability="connect", suite="onet", nodes=[centre, skill, *tools], edges=edges
+    )
+    assert "**Software Developers** — 1 skill and 3 tools on the map:" in render_connect_list(
+        result
+    )
+
+
+def test_a_compare_waiting_on_a_pick_runs_after_it() -> None:
+    from talent_angels.assistant.llm_plan import PlanDraft
+
+    engineers = AgentResult(
+        capability="locate",
+        suite="esco",
+        nodes=[
+            _node("esco", "civil engineer", "Occupation"),
+            _node("esco", "test engineer", "Occupation"),
+        ],
+        warnings=["ambiguous", "compare_side:1"],
+    )
+    asked: list[str] = []
+
+    def runner(question: str, **_kwargs: object) -> TurnOutcome:
+        asked.append(question)
+        result = engineers if len(asked) == 1 else _chef_vs_baker()
+        return TurnOutcome(
+            capability="connect",
+            plan=build_plan_for_capability("connect", suites=("esco",)),
+            result=result,
+            results=(result,),
+            answer="ignored",
+            record=RunLogRecord(suite="esco", plan=["connect"], question=question),
+            plan_draft=PlanDraft(target="connect", subject="engineer", secondary_subject="nurse"),
+        )
+
+    state = new_session()
+    handle_line(state, "compare engineer and nurse", runner=runner)
+    assert state.pending_compare == ["engineer", "nurse", "1"]
+    reply = handle_line(state, "1", runner=runner)
+    assert asked[-1] == "compare civil engineer and nurse"
+    assert reply.text.startswith("Bound civil engineer.")
+    assert "vs" in reply.text
+    assert state.pending_compare == []

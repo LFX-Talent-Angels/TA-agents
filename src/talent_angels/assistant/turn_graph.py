@@ -180,7 +180,7 @@ def compare_one(
     measured = MeasuredSuite(suite)
     schema = suite.suite_schema
     sides: list[AgentResult] = []
-    for subject in (first, second):
+    for side, subject in enumerate((first, second), start=1):
         located = locate(measured, suite_name, subject, kind="occupation")
         located = group_and_sort_locate(
             measured,
@@ -191,7 +191,11 @@ def compare_one(
             group_node_kinds=schema.group_node_kinds,
         )
         if not located.nodes or "ambiguous" in located.warnings:
-            return located, measured.tool_calls
+            # Which side needs a pick, so the chat can finish the compare after it.
+            marked = located.model_copy(
+                update={"warnings": [*located.warnings, f"compare_side:{side}"]}
+            )
+            return marked, measured.tool_calls
         sides.append(
             connect(
                 measured,

@@ -84,6 +84,8 @@ def save_session(state: SessionState, *, name: str | None = None, update_last: b
         "pending_profile_intent": state.pending_profile_intent,
         "areas": [area.model_dump() for area in state.areas],
         "list_topic": state.list_topic,
+        "pending_compare": list(state.pending_compare),
+        "language": state.language,
     }
     (path / _BINDING).write_text(json.dumps(binding_payload, indent=2) + "\n", encoding="utf-8")
 
@@ -112,6 +114,8 @@ def load_session(name: str) -> SessionState:
     pending_profile_intent: str | None = None
     areas: list[AreaChoice] = []
     list_topic = ""
+    pending_compare: list[str] = []
+    language = "en"
     binding_path = path / _BINDING
     if binding_path.is_file():
         payload = json.loads(binding_path.read_text(encoding="utf-8"))
@@ -130,6 +134,8 @@ def load_session(name: str) -> SessionState:
         pending_profile_intent = payload.get("pending_profile_intent")
         areas = [AreaChoice.model_validate(item) for item in payload.get("areas") or []]
         list_topic = str(payload.get("list_topic") or "")
+        pending_compare = [str(item) for item in payload.get("pending_compare") or []]
+        language = str(payload.get("language") or "en")
 
     return SessionState(
         session_id=meta["session_id"],
@@ -144,6 +150,8 @@ def load_session(name: str) -> SessionState:
         pending_profile_intent=pending_profile_intent,
         areas=areas,
         list_topic=list_topic,
+        pending_compare=pending_compare,
+        language=language,
     )
 
 

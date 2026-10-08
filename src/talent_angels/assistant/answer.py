@@ -27,7 +27,8 @@ def is_terminal_locate(result: AgentResult) -> bool:
 
 PATHFIND_UNAVAILABLE = (
     "Routes between two occupations (Pathfind) are not available yet, so no path "
-    "was computed. Ask what skills each occupation needs and compare them."
+    "was computed. Ask to compare the two occupations to see the skills they share "
+    "and the ones only one of them needs."
 )
 NO_SUBJECT = (
     "Which occupation or skill do you mean? For example: "

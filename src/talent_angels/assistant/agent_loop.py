@@ -194,6 +194,7 @@ def _execute_tool(
             ),
             confidence=located.confidence if located is not None else None,
             locate_evidence=located.evidence if located is not None else (),
+            optional_rel_values=suite.suite_schema.optional_rel_values,
         )
 
     raise ValueError(f"unknown tool: {invocation.name}")
@@ -489,6 +490,7 @@ def run_tool_loop(
             ),
             confidence=located.confidence,
             locate_evidence=located.evidence,
+            optional_rel_values=measured.suite_schema.optional_rel_values,
         )
         answer = summarize_result(last_result)
 

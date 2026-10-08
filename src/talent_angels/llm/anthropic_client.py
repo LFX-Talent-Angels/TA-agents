@@ -62,4 +62,6 @@ class AnthropicLLMClient:
             cache_creation_input_tokens=getattr(response.usage, "cache_creation_input_tokens", 0)
             or 0,
         )
-        return LLMResult(text=text, provider=self.provider, model=self.model, usage=usage)
+        # The model that answered, which can differ from the one requested.
+        model = str(getattr(response, "model", "") or self.model)
+        return LLMResult(text=text, provider=self.provider, model=model, usage=usage)

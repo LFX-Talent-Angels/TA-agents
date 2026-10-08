@@ -21,7 +21,7 @@ Two rules make that safe:
 from __future__ import annotations
 
 import logging
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import Annotated, Any, TypedDict, cast
 
 from langchain_core.runnables import RunnableConfig
@@ -30,7 +30,7 @@ from langgraph.graph.state import CompiledStateGraph
 
 from talent_angels.assistant.answer import NO_SUBJECT, build_answer
 from talent_angels.assistant.cache import ResultCache
-from talent_angels.assistant.graph import dispatch_plan
+from talent_angels.assistant.graph import _dispatch_heuristic, dispatch_plan
 from talent_angels.assistant.honesty import honesty_warnings
 from talent_angels.assistant.intent import (
     CAPABILITY_CONNECT,
@@ -299,102 +299,139 @@ def _plan(state: TurnState, rt: TurnRuntime) -> dict[str, Any]:
     return update
 
 
-def _dispatch(state: TurnState, rt: TurnRuntime) -> dict[str, Any]:
+@dataclass
+class _SuiteRun:
+    """What one suite's dispatch produced; merged in suite order afterwards."""
+
+    result: AgentResult | None = None
+    tools: list[ToolCall] = field(default_factory=list)
+    stages: list[StageUsage] = field(default_factory=list)
+    areas: list[Area] = field(default_factory=list)
+    cache_hit: bool = False
+    warning: str | None = None
+
+
+def _run_suite(name: str, state: TurnState, rt: TurnRuntime, seed: dict[str, Any]) -> _SuiteRun:
+    """One suite's share of the turn. Raises only ``UnknownSuiteError``."""
     plan = state["plan"]
     assert plan is not None
     question = state["question"]
     kind = state.get("kind")
-    bound_node = state.get("bound_node")
-    bound_nodes = state.get("bound_nodes")
+    area = state.get("area")
+    draft = state.get("plan_draft")
+    bound = _bound_for_suite(name, state.get("bound_node"), state.get("bound_nodes"))
+    run = _SuiteRun()
+    try:
+        with rt.registry.open(name) as runtime:
+            if area is not None:
+                measured = MeasuredSuite(runtime.suite)
+                run.result = search_area(measured, name, area)
+                run.tools = measured.tool_calls
+                return run
+            if state.get("force_locate"):
+                one, one_tools, hit = locate_one(
+                    runtime.suite, name, question, kind=kind, cache=rt.cache
+                )
+                run.result, run.tools, run.cache_hit = one, one_tools, hit
+                return run
+            if draft is not None and is_compare(draft) and not state.get("force_capability"):
+                assert draft.subject and draft.secondary_subject
+                run.result, run.tools = compare_one(
+                    runtime.suite, name, draft.subject, draft.secondary_subject
+                )
+                return run
+            if (
+                draft is not None
+                and draft.subject
+                and bound is None
+                and not state.get("force_capability")
+                and plan.intent.target in (CAPABILITY_LOCATE, CAPABILITY_CONNECT)
+            ):
+                # A first lookup is decided in code, never by the model's tool
+                # loop: the same words give the same list or the same title.
+                # Anything but one clear title is a pick list (guided path).
+                explored = explore_one(runtime.suite, name, draft, question)
+                if explored is not None:
+                    run.result, run.areas, run.tools = explored
+                    return run
+                # The user's own words name one clear title: locate it, and
+                # connect it for a skills question, deterministically.
+                clear = _dispatch_heuristic(
+                    cast(AssistantState, {**seed, "bound_node": None}),
+                    suite=runtime.suite,
+                    suite_name=name,
+                )
+                run.result = clear["result"]
+                run.tools = list(clear.get("tool_calls") or [])
+                run.cache_hit = _served_from_cache(runtime.suite)
+                return run
+            prior = len(seed["llm_stages"])
+            dispatched = dispatch_plan(
+                cast(AssistantState, {**seed, "bound_node": bound}),
+                suite=runtime.suite,
+                suite_name=name,
+                llm_client=rt.llm_client,
+                bound_node=bound,
+                # The merged answer is written in code; the model's own
+                # final phrasing round would be billed and then discarded.
+                need_answer=False,
+            )
+            run.cache_hit = _served_from_cache(runtime.suite)
+            run.result = dispatched["result"]
+            if draft is not None and draft.subject and bound is None:
+                if _is_broad(dispatched["result"]):
+                    measured = MeasuredSuite(runtime.suite)
+                    run.areas = area_summary(
+                        measured, name, draft.subject, kind=draft.kind or "occupation"
+                    )
+                    run.tools.extend(measured.tool_calls)
+            run.tools.extend(dispatched.get("tool_calls") or [])
+            run.stages = list((dispatched.get("llm_stages") or [])[prior:])
+            return run
+    except UnknownSuiteError:
+        raise
+    except Exception:  # noqa: BLE001 — a down suite must not fail the turn
+        logger.warning("suite %s unavailable", name, exc_info=True)
+        return _SuiteRun(warning=f"suite_unavailable:{name}")
+
+
+def _dispatch(state: TurnState, rt: TurnRuntime) -> dict[str, Any]:
+    plan = state["plan"]
+    assert plan is not None
     stages = list(state.get("stages") or [])
     extra = list(state.get("extra_warnings") or [])
-    tools: list[ToolCall] = []
-    collected: list[AgentResult] = []
-    areas: dict[str, list[Area]] = {}
-    area = state.get("area")
-    cache_hit = False
     seed: dict[str, Any] = {
-        "question": question,
-        "kind": kind,
+        "question": state["question"],
+        "kind": state.get("kind"),
         "capability": plan.intent.target,
         "plan": plan,
         "plan_draft": state.get("plan_draft"),
         "heuristic_intent": state.get("heuristic_intent", True),
-        "llm_stages": stages,
+        "llm_stages": list(stages),
     }
-    draft = state.get("plan_draft")
-    for name in state.get("selected") or []:
-        if area is not None and area.suite != name:
+    area = state.get("area")
+    names = [name for name in state.get("selected") or [] if area is None or area.suite == name]
+    # One suite after another, on purpose: run in parallel threads, two suites'
+    # meaning searches ran the local embedding model at once and crashed the
+    # process (segfault in transformers, 2026-10-08). First lookups make no
+    # model call per suite, so sequential costs well under a second.
+    runs = [_run_suite(name, state, rt, seed) for name in names]
+
+    collected: list[AgentResult] = []
+    tools: list[ToolCall] = []
+    areas: dict[str, list[Area]] = {}
+    cache_hit = False
+    for name, run in zip(names, runs, strict=True):
+        if run.warning:
+            extra.append(run.warning)
             continue
-        prior = len(stages)
-        bound = _bound_for_suite(name, bound_node, bound_nodes)
-        try:
-            with rt.registry.open(name) as runtime:
-                if area is not None:
-                    measured = MeasuredSuite(runtime.suite)
-                    collected.append(search_area(measured, name, area))
-                    tools.extend(measured.tool_calls)
-                    continue
-                if state.get("force_locate"):
-                    one, one_tools, hit = locate_one(
-                        runtime.suite, name, question, kind=kind, cache=rt.cache
-                    )
-                    cache_hit = cache_hit or hit
-                    collected.append(one)
-                    tools.extend(one_tools)
-                    continue
-                if draft is not None and is_compare(draft) and not state.get("force_capability"):
-                    assert draft.subject and draft.secondary_subject
-                    pair, pair_tools = compare_one(
-                        runtime.suite, name, draft.subject, draft.secondary_subject
-                    )
-                    collected.append(pair)
-                    tools.extend(pair_tools)
-                    continue
-                if (
-                    draft is not None
-                    and draft.subject
-                    and draft.candidates
-                    and bound is None
-                    and not state.get("force_capability")
-                    and plan.intent.target in (CAPABILITY_LOCATE, CAPABILITY_CONNECT)
-                ):
-                    explored = explore_one(runtime.suite, name, draft, question)
-                    if explored is not None:
-                        guided, guided_areas, guided_tools = explored
-                        collected.append(guided)
-                        tools.extend(guided_tools)
-                        if guided_areas:
-                            areas[name] = guided_areas
-                        continue
-                dispatched = dispatch_plan(
-                    cast(AssistantState, {**seed, "bound_node": bound}),
-                    suite=runtime.suite,
-                    suite_name=name,
-                    llm_client=rt.llm_client,
-                    bound_node=bound,
-                    # The merged answer is written in code; the model's own
-                    # final phrasing round would be billed and then discarded.
-                    need_answer=False,
-                )
-                cache_hit = cache_hit or _served_from_cache(runtime.suite)
-                collected.append(dispatched["result"])
-                if draft is not None and draft.subject and bound is None:
-                    if _is_broad(dispatched["result"]):
-                        measured = MeasuredSuite(runtime.suite)
-                        found = area_summary(
-                            measured, name, draft.subject, kind=draft.kind or "occupation"
-                        )
-                        tools.extend(measured.tool_calls)
-                        if found:
-                            areas[name] = found
-                tools.extend(dispatched.get("tool_calls") or [])
-                stages.extend((dispatched.get("llm_stages") or [])[prior:])
-        except UnknownSuiteError:
-            raise
-        except Exception:  # noqa: BLE001 — a down suite must not fail the turn
-            logger.warning("suite %s unavailable", name, exc_info=True)
-            extra.append(f"suite_unavailable:{name}")
+        if run.result is not None:
+            collected.append(run.result)
+        tools.extend(run.tools)
+        stages.extend(run.stages)
+        if run.areas:
+            areas[name] = run.areas
+        cache_hit = cache_hit or run.cache_hit
     return {
         "results": collected,
         "areas": areas,

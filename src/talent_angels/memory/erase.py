@@ -51,6 +51,7 @@ from pathlib import Path
 
 from talent_angels.memory.episodes import clear_episodes, vacuum_db
 from talent_angels.memory.paths import default_runlog_path, memory_md, user_md
+from talent_angels.memory.plan_cache import clear_plans
 
 # Files a session directory is made of. Listed so a count can be reported
 # honestly rather than "deleted something".
@@ -180,6 +181,8 @@ def erase_person(*, vacuum: bool = True) -> EraseResult:
     """
     files_deleted = _unlink(user_md()) + _unlink(memory_md())
     episodes_deleted = clear_episodes()
+    # Stored question readings hold the user's words too; vacuumed with the rest.
+    clear_plans()
     vacuumed = vacuum and vacuum_db()
     return EraseResult(
         files_deleted=files_deleted,

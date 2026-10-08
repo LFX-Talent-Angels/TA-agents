@@ -12,6 +12,7 @@ import os
 import sqlite3
 import uuid
 from dataclasses import dataclass, field
+from typing import Any
 
 from talent_angels.assistant.answer import NO_SUBJECT, build_answer
 from talent_angels.assistant.cache import ResultCache
@@ -31,6 +32,7 @@ from talent_angels.assistant.turn_graph import (
 )
 from talent_angels.contracts import AgentResult, NodeRef
 from talent_angels.llm import LLMClient, LLMUsage
+from talent_angels.llm.protocol import turn_deadline
 from talent_angels.memory.episodes import record_episode, suite_satisfied
 from talent_angels.memory.vector_retriever import MAX_TOPIC_LABELS, index_episode
 from talent_angels.runlog import (
@@ -330,7 +332,17 @@ def _has_bound(bound_node: NodeRef | None, bound_nodes: dict[str, NodeRef] | Non
     return bound_node is not None or bool(bound_nodes)
 
 
-def run_turn(
+def run_turn(**kwargs: Any) -> TurnOutcome:
+    """Run one turn and append its run-log record (see ``_run_turn``).
+
+    Every model call in the turn shares one deadline (``turn_deadline``); an
+    outer one, such as the chat line's, is kept.
+    """
+    with turn_deadline():
+        return _run_turn(**kwargs)
+
+
+def _run_turn(
     *,
     llm_client: LLMClient,
     question: str,

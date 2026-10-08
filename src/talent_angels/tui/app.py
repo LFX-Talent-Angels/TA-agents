@@ -5,6 +5,7 @@ from __future__ import annotations
 import contextvars
 import os
 import sys
+import threading
 from collections.abc import Sequence
 from functools import partial
 
@@ -16,6 +17,7 @@ from talent_angels.assistant.turn import persist_turn_record, with_extra_stages
 from talent_angels.env import load_local_dotenv
 from talent_angels.llm import LLMClient
 from talent_angels.llm.factory import get_llm_client
+from talent_angels.llm.protocol import bind_cancel
 from talent_angels.query_details import write_query_details
 from talent_angels.session.catalog import render_catalogue
 from talent_angels.session.copy import WELCOME
@@ -206,6 +208,9 @@ def main(argv: Sequence[str] | None = None, *, registry: SuiteRegistry | None = 
         stage_scope = collect_stages()
         line_stages = stage_scope.__enter__()
         line_context = contextvars.copy_context()
+        # Esc sets this; the abandoned turn sees it at its next model call.
+        cancel = threading.Event()
+        line_context.run(bind_cancel, cancel)
         if kind == "command":
             # Commands can change session state, the active client, or the
             # process environment. Keep those effects on this thread so an
@@ -230,6 +235,7 @@ def main(argv: Sequence[str] | None = None, *, registry: SuiteRegistry | None = 
                         runner=make_runner(turn_outcomes),
                         llm_client=llm_client,
                     ),
+                    cancel=cancel,
                 )
             except Cancelled:
                 stage_scope.__exit__(None, None, None)

@@ -25,6 +25,18 @@ def _near_pref_label(query: str, node: NodeRef) -> bool:
 _MAX_AUTO_SELECT_TIER = 3
 
 
+def _plain(query: str) -> str:
+    """The words of a search, without end punctuation or a leading article."""
+    text = re.sub(r"[\s?.!,;:]+$", "", query.strip())
+    return re.sub(r"^(?:an?|the)\s+", "", text, flags=re.IGNORECASE)
+
+
+def _word_end(query: str) -> str:
+    """A whole-word end for queries too short to be a prefix of a real title."""
+    text = query.strip()
+    return r"(?![a-z0-9])" if text.isalpha() and len(text) <= 4 else ""
+
+
 def lexical_rank(query: str, node: NodeRef) -> tuple[int, int, str]:
     """Lower is better: exact pref, pref token, pref substring, exact alt, alt substring."""
     q = query.casefold().strip()
@@ -35,8 +47,9 @@ def lexical_rank(query: str, node: NodeRef) -> tuple[int, int, str]:
         tier = 0
     elif q in tokens:
         tier = 1
-    elif q and re.search(rf"(?<![a-z0-9]){re.escape(q)}", pref):
+    elif q and re.search(rf"(?<![a-z0-9]){re.escape(q)}{_word_end(query)}", pref):
         # From the start of a word: "it manager" is not inside "credit manager".
+        # A short word or an acronym must be a whole word: "swe" is not "sweep".
         tier = 2
     elif q in alts:
         tier = 3
@@ -96,6 +109,15 @@ def group_and_sort_locate(
     group_node_kinds: frozenset[str] = frozenset({"ISCOGroup", "isco group"}),
 ) -> AgentResult:
     """Reorder Locate hits; attach group edges; mark multi-hit as ambiguous."""
+    if (
+        len(result.nodes) == 1
+        and lexical_rank(_plain(query), result.nodes[0])[0] > _MAX_AUTO_SELECT_TIER
+    ):
+        # One hit found only inside an alias ("qa tester" -> "localiser") or by
+        # meaning is offered for the user to confirm, never selected for them.
+        if "ambiguous" not in result.warnings:
+            return result.model_copy(update={"warnings": [*result.warnings, "ambiguous"]})
+        return result
     if len(result.nodes) <= 1:
         return result
 

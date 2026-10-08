@@ -247,3 +247,102 @@ def test_trivial_subjects_are_not_searches() -> None:
 def test_planner_keeps_codes_and_refuses_instructions() -> None:
     assert "15-1252.00" in PLAN_SYSTEM
     assert "previous instructions" in PLAN_SYSTEM.replace("\n", " ")
+
+
+def test_the_same_question_reuses_the_first_reading() -> None:
+    client = ScriptedLLMClient(
+        '{"target":"locate","subject":"swe","candidates":["software developer"]}'
+    )
+    first = interpret_question("SWE", llm_client=client)
+    client.text = '{"target":"locate","subject":"sweep"}'
+    second = interpret_question("  swe? ", llm_client=client)
+    assert len(client.calls) == 1
+    assert second.draft == first.draft
+    assert second.stage is None
+
+
+def test_a_different_profile_reads_the_question_again() -> None:
+    client = ScriptedLLMClient('{"target":"locate","subject":"chef"}')
+    interpret_question("jobs like mine", llm_client=client, profile="current job: chef")
+    interpret_question("jobs like mine", llm_client=client, profile="current job: nurse")
+    assert len(client.calls) == 2
+
+
+def test_an_unreadable_plan_is_retried_once() -> None:
+    class Twice(ScriptedLLMClient):
+        def __init__(self) -> None:
+            super().__init__("not json")
+            self.replies = ["not json", '{"target":"locate","subject":"nurse"}']
+
+        def complete(self, messages: list[Message]) -> LLMResult:
+            self.text = self.replies[len(self.calls)]
+            return super().complete(messages)
+
+    client = Twice()
+    interpreted = interpret_question("nurse", llm_client=client)
+    assert len(client.calls) == 2
+    assert interpreted.draft is not None and interpreted.draft.subject == "nurse"
+
+
+def test_forgetting_everything_forgets_stored_readings() -> None:
+    from talent_angels.memory.erase import erase_person
+    from talent_angels.memory.paths import db_path
+
+    client = ScriptedLLMClient('{"target":"locate","subject":"my secret job"}')
+    interpret_question("my secret job", llm_client=client)
+    erase_person()
+    assert b"my secret job" not in db_path().read_bytes()
+
+
+def test_a_turn_past_its_deadline_makes_no_more_model_calls() -> None:
+    import time
+
+    from talent_angels.assistant.llm_call import measure_complete
+    from talent_angels.llm.protocol import LLMError, llm_timeout_seconds, turn_deadline
+
+    client = ScriptedLLMClient("{}")
+    with turn_deadline(5.0):
+        assert llm_timeout_seconds() <= 5.0
+    with turn_deadline(0.5):
+        time.sleep(0.6)
+        with pytest.raises(LLMError, match="deadline"):
+            measure_complete(client, [Message(role="user", content="x")], stage="phrase")
+    assert client.calls == []
+
+
+def test_a_cancelled_turn_makes_no_more_model_calls() -> None:
+    import contextvars
+    import threading
+
+    from talent_angels.assistant.llm_call import measure_complete
+    from talent_angels.llm.protocol import LLMError, bind_cancel
+
+    client = ScriptedLLMClient("{}")
+    event = threading.Event()
+    event.set()
+
+    def call() -> None:
+        bind_cancel(event)
+        with pytest.raises(LLMError, match="cancelled"):
+            measure_complete(client, [Message(role="user", content="x")], stage="phrase")
+
+    contextvars.copy_context().run(call)
+    assert client.calls == []
+
+
+def test_a_first_lookup_never_reaches_the_model_tool_loop() -> None:
+    from talent_angels.assistant.turn import run_turn
+    from tests.fakes.suite import SUITE_NAME, fake_registry
+
+    client = ScriptedLLMClient(
+        '{"target":"locate","subject":"software developer","kind":"occupation"}'
+    )
+    outcome = run_turn(
+        registry=fake_registry(),
+        llm_client=client,
+        question="software developer",
+        suite_override=SUITE_NAME,
+        persist=False,
+    )
+    assert len(client.calls) == 1  # the planner only: code located the title
+    assert [n.pref_label for n in outcome.result.nodes] == ["software developer"]

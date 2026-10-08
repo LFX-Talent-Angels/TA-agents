@@ -12,6 +12,7 @@ from contextvars import ContextVar
 from time import perf_counter
 
 from talent_angels.llm import LLMClient, LLMError, LLMResult, Message
+from talent_angels.llm.protocol import seconds_left, turn_cancelled
 from talent_angels.runlog import StageUsage
 
 #: Stage names of phrasing calls made *after* a turn's record is built (TUI).
@@ -42,6 +43,12 @@ def measure_complete(
     stage: str,
     tools: list[dict[str, object]] | None = None,
 ) -> tuple[LLMResult, StageUsage]:
+    left = seconds_left()
+    if turn_cancelled():
+        raise LLMError(f"{stage}: turn cancelled")
+    if left is not None and left <= 1.0:
+        # Past the turn's deadline: the caller's code fallback answers instead.
+        raise LLMError(f"{stage}: turn deadline passed")
     started = perf_counter()
     try:
         if tools is None:

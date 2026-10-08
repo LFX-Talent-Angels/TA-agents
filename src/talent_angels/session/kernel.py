@@ -20,6 +20,7 @@ from talent_angels.assistant.synthesize import synthesize
 from talent_angels.assistant.turn import TurnOutcome
 from talent_angels.contracts import AgentResult, NodeRef
 from talent_angels.llm import LLMClient
+from talent_angels.llm.protocol import turn_cancelled, turn_deadline
 from talent_angels.memory.episodes import recent_episodes
 from talent_angels.memory.erase import erase_all, erase_session, erase_summary
 from talent_angels.memory.profile import (
@@ -146,7 +147,22 @@ def handle_line(
     runner: TurnRunner,
     llm_client: LLMClient | None = None,
 ) -> ChatReply:
-    """Mutate state (transcript, binding, pending). Never search for a bare number."""
+    """Mutate state (transcript, binding, pending). Never search for a bare number.
+
+    One line is one turn with one clock (``turn_deadline``): every model call it
+    makes, from narrowing to phrasing, shares it.
+    """
+    with turn_deadline():
+        return _handle_line(state, text, runner=runner, llm_client=llm_client)
+
+
+def _handle_line(
+    state: SessionState,
+    text: str,
+    *,
+    runner: TurnRunner,
+    llm_client: LLMClient | None = None,
+) -> ChatReply:
     routed = route_line(text)
     if routed.kind == "command":
         return _handle_command(state, text)
@@ -252,6 +268,8 @@ def _set_bind(state: SessionState, node: NodeRef) -> None:
 
 def _apply_profile_intent(intent: str | None, node: NodeRef) -> None:
     """Write what the user said about themselves; a plain lookup writes nothing."""
+    if turn_cancelled():
+        return  # the user stopped waiting: an abandoned turn writes nothing
     if intent == "goal":
         write_goal(node)
     elif intent == "reject":
@@ -1051,6 +1069,11 @@ def _from_outcome(
     _draft = getattr(outcome, "plan_draft", None)
     searched = _searched_for(question, _draft)
 
+    cards_shown = any(
+        (r.capability in ("connect", CAPABILITY_COMPARE) and r.nodes)
+        or ("ambiguous" in r.warnings and r.nodes)
+        for r in results
+    )
     for result in results:
         heading = suite_heading(result.suite) if result.suite else "Map"
         if "ambiguous" in result.warnings and result.nodes:
@@ -1101,7 +1124,15 @@ def _from_outcome(
         if unique_bind is None:
             unique_bind = result.nodes[0]
         unique_cards.append(
-            _render_unique_block(result, question=question, llm_client=llm_client, heading=heading)
+            _render_unique_block(
+                result,
+                question=question,
+                # Cards are only printed beside a connect, compare or pick list;
+                # otherwise synthesize() writes the answer and a phrased card
+                # would be a paid model call thrown away.
+                llm_client=llm_client if cards_shown else None,
+                heading=heading,
+            )
         )
 
     # A title the user named and the map resolved carries what they said about

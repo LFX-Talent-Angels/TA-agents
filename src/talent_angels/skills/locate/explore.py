@@ -59,6 +59,12 @@ def _names_subject(subject: str, node: NodeRef) -> bool:
     return any(pattern.search(name.casefold()) for name in (node.pref_label, *node.alt_labels))
 
 
+def _is_short_word(subject: str) -> bool:
+    """An abbreviation-sized word ("swe", "qa", "ux") rather than a title."""
+    text = subject.strip()
+    return text.isalpha() and len(text) <= 4
+
+
 def _confirmed(
     suite: ExploreSuite, suite_name: str, candidate: str, kind: str | None
 ) -> tuple[NodeRef, AgentResult] | None:
@@ -114,6 +120,21 @@ def explore(
         confirmed.append(hit[0])
         evidence.extend(hit[1].evidence)
 
+    if not confirmed and _is_short_word(subject):
+        # "swe" with no confirmed title: word-start hits ("chimney sweep") are
+        # not answers. Keep only titles that name it; none is an honest miss.
+        named = [node for node in located.nodes if _names_subject(subject, node)]
+        if not named:
+            return (
+                AgentResult(
+                    capability="locate",
+                    suite=suite_name,
+                    evidence=list(located.evidence),
+                    warnings=["not_found"],
+                ),
+                [],
+            )
+        located = located.model_copy(update={"nodes": named})
     if not confirmed:
         if not subject_is_users and located.nodes and "ambiguous" not in located.warnings:
             # The planner wrote this subject; its one hit is offered, not bound.

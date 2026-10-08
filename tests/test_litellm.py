@@ -18,6 +18,7 @@ from talent_angels.llm.litellm_client import (
     _quiet_stdio,
     ensure_local_model_cost_map,
 )
+from talent_angels.llm.protocol import DEFAULT_LLM_TIMEOUT_SECONDS
 from talent_angels.runlog import estimate_llm_cost_usd
 
 MODEL = "openrouter/nvidia/nemotron-3-ultra-550b-a55b:free"
@@ -131,7 +132,7 @@ def test_litellm_maps_request_text_and_exclusive_usage_buckets() -> None:
             {"role": "user", "content": "Find software developer."},
         ],
         "max_tokens": 1024,
-        "timeout": 60.0,
+        "timeout": DEFAULT_LLM_TIMEOUT_SECONDS,
         "num_retries": 1,
         "extra_body": {"reasoning": {"enabled": True}},
     }

@@ -16,6 +16,7 @@ from talent_angels.assistant.intent import (
 from talent_angels.assistant.llm_call import measure_complete
 from talent_angels.assistant.planning import ExecutionPlan, build_plan, build_plan_for_capability
 from talent_angels.llm import LLMClient, Message
+from talent_angels.memory.plan_cache import get_plan, plan_key, set_plan
 from talent_angels.runlog import StageUsage
 from talent_angels.skills.connect.models import ConnectRequest
 from talent_angels.skills.locate import ESCO_SUITE_NAME
@@ -42,7 +43,11 @@ Vague requests:
   "construction engineer", "building engineer"). Respect what the user rules
   out: no coding titles for "no coding".
 - Expand an abbreviation in candidates ("ML engineer" → "machine learning
-  engineer"), keeping the user's words in subject.
+  engineer"), keeping the user's words in subject. A short word that may be an
+  abbreviation, in any case, always gets candidates: "swe" → ["software
+  engineer", "software developer"], "qa" → ["quality assurance analyst",
+  "software tester"], "ux" → ["user experience designer", "user interface
+  designer"].
 - Write candidates as the maps name jobs: plain singular titles. Two maps are
   searched, one in British and one in American spelling: where they differ,
   give both ("paediatrician", "pediatrician").
@@ -397,39 +402,52 @@ def interpret_question(
             stage=None,
         )
 
-    try:
-        result, stage = measure_complete(
-            llm_client,
-            [
-                Message(role="system", content=PLAN_SYSTEM),
-                Message(role="user", content=planner_message(question, profile)),
-            ],
-            stage="intent",
-        )
-    except RuntimeError:
-        return InterpretedPlan(
-            plan=build_plan(question, suites=selected),
-            draft=None,
-            heuristic=True,
-            stage=None,
-        )
-    try:
-        draft = parse_plan_text(result.text)
+    key = plan_key(
+        question, profile, prompt=PLAN_SYSTEM, model=str(getattr(llm_client, "model", ""))
+    )
+    cached = get_plan(key)
+    if cached is not None:
+        try:
+            draft = PlanDraft.model_validate_json(cached)
+            plan = build_plan_for_capability(draft.target, suites=selected)
+            # Same words, same reading: no model call, no run-to-run drift.
+            return InterpretedPlan(plan=plan, draft=draft, heuristic=False, stage=None)
+        except ValidationError:
+            pass  # an older shape of plan: read the question afresh
+
+    stage: StageUsage | None = None
+    for _attempt in range(2):
+        try:
+            result, stage = measure_complete(
+                llm_client,
+                [
+                    Message(role="system", content=PLAN_SYSTEM),
+                    Message(role="user", content=planner_message(question, profile)),
+                ],
+                stage="intent",
+            )
+        except RuntimeError:
+            break
+        try:
+            draft = parse_plan_text(result.text)
+        except (ValueError, ValidationError, json.JSONDecodeError):
+            continue  # one more try before falling back to keywords
+        set_plan(key, draft.model_dump_json())
         # Suite choice is owned by select_suites / the caller, not the model.
         plan = build_plan_for_capability(draft.target, suites=selected)
         return InterpretedPlan(plan=plan, draft=draft, heuristic=False, stage=stage)
-    except (ValueError, ValidationError, json.JSONDecodeError):
-        heuristic_draft = _profile_intent_heuristic(question)
-        if heuristic_draft is not None:
-            return InterpretedPlan(
-                plan=build_plan_for_capability(heuristic_draft.target, suites=selected),
-                draft=heuristic_draft,
-                heuristic=True,
-                stage=stage,
-            )
+
+    heuristic_draft = _profile_intent_heuristic(question)
+    if heuristic_draft is not None:
         return InterpretedPlan(
-            plan=build_plan(question, suites=selected),
-            draft=None,
+            plan=build_plan_for_capability(heuristic_draft.target, suites=selected),
+            draft=heuristic_draft,
             heuristic=True,
             stage=stage,
         )
+    return InterpretedPlan(
+        plan=build_plan(question, suites=selected),
+        draft=None,
+        heuristic=True,
+        stage=stage,
+    )

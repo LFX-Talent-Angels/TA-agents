@@ -39,7 +39,6 @@ SHOW_ELAPSED_AFTER_SECONDS = 2.0
 OFFER_CANCEL_AFTER_SECONDS = 3.0
 _POLL_SECONDS = 0.1
 _CANCEL_KEYS = {"\x1b", "\x03"}  # Esc, Ctrl-C
-_WORK_LOCK = threading.Lock()
 
 
 class Cancelled(Exception):
@@ -58,7 +57,13 @@ def _status_text(label: str, elapsed: float) -> str:
     return f"[cyan]{label}[/] [dim]{elapsed:.0f}s · esc to cancel[/]"
 
 
-def run_with_status(console: Console, label: str, work: Callable[[], T]) -> T:
+def run_with_status(
+    console: Console,
+    label: str,
+    work: Callable[[], T],
+    *,
+    cancel: threading.Event | None = None,
+) -> T:
     """Run `work` behind a spinner. Raises `Cancelled` if the reader escapes.
 
     `work` runs on a background thread so this one stays free to watch the
@@ -70,10 +75,10 @@ def run_with_status(console: Console, label: str, work: Callable[[], T]) -> T:
 
     def run() -> None:
         try:
-            # Provider calls cannot be interrupted safely; serialize them so
-            # abandoned work cannot overlap another provider's stdio wrapper.
-            with _WORK_LOCK:
-                box["value"] = work()
+            # No lock: an abandoned turn must not make the next one wait. It
+            # sees ``cancel`` at its next model call and stops; its profile
+            # writes are skipped (kernel), and its state copy is discarded.
+            box["value"] = work()
         except BaseException as exc:  # re-raised on this thread below
             box["error"] = exc
 
@@ -94,6 +99,8 @@ def run_with_status(console: Console, label: str, work: Callable[[], T]) -> T:
                     continue
                 ready, _, _ = select.select([sys.stdin], [], [], _POLL_SECONDS)
                 if ready and sys.stdin.read(1) in _CANCEL_KEYS:
+                    if cancel is not None:
+                        cancel.set()
                     raise Cancelled
     finally:
         if settings is not None:

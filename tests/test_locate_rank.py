@@ -258,3 +258,63 @@ def test_meaning_hits_keep_the_suite_order() -> None:
     ranked = group_and_sort_locate(_NoGroups(), result, "AI engineer", suite_name="esco")
 
     assert [node.pref_label for node in ranked.nodes] == [best.pref_label, short.pref_label]
+
+
+def test_a_short_word_ranks_only_as_a_whole_word() -> None:
+    from talent_angels.contracts import NodeRef
+    from talent_angels.skills.locate.rank import lexical_rank
+
+    def node(label: str) -> NodeRef:
+        return NodeRef(
+            id=label,
+            suite="esco",
+            source="esco",
+            source_id=label,
+            kind="Occupation",
+            pref_label=label,
+        )
+
+    assert lexical_rank("swe", node("chimney sweep"))[0] == 5
+    assert lexical_rank("SWE", node("SWE lead"))[0] == 1
+    assert lexical_rank("data scien", node("data scientist"))[0] == 2
+
+
+def test_a_single_alias_substring_hit_is_offered_not_selected() -> None:
+    from talent_angels.contracts import AgentResult, NodeRef
+    from talent_angels.skills.locate.rank import group_and_sort_locate
+
+    localiser = NodeRef(
+        id="esco:loc",
+        suite="esco",
+        source="esco",
+        source_id="loc",
+        kind="Occupation",
+        pref_label="localiser",
+        alt_labels=["localisation QA tester"],
+    )
+    hr = NodeRef(
+        id="esco:hr",
+        suite="esco",
+        source="esco",
+        source_id="hr",
+        kind="Occupation",
+        pref_label="human resources manager",
+        alt_labels=["hr manager"],
+    )
+
+    class NoNeighbours:
+        def get_neighbors(self, node_id: str, rel_types: list[str] | None = None) -> object:
+            raise AssertionError("not needed")
+
+    one = AgentResult(capability="locate", suite="esco", nodes=[localiser])
+    assert (
+        "ambiguous"
+        in group_and_sort_locate(NoNeighbours(), one, "qa tester", suite_name="esco").warnings
+    )  # type: ignore[arg-type]
+    exact_alias = AgentResult(capability="locate", suite="esco", nodes=[hr])
+    assert (
+        "ambiguous"
+        not in group_and_sort_locate(
+            NoNeighbours(), exact_alias, "HR manager", suite_name="esco"
+        ).warnings
+    )  # type: ignore[arg-type]

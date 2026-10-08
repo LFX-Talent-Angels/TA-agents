@@ -285,7 +285,7 @@ def test_phrase_chat_injects_user_profile(tmp_path: Path) -> None:
         )
 
     system_msg = client.calls[0][0].content
-    assert "STANDING[onet]" in system_msg
+    assert "Current job (onet): Software Developers" in system_msg
 
 
 def test_phrase_chat_no_profile_when_user_md_absent(tmp_path: Path) -> None:
@@ -332,7 +332,7 @@ def test_phrase_map_injects_user_profile(tmp_path: Path) -> None:
         )
 
     system_msg = client.calls[0][0].content
-    assert "GOAL:" in system_msg
+    assert "Goal: Data Scientists" in system_msg
 
 
 def test_phrase_map_no_profile_when_user_md_absent(tmp_path: Path) -> None:

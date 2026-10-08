@@ -571,6 +571,8 @@ def test_multisuite_turn_does_not_double_count_llm_stages() -> None:
 
     client = ScriptedToolClient(
         [
+            # An unreadable plan is retried once, then the keyword plan runs.
+            LLMResult(text='{"kind":"occupation"}', provider="litellm", model="actual"),
             LLMResult(text='{"kind":"occupation"}', provider="litellm", model="actual"),
             LLMResult(
                 text='{"tool":"search_nodes","text":"software developer","kind":"occupation"}',

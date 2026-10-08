@@ -182,3 +182,49 @@ def test_a_title_the_planner_wrote_is_offered_not_bound() -> None:
     assert explored is not None
     assert [n.pref_label for n in explored[0].nodes] == ["civil engineer"]
     assert "ambiguous" in explored[0].warnings
+
+
+def test_subject_matches_that_do_not_name_it_are_dropped_once_titles_are_confirmed() -> None:
+    dev = _occ("software developer", "software engineer")
+    sweep = _occ("chimney sweep")
+    swe_alias = _occ("systems engineer", "SWE lead")
+    suite = _Suite(
+        {
+            "SWE": _hits(sweep, _occ("street sweeper"), swe_alias),
+            "software engineer": _hits(dev, method="exact_alt"),
+        }
+    )
+    explored = explore(suite, "esco", "SWE", ["software engineer"], kind="occupation")
+    assert explored is not None
+    assert [n.pref_label for n in explored[0].nodes] == ["software developer", "systems engineer"]
+
+
+def test_a_short_word_with_no_confirmed_title_is_an_honest_miss() -> None:
+    sweep = _occ("chimney sweep")
+    suite = _Suite({"SWE": _hits(sweep, _occ("street sweeper"))})
+    explored = explore(suite, "esco", "SWE", ["no such title"], kind="occupation")
+    assert explored is not None
+    assert explored[0].nodes == []
+    assert explored[0].warnings == ["not_found"]
+
+
+def test_a_longer_subject_with_no_confirmed_title_keeps_its_list() -> None:
+    suite = _Suite({"engineer": _hits(_occ("civil engineer"), _occ("test engineer"))})
+    explored = explore(suite, "esco", "engineer", ["no such title"], kind="occupation")
+    assert explored is not None
+    assert {n.pref_label for n in explored[0].nodes} == {"civil engineer", "test engineer"}
+
+
+def test_a_planner_subject_with_no_confirmed_title_is_still_not_bound() -> None:
+    near = _occ("basket maker")
+    suite = _Suite({"basket weaver": _hits(near)})
+    explored = explore(
+        suite,
+        "esco",
+        "basket weaver",
+        ["quantum weaver"],
+        kind="occupation",
+        subject_is_users=False,
+    )
+    assert explored is not None
+    assert "ambiguous" in explored[0].warnings

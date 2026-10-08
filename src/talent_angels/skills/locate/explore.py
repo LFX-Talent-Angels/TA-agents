@@ -9,6 +9,7 @@ the whole list is always the user's to choose from — never an automatic pick.
 
 from __future__ import annotations
 
+import re
 from collections.abc import Sequence
 from typing import Protocol
 
@@ -46,6 +47,22 @@ def _same_title(candidate: str, node: NodeRef) -> bool:
         if name in (wanted, f"{wanted}s") or f"{name}s" == wanted:
             return True
     return False
+
+
+def _names_subject(subject: str, node: NodeRef) -> bool:
+    """``subject`` as a whole word or phrase of the title or an alias.
+
+    "SWE" names "SWE" but not "chimney sweep"; "engineer" names "civil
+    engineer". A plural still counts.
+    """
+    pattern = re.compile(rf"(?<![\w]){re.escape(subject.casefold().strip())}s?(?![\w])")
+    return any(pattern.search(name.casefold()) for name in (node.pref_label, *node.alt_labels))
+
+
+def _is_short_word(subject: str) -> bool:
+    """An abbreviation-sized word ("swe", "qa", "ux") rather than a title."""
+    text = subject.strip()
+    return text.isalpha() and len(text) <= 4
 
 
 def _confirmed(
@@ -103,7 +120,25 @@ def explore(
         confirmed.append(hit[0])
         evidence.extend(hit[1].evidence)
 
+    if not confirmed and _is_short_word(subject):
+        # "swe" with no confirmed title: word-start hits ("chimney sweep") are
+        # not answers. Keep only titles that name it; none is an honest miss.
+        named = [node for node in located.nodes if _names_subject(subject, node)]
+        if not named:
+            return (
+                AgentResult(
+                    capability="locate",
+                    suite=suite_name,
+                    evidence=list(located.evidence),
+                    warnings=["not_found"],
+                ),
+                [],
+            )
+        located = located.model_copy(update={"nodes": named})
     if not confirmed:
+        if not subject_is_users and located.nodes and "ambiguous" not in located.warnings:
+            # The planner wrote this subject; its one hit is offered, not bound.
+            located = located.model_copy(update={"warnings": [*located.warnings, "ambiguous"]})
         return located, areas
     # Each confirmed title under its own group heading, not the one above it.
     grouped = {edge.source_node_id for edge in located.edges}
@@ -129,7 +164,10 @@ def explore(
                 )
             )
     seen = {node.id for node in confirmed}
-    nodes = [*confirmed, *(node for node in located.nodes if node.id not in seen)]
+    # With confirmed titles in hand, the subject's own matches stay only when
+    # they really name it: "SWE" word-start hits ("chimney sweep") are noise.
+    rest = [node for node in located.nodes if node.id not in seen and _names_subject(subject, node)]
+    nodes = [*confirmed, *rest]
     kept = [w for w in located.warnings if w in ("truncated", "match_count_capped")]
     return (
         AgentResult(

@@ -19,6 +19,7 @@ from talent_angels.memory.agent_notes import notes_prefix
 from talent_angels.memory.profile import profile_prefix
 from talent_angels.memory.retrieval import recall_prefix
 from talent_angels.session.followup import relation_tags
+from talent_angels.skills.locate.rank import code_facts
 
 _CHAT_SYSTEM = """You are LFX Talent Angels, a concise assistant in a terminal.
 Warm and useful. You look up occupations and skills on a taxonomy map.
@@ -44,7 +45,12 @@ Rules:
 - These are map titles, not a guess about a person. Never say "the person is".
 - Do not number options. Do not pick rank 1.
 - Do not suggest related job titles that are not in the FACT CARD.
-- Do not repeat the id/confidence block; that is printed under your text."""
+- Do not repeat the id/confidence block; that is printed under your text.
+- A fact the card does not hold (a code, a group, pay, outlook) is not known:
+  say the card does not include it. Never state it from memory, and never
+  correct yourself mid-answer.
+- ESCO and O*NET are separate taxonomies with no official link here: never say
+  a record in one maps to, equals, or is the equivalent of one in the other."""
 
 
 def phrase_chat(
@@ -142,6 +148,7 @@ def locate_card(result: AgentResult) -> str:
     ]
     if top.description:
         lines.append(f"description: {top.description}")
+    lines.extend(code_facts(result, top))
     lines.append("next: user may ask for essential or optional skills")
     return "\n".join(lines)
 

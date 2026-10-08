@@ -13,19 +13,20 @@ from typing import Literal, Protocol
 from talent_angels.assistant.answer import CONNECT_PREVIEW_CAP, summarize_result
 from talent_angels.assistant.connect_request import followup_connect_request, is_describe_followup
 from talent_angels.assistant.intent import CAPABILITY_CONNECT
-from talent_angels.assistant.llm_plan import PlanDraft, denied_subject
+from talent_angels.assistant.llm_plan import PlanDraft, denied_subject, is_statement
 from talent_angels.assistant.merge import suite_heading
 from talent_angels.assistant.suite_select import resolve_show_token
-from talent_angels.assistant.synthesize import synthesize, synthesize_structured
+from talent_angels.assistant.synthesize import synthesize
 from talent_angels.assistant.turn import TurnOutcome
 from talent_angels.contracts import AgentResult, NodeRef
 from talent_angels.llm import LLMClient
+from talent_angels.llm.protocol import turn_cancelled, turn_deadline
 from talent_angels.memory.episodes import recent_episodes
 from talent_angels.memory.erase import erase_all, erase_session, erase_summary
 from talent_angels.memory.profile import (
     drop_standing_matching,
+    profile_facts,
     profile_titles,
-    read_user_profile,
     write_goal,
     write_rejected,
     write_standing,
@@ -58,6 +59,7 @@ from talent_angels.session.followup import (
     skill_from_connect,
     skill_index_by_label,
 )
+from talent_angels.session.lead import lead, pick_intent
 from talent_angels.session.models import (
     AreaChoice,
     LastBinding,
@@ -67,7 +69,6 @@ from talent_angels.session.models import (
 )
 from talent_angels.session.narrow import area_by_letter, area_choices, narrow_decision, render_areas
 from talent_angels.session.phrase import (
-    ambiguous_intro_card,
     connect_card,
     locate_card,
     phrase_chat,
@@ -146,7 +147,22 @@ def handle_line(
     runner: TurnRunner,
     llm_client: LLMClient | None = None,
 ) -> ChatReply:
-    """Mutate state (transcript, binding, pending). Never search for a bare number."""
+    """Mutate state (transcript, binding, pending). Never search for a bare number.
+
+    One line is one turn with one clock (``turn_deadline``): every model call it
+    makes, from narrowing to phrasing, shares it.
+    """
+    with turn_deadline():
+        return _handle_line(state, text, runner=runner, llm_client=llm_client)
+
+
+def _handle_line(
+    state: SessionState,
+    text: str,
+    *,
+    runner: TurnRunner,
+    llm_client: LLMClient | None = None,
+) -> ChatReply:
     routed = route_line(text)
     if routed.kind == "command":
         return _handle_command(state, text)
@@ -163,19 +179,27 @@ def handle_line(
         body = f"{intro}\n\n{COMMANDS_BLOCK}" if uses_chat_phrasing(llm_client) else HELP_TEXT
         return _finish(state, text, body)
     if routed.kind == "greet":
+        thanked = text.strip().casefold().startswith("thank")
         said = phrase_chat(
             llm_client,
             user_text=model_view(state, text),
-            fallback=GREETING,
+            fallback="You're welcome. Name another job or skill whenever you like."
+            if thanked
+            else GREETING,
             hint=(
-                "User greeted you. Invite them to name a job or skill. Do not look anything up."
-                + _bound_title_hint(state)
-            ),
+                "User thanked you. One short sentence; offer a next step. Do not welcome "
+                "them again or introduce yourself."
+                if thanked
+                else "User greeted you. Invite them to name a job or skill. "
+                "Do not look anything up."
+            )
+            + _bound_title_hint(state),
         )
         return _finish(state, text, said)
     if routed.kind == "advice":
         current, goal = profile_titles()
-        grounded = advice_plan(text, current=current, goal=goal)
+        compared = (state.recent[-2], state.recent[-1]) if _compared_last(state) else None
+        grounded = advice_plan(text, current=current, goal=goal, compared=compared)
         if grounded is not None:
             return _handle_map(
                 state,
@@ -213,7 +237,7 @@ def handle_line(
         return _handle_chat(state, text, llm_client=llm_client)
     if routed.kind == "recall":
         return _finish(state, text, recall_reply(text, state.recent, recent_episodes(limit=30)))
-    if state.pending or state.areas:
+    if (state.pending or state.areas) and _may_narrow(state, routed.text):
         narrowed = _handle_narrow(state, routed.text, runner=runner, llm_client=llm_client)
         if narrowed is not None:
             return narrowed
@@ -244,6 +268,8 @@ def _set_bind(state: SessionState, node: NodeRef) -> None:
 
 def _apply_profile_intent(intent: str | None, node: NodeRef) -> None:
     """Write what the user said about themselves; a plain lookup writes nothing."""
+    if turn_cancelled():
+        return  # the user stopped waiting: an abandoned turn writes nothing
     if intent == "goal":
         write_goal(node)
     elif intent == "reject":
@@ -723,23 +749,22 @@ def _from_single_outcome(
     draft = getattr(outcome, "plan_draft", None)
     state.pending_profile_intent = None
     state.areas = []
+    if "ambiguous" not in result.warnings:
+        # A turn without a new list closes the old one: a later hint must not
+        # narrow a list from several turns back.
+        state.pending = []
+        state.list_topic = ""
     if "ambiguous" in result.warnings:
         pending = choices_from_result(result)
         omitted = max(0, len(result.nodes) - len(pending))
         state.pending = pending
-        state.pending_profile_intent = draft.profile_intent if draft else None
+        state.pending_profile_intent = pick_intent(draft)
         state.binding = None
         state.bindings.clear()
         searched = _searched_for(question, draft)
-        intro = phrase_chat(
-            llm_client,
-            user_text=question,
-            fallback=f'I found several matches for "{searched}". Which one did you mean?',
-            hint=ambiguous_intro_card(
-                searched, [choice.node.pref_label for choice in pending], omitted=omitted
-            ),
-            mode="intro",
-        )
+        state.list_topic = searched
+        # What was understood and what happens next, written in code (lead.py).
+        intro = lead(question, draft, [result])
         text = render_picker(searched, pending, omitted=omitted, intro=intro)
         text = _with_areas(state, text, outcome, searched=searched, draft=draft)
     elif "not_found" in result.warnings:
@@ -851,6 +876,25 @@ def _area_titles(state: SessionState, choice: AreaChoice, *, runner: TurnRunner)
     return [c.node for c in state.pending if c.group_label == choice.label]
 
 
+def _may_narrow(state: SessionState, text: str) -> bool:
+    """Only a list still waiting for a choice is narrowed, and never by a statement.
+
+    After a pick the list stays for number corrections ("actually 3"), but a
+    sentence then is a new request. "I am not a nurse" or "compare the two" is
+    never a hint about the list.
+    """
+    if state.binding is not None and not state.areas:
+        return False
+    return not is_statement(text) and pair_followup(text, state.recent) is None
+
+
+def _names_title(text: str, label: str) -> bool:
+    """The user typed the title itself, singular or plural."""
+    said = text.strip().rstrip(".!?").casefold()
+    title = label.casefold()
+    return said in (title, f"{title}s") or f"{said}s" == title
+
+
 def _handle_narrow(
     state: SessionState,
     text: str,
@@ -870,23 +914,24 @@ def _handle_narrow(
         if not (decision.options or decision.areas):
             # About the list, but nothing on it fits: search again, keeping
             # the topic the list was for ("something with children, in healthcare").
-            topic = state.areas[0].query if state.areas else _last_map_query(state)
+            topic = state.list_topic
             if not topic:
                 return None
-            return _handle_map(
+            intent = state.pending_profile_intent
+            reply = _handle_map(
                 state, text, runner=runner, llm_client=llm_client, question=f"{text}, in {topic}"
             )
+            if state.pending and state.pending_profile_intent is None:
+                # "I want to become an engineer" … "something outdoors": a pick
+                # from the new list is still the goal.
+                state.pending_profile_intent = intent
+            return reply
         options = [c for c in state.pending if c.number in decision.options]
         chosen_areas = [a for a in state.areas if a.letter in decision.areas]
-        if (
-            len(options) == 1
-            and not chosen_areas
-            and options[0].node.pref_label.casefold() == text.strip().rstrip(".!").casefold()
-        ):
-            # The user typed the title itself: that is a pick, not a hint.
-            return _handle_pick(
-                state, text, options[0].number, runner=runner, llm_client=llm_client
-            )
+        named = [c for c in options if _names_title(text, c.node.pref_label)]
+        if len(named) == 1:
+            # The user typed a listed title itself: that is a pick, not a hint.
+            return _handle_pick(state, text, named[0].number, runner=runner, llm_client=llm_client)
     _record(state, "user", text)
     nodes = [c.node for c in options]
     for area in chosen_areas:
@@ -958,36 +1003,32 @@ def _handle_show(state: SessionState, text: str, token: str) -> ChatReply:
     return _reply(state, message, source_note=heading)
 
 
-def _meta_chat_fallback(state: SessionState) -> str:
-    profile = read_user_profile().strip()
-    if not profile:
+def _profile_reply() -> str:
+    facts = profile_facts()
+    if not facts:
         return (
-            "I don't have much about you yet. Name a job you're aiming for "
-            "and I'll note it, then we can look at what it takes."
+            'I don\'t have much about you yet. Tell me your current job ("I am a …") '
+            "or a job you're aiming for (\"my goal is …\") and I'll note it."
         )
-    return f"What I have on file for you:\n\n{profile}"
+    lines = "\n".join(f"- {fact}" for fact in facts)
+    return (
+        f"Here is what you've told me:\n\n{lines}\n\n"
+        "That is all I keep about you. Tell me your goal or current job to change it."
+    )
 
 
 def _handle_chat(
     state: SessionState,
     text: str,
     *,
-    llm_client: LLMClient | None,
+    llm_client: LLMClient | None,  # noqa: ARG001 — signature matches other handlers
 ) -> ChatReply:
-    """First-person meta queries answer from the profile, never from the map."""
-    said = phrase_chat(
-        llm_client,
-        user_text=model_view(state, text),
-        fallback=_meta_chat_fallback(state),
-        hint=(
-            "User asked about their profile or what you know about them. "
-            "Answer only from the profile card above. Do not call any graph "
-            "tool and do not invent facts about the user. If the profile is "
-            "empty, say you have not been told much yet and invite them to "
-            "name a goal occupation."
-        ),
-    )
-    return _finish(state, text, said)
+    """Questions about the user answer from the profile, written in code.
+
+    A model asked to summarise the profile mixed it with the conversation and
+    invented roles the user never claimed; the profile is data, so it is shown.
+    """
+    return _finish(state, text, _profile_reply())
 
 
 def _from_outcome(
@@ -1028,6 +1069,11 @@ def _from_outcome(
     _draft = getattr(outcome, "plan_draft", None)
     searched = _searched_for(question, _draft)
 
+    cards_shown = any(
+        (r.capability in ("connect", CAPABILITY_COMPARE) and r.nodes)
+        or ("ambiguous" in r.warnings and r.nodes)
+        for r in results
+    )
     for result in results:
         heading = suite_heading(result.suite) if result.suite else "Map"
         if "ambiguous" in result.warnings and result.nodes:
@@ -1038,7 +1084,7 @@ def _from_outcome(
             # Written in code: a model call per suite for one fixed sentence
             # cost 4-9 seconds each and said nothing the list does not.
             intro = (
-                f'{heading} titles that fit "{question}". Which one did you mean?'
+                f"{heading} titles that fit your request. Which one did you mean?"
                 if "guided" in result.warnings
                 else f'I found several {heading} matches for "{searched}". Which one did you mean?'
             )
@@ -1078,17 +1124,28 @@ def _from_outcome(
         if unique_bind is None:
             unique_bind = result.nodes[0]
         unique_cards.append(
-            _render_unique_block(result, question=question, llm_client=llm_client, heading=heading)
+            _render_unique_block(
+                result,
+                question=question,
+                # Cards are only printed beside a connect, compare or pick list;
+                # otherwise synthesize() writes the answer and a phrased card
+                # would be a paid model call thrown away.
+                llm_client=llm_client if cards_shown else None,
+                heading=heading,
+            )
         )
 
-    intent = _draft.profile_intent if _draft is not None else None
-    if intent == "standing":
+    # A title the user named and the map resolved carries what they said about
+    # it; a pick from suggestions only carries what pick_intent allows.
+    said = _draft.profile_intent if _draft is not None else None
+    intent = pick_intent(_draft)
+    if said == "standing":
         # One current occupation per suite: every suite that resolved records it.
         for item in results:
             if item.nodes and "ambiguous" not in item.warnings and "not_found" not in item.warnings:
-                _apply_profile_intent(intent, item.nodes[0])
+                _apply_profile_intent(said, item.nodes[0])
     elif unique_bind is not None:
-        _apply_profile_intent(intent, unique_bind)
+        _apply_profile_intent(said, unique_bind)
         intent = None  # goal/reject are written once, not again on a later pick
     state.pending_profile_intent = intent if pending_all else None
     if unique_bind is not None:
@@ -1099,14 +1156,14 @@ def _from_outcome(
 
     if pending_all:
         state.pending = pending_all
+        state.list_topic = searched
         if not state.bindings:
             state.binding = None
-    elif unique_bind is not None:
-        if any(
-            item.capability == "locate" and "ambiguous" not in item.warnings and item.nodes
-            for item in results
-        ):
-            state.pending = []
+    else:
+        # No new list this turn (a compare, a miss, a unique hit): close the old
+        # one, so a later hint cannot narrow a list from several turns back.
+        state.pending = []
+        state.list_topic = ""
 
     not_implemented = any(
         w.startswith("capability_not_implemented") for result in results for w in result.warnings
@@ -1145,7 +1202,9 @@ def _from_outcome(
         # (`_hit_phrase` already says "<suite> has several matches" for an
         # ambiguous hit) with no model call, so there is nothing left to
         # hallucinate.
-        text = synthesize_structured(results, list_ambiguous=False)
+        # The short answer first: what was understood, what each map has, what
+        # next. Code-written, like the rest of a pick list (lead.py).
+        text = lead(question, _draft, results)
         extras = [*unique_cards]
         picker_blocks = [
             block for block in blocks if "I won't pick" in block or "Which one" in block
@@ -1281,6 +1340,12 @@ def _handle_map(
     if dropped:
         # The denial names a saved current job: correct the profile, no search.
         titles = ", ".join(f"**{title}**" for title in dropped)
+        gone = {title.casefold() for title in dropped}
+        for suite, node in list(state.bindings.items()):
+            if node.pref_label.casefold() in gone:
+                del state.bindings[suite]
+        if state.binding is not None and state.binding.node.pref_label.casefold() in gone:
+            state.binding = None
         message = f"Noted: {titles} is no longer saved as your current job."
         _record(state, "assistant", message)
         return _reply(state, message)

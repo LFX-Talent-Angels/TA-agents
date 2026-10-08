@@ -5,7 +5,7 @@ from __future__ import annotations
 import copy
 import json
 from collections.abc import Sequence
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import Literal, Protocol
@@ -13,23 +13,28 @@ from typing import Literal, Protocol
 from talent_angels.assistant.answer import CONNECT_PREVIEW_CAP, summarize_result
 from talent_angels.assistant.connect_request import followup_connect_request, is_describe_followup
 from talent_angels.assistant.intent import CAPABILITY_CONNECT
-from talent_angels.assistant.llm_plan import PlanDraft
+from talent_angels.assistant.llm_plan import PlanDraft, denied_subject
 from talent_angels.assistant.merge import suite_heading
 from talent_angels.assistant.suite_select import resolve_show_token
 from talent_angels.assistant.synthesize import synthesize, synthesize_structured
 from talent_angels.assistant.turn import TurnOutcome
 from talent_angels.contracts import AgentResult, NodeRef
 from talent_angels.llm import LLMClient
+from talent_angels.memory.episodes import recent_episodes
 from talent_angels.memory.erase import erase_all, erase_session, erase_summary
 from talent_angels.memory.profile import (
+    drop_standing_matching,
+    profile_titles,
     read_user_profile,
     write_goal,
     write_rejected,
     write_standing,
 )
+from talent_angels.session.advice import advice_plan
 from talent_angels.session.budget import model_view
 from talent_angels.session.catalog import FreeModel
 from talent_angels.session.commands import UnknownCommand, parse_command
+from talent_angels.session.compare_view import render_compare
 from talent_angels.session.copy import (
     ADVICE_REFUSE,
     CATALOGUE_REFUSE,
@@ -64,6 +69,7 @@ from talent_angels.session.phrase import (
     uses_chat_phrasing,
 )
 from talent_angels.session.picker import bind_pick, choices_from_result, render_picker
+from talent_angels.session.recall import recall_reply
 from talent_angels.session.router import route_line
 from talent_angels.session.store import (
     clear_conversation,
@@ -74,6 +80,8 @@ from talent_angels.session.store import (
     sessions_dir,
 )
 from talent_angels.session.switch import SwitchError, apply, load_catalogue, resolve
+from talent_angels.session.working_set import pair_followup, refers_to_one, remember
+from talent_angels.skills.connect.compare import CAPABILITY_COMPARE
 
 _NO_PENDING = "There's no numbered list to pick from. Type a job title first."
 _BAD_PICK = "That number isn't in the list. Reply with a number from the options."
@@ -157,6 +165,17 @@ def handle_line(
         )
         return _finish(state, text, said)
     if routed.kind == "advice":
+        current, goal = profile_titles()
+        grounded = advice_plan(text, current=current, goal=goal)
+        if grounded is not None:
+            return _handle_map(
+                state,
+                text,
+                runner=runner,
+                llm_client=llm_client,
+                question=grounded.question,
+                preface=grounded.preface,
+            )
         said = phrase_chat(
             llm_client,
             user_text=text,
@@ -183,6 +202,8 @@ def handle_line(
         return _handle_show(state, text, routed.show_token or "")
     if routed.kind == "chat":
         return _handle_chat(state, text, llm_client=llm_client)
+    if routed.kind == "recall":
+        return _finish(state, text, recall_reply(text, state.recent, recent_episodes(limit=30)))
     mention = parse_skill_mention(text)
     stored = state.last_result
     if mention is None and stored is not None and can_expand_connect(stored):
@@ -426,6 +447,7 @@ def _handle_pick(
             _record(state, "assistant", _BAD_PICK)
             return _reply(state, _BAD_PICK)
         _set_bind(state, node)
+        state.recent = remember(state.recent, node.pref_label)
         _apply_profile_intent(state.pending_profile_intent, node)
         state.pending_profile_intent = None
         _write_picker_event(
@@ -642,6 +664,32 @@ def _render_unique_block(
     return body
 
 
+def _remember_topic(state: SessionState, draft: PlanDraft | None, node: NodeRef) -> None:
+    """Add this turn's title to the working set, as the user searched it."""
+    subject = draft.subject if draft is not None and draft.subject else node.pref_label
+    state.recent = remember(state.recent, subject)
+
+
+def _compared_last(state: SessionState) -> bool:
+    return (
+        not state.bindings
+        and len(state.recent) >= 2
+        and any(result.capability == CAPABILITY_COMPARE for result in state.last_results)
+    )
+
+
+def _remember_compared(state: SessionState, draft: PlanDraft | None, result: AgentResult) -> None:
+    if draft is not None and draft.subject and draft.secondary_subject:
+        titles = [draft.subject, draft.secondary_subject]
+    else:
+        titles = [node.pref_label for node in result.nodes[:2]]
+    for title in titles:
+        state.recent = remember(state.recent, title)
+    # After a compare, "it" could be either title: nothing stays bound.
+    state.binding = None
+    state.bindings.clear()
+
+
 def _searched_for(question: str, draft: PlanDraft | None) -> str:
     """The words the search used ("nurse"), not the whole question, for a picker."""
     subject = draft.subject if draft is not None else None
@@ -691,6 +739,7 @@ def _from_single_outcome(
         )
     elif result.capability == "locate" and result.nodes:
         _set_bind(state, result.nodes[0])
+        _remember_topic(state, draft, result.nodes[0])
         _draft = getattr(outcome, "plan_draft", None)
         _apply_profile_intent(_draft.profile_intent if _draft else None, result.nodes[0])
         state.pending = []
@@ -708,6 +757,7 @@ def _from_single_outcome(
             text = record
     elif result.capability == "connect" and result.nodes:
         _set_bind(state, result.nodes[0])
+        _remember_topic(state, draft, result.nodes[0])
         fallback = _map_answer(outcome.answer)
         if not uses_chat_phrasing(llm_client):
             fallback = f"{fallback}\n\n{MAP_NEXT_STEP}"
@@ -724,6 +774,10 @@ def _from_single_outcome(
         hint = _connect_more_hint(result)
         if hint and hint not in text:
             text = f"{text}\n\n{hint}"
+    elif result.capability == CAPABILITY_COMPARE:
+        state.pending = []
+        _remember_compared(state, draft, result)
+        text = render_compare(result)
     elif any(w.startswith("capability_not_implemented") for w in result.warnings):
         text = PATHFIND_REDIRECT
     else:
@@ -897,6 +951,10 @@ def _from_outcome(
             continue
         all_miss = False
         any_hit = True
+        if result.capability == CAPABILITY_COMPARE:
+            # Two titles, neither is "it": the compare binds nothing.
+            unique_cards.append(f"## {heading}\n\n{render_compare(result)}")
+            continue
         _set_bind(state, result.nodes[0])
         if unique_bind is None:
             unique_bind = result.nodes[0]
@@ -914,6 +972,11 @@ def _from_outcome(
         _apply_profile_intent(intent, unique_bind)
         intent = None  # goal/reject are written once, not again on a later pick
     state.pending_profile_intent = intent if pending_all else None
+    if unique_bind is not None:
+        _remember_topic(state, _draft, unique_bind)
+    compared = next((r for r in results if r.capability == CAPABILITY_COMPARE), None)
+    if compared is not None:
+        _remember_compared(state, _draft, compared)
 
     if pending_all:
         state.pending = pending_all
@@ -973,7 +1036,9 @@ def _from_outcome(
         if extras:
             text = text + "\n\n---\n\n" + "\n\n---\n\n".join(extras)
     else:
-        has_connect = any(r.capability == "connect" and r.nodes for r in results)
+        has_connect = any(
+            r.capability in ("connect", CAPABILITY_COMPARE) and r.nodes for r in results
+        )
         if has_connect and unique_cards:
             text = "\n\n---\n\n".join(unique_cards)
             intro = _connect_bridge_intro(results)
@@ -1083,13 +1148,34 @@ def _handle_map(
     *,
     runner: TurnRunner,
     llm_client: LLMClient | None,
+    question: str | None = None,
+    preface: str = "",
 ) -> ChatReply:
+    """``question`` replaces ``text`` for the search when code already rewrote it."""
     _record(state, "user", text)
     bound = state.binding.node if state.binding is not None else None
     bound_nodes = dict(state.bindings) if state.bindings else None
-    if bound_nodes and is_describe_followup(text, bound_nodes):
+    # "compare the two" names its titles in code, from the working set.
+    denied = denied_subject(text)
+    dropped = drop_standing_matching(denied) if denied else []
+    if dropped:
+        # The denial names a saved current job: correct the profile, no search.
+        titles = ", ".join(f"**{title}**" for title in dropped)
+        message = f"Noted: {titles} is no longer saved as your current job."
+        _record(state, "assistant", message)
+        return _reply(state, message)
+    pair = question or pair_followup(text, state.recent)
+    if pair is None and _compared_last(state) and refers_to_one(text):
+        first, second = state.recent[-2:]
+        message = (
+            f"Which one do you mean: **{first}** or **{second}**? Name it and I'll look it up."
+        )
+        _record(state, "assistant", message)
+        return _reply(state, message)
+    if pair is None and bound_nodes and is_describe_followup(text, bound_nodes):
         return _describe_bound(state, text, llm_client=llm_client)
-    outcome = runner(text, bound_node=bound, bound_nodes=bound_nodes)
+    question = pair or text
+    outcome = runner(question, bound_node=bound, bound_nodes=bound_nodes)
     # Semantic suite switch: LLM detected user wants to see cached results on a specific suite.
     # Re-render from state.last_results (previous turn) without running a new query.
     _draft = getattr(outcome, "plan_draft", None)
@@ -1111,5 +1197,7 @@ def _handle_map(
                 _record(state, "assistant", message)
                 return _reply(state, message, source_note=heading)
     reply = _from_outcome(state, outcome, question=text, llm_client=llm_client)
+    if preface:
+        reply = replace(reply, text=f"{preface}\n\n{reply.text}")
     _record(state, "assistant", reply.text)
     return reply

@@ -79,6 +79,8 @@ def save_session(state: SessionState, *, name: str | None = None, update_last: b
         "last_result": state.last_result.model_dump() if state.last_result is not None else None,
         "bindings": {suite: node.model_dump() for suite, node in state.bindings.items()},
         "last_results": [r.model_dump() for r in state.last_results],
+        "recent": list(state.recent),
+        "pending_profile_intent": state.pending_profile_intent,
     }
     (path / _BINDING).write_text(json.dumps(binding_payload, indent=2) + "\n", encoding="utf-8")
 
@@ -103,6 +105,8 @@ def load_session(name: str) -> SessionState:
     last_result = None
     bindings: dict[str, NodeRef] = {}
     last_results: list[AgentResult] = []
+    recent: list[str] = []
+    pending_profile_intent: str | None = None
     binding_path = path / _BINDING
     if binding_path.is_file():
         payload = json.loads(binding_path.read_text(encoding="utf-8"))
@@ -117,6 +121,8 @@ def load_session(name: str) -> SessionState:
             bindings[suite] = NodeRef.model_validate(raw_node)
         for raw_r in payload.get("last_results") or []:
             last_results.append(AgentResult.model_validate(raw_r))
+        recent = [str(title) for title in payload.get("recent") or []]
+        pending_profile_intent = payload.get("pending_profile_intent")
 
     return SessionState(
         session_id=meta["session_id"],
@@ -127,6 +133,8 @@ def load_session(name: str) -> SessionState:
         last_result=last_result,
         bindings=bindings,
         last_results=last_results,
+        recent=recent,
+        pending_profile_intent=pending_profile_intent,
     )
 
 

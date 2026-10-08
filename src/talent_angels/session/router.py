@@ -7,7 +7,16 @@ from dataclasses import dataclass
 from typing import Literal
 
 LineKind = Literal[
-    "command", "greet", "help_plain", "advice", "catalogue", "pick", "show_suite", "chat", "map"
+    "command",
+    "greet",
+    "help_plain",
+    "advice",
+    "catalogue",
+    "pick",
+    "show_suite",
+    "chat",
+    "recall",
+    "map",
 ]
 
 _GREET_RE = re.compile(
@@ -28,6 +37,13 @@ _HELP_PLAIN_RE = re.compile(
 )
 
 _PICK_NUM_RE = re.compile(r"^\s*(\d+)\s*[.)]?\s*$")
+#: "actually I meant 5", "no, number 3", "make it #2": a correction is a pick.
+_PICK_CORRECTION_RE = re.compile(
+    r"^\s*(?:(?:actually|sorry|oops|no)[,.!]?\s+)*"
+    r"(?:i\s+meant|i\s+mean|make\s+it|pick|choose|number)?\s*"
+    r"(?:number\s+|no\.\s*|#\s*)?(\d+)\s*[.!)]?\s*$",
+    re.IGNORECASE,
+)
 _PICK_FIRST_RE = re.compile(
     r"^\s*(the\s+)?first(\s+one)?\s*[.!]?\s*$",
     re.IGNORECASE,
@@ -69,6 +85,19 @@ _META_SELF_RE = re.compile(
 )
 
 
+# What this conversation (or an earlier one) looked at: answered from memory.
+_RECALL_RE = re.compile(
+    r"^\s*(?:can\s+you\s+)?(?:remind\s+me\s+)?(?:"
+    r"what\s+(?:(?:did|have)\s+)?we\s+(?:talk(?:ed)?\s+about|discuss(?:ed)?|look(?:ed)?\s+at)|"
+    r"what\s+(?:jobs?|occupations?|titles?)\s+(?:did|have)\s+i\s+"
+    r"(?:look(?:ed)?\s+at|ask(?:ed)?\s+about)|"
+    r"what\s+was\s+the\s+(?:first|last|previous)\s+(?:job|occupation|title|thing)\s+"
+    r"(?:i|we)\s+(?:looked\s+at|asked\s+about)"
+    r")\b",
+    re.IGNORECASE,
+)
+
+
 @dataclass(frozen=True, slots=True)
 class RoutedLine:
     kind: LineKind
@@ -81,6 +110,8 @@ def _is_advice(lowered: str) -> bool:
     if any(phrase in lowered for phrase in _ADVICE_PHRASES):
         return True
     if "learn" in lowered and "first" in lowered:
+        return True
+    if "my goal" in lowered and ("missing" in lowered or "gap" in lowered):
         return True
     return False
 
@@ -100,6 +131,10 @@ def route_line(text: str) -> RoutedLine:
     if m:
         return RoutedLine(kind="pick", text=stripped, pick=int(m.group(1)))
 
+    m = _PICK_CORRECTION_RE.match(stripped)
+    if m:
+        return RoutedLine(kind="pick", text=stripped, pick=int(m.group(1)))
+
     if _PICK_FIRST_RE.match(stripped):
         return RoutedLine(kind="pick", text=stripped, pick=1)
 
@@ -116,5 +151,8 @@ def route_line(text: str) -> RoutedLine:
 
     if _META_SELF_RE.match(stripped):
         return RoutedLine(kind="chat", text=stripped)
+
+    if _RECALL_RE.match(stripped):
+        return RoutedLine(kind="recall", text=stripped)
 
     return RoutedLine(kind="map", text=stripped)

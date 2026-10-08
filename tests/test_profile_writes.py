@@ -163,3 +163,40 @@ def test_a_later_plain_lookup_does_not_inherit_the_statement() -> None:
     handle_line(state, "1", runner=_runner(nurses))
 
     assert "STANDING" not in _profile()
+
+
+def _saved(*lines: str) -> None:
+    user_md().parent.mkdir(parents=True, exist_ok=True)
+    user_md().write_text("\n".join(lines) + "\n", encoding="utf-8")
+
+
+def _no_search(question: str, **_kwargs: object) -> TurnOutcome:
+    raise AssertionError("a denial of the saved job must not search")
+
+
+def test_denying_the_saved_job_removes_it_without_a_search() -> None:
+    _saved(
+        "STANDING[onet]: Dancers  [onet:27-2031.00]   since: 2026-10-07",
+        "STANDING[esco]: dance teacher  [esco:1eb5]   since: 2026-10-07",
+        "GOAL: data analyst  [esco:d3ed]",
+    )
+
+    reply = handle_line(new_session(), "I am not a teacher", runner=_no_search)
+
+    profile = _profile()
+    assert "**dance teacher** is no longer saved" in reply.text
+    assert "STANDING[esco]" not in profile
+    assert "STANDING[onet]: Dancers" in profile
+    assert "REJECTED: dance teacher [esco:1eb5]" in profile
+    assert "GOAL: data analyst" in profile
+
+
+def test_a_denial_matches_whole_words_only() -> None:
+    _saved("STANDING[esco]: teaching assistant  [esco:t1]   since: 2026-10-07")
+    esco = AgentResult(capability="locate", suite="esco", nodes=[_node("esco", "tea taster")])
+
+    handle_line(
+        new_session(), "I am not a tea", runner=_runner(esco, draft=_draft("reject", "tea"))
+    )
+
+    assert "STANDING[esco]: teaching assistant" in _profile()

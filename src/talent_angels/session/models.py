@@ -25,6 +25,21 @@ class PendingChoice(BaseModel):
     group_label: str = ""
 
 
+class AreaChoice(BaseModel):
+    """An occupation group offered as "which area?", answered with its letter."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    letter: str
+    suite: str
+    code: str
+    label: str
+    count: int
+    #: The search the area narrows ("engineer"), re-run inside the group.
+    query: str
+    kind: str | None = "occupation"
+
+
 class LastBinding(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
@@ -44,5 +59,7 @@ class SessionState(BaseModel):
     pending_profile_intent: str | None = None
     #: Titles resolved in this conversation, as searched, newest last (working set).
     recent: list[str] = Field(default_factory=list)
+    #: Occupation groups offered with the pick list ("which area?").
+    areas: list[AreaChoice] = Field(default_factory=list)
     last_result: AgentResult | None = None
     last_results: list[AgentResult] = Field(default_factory=list)

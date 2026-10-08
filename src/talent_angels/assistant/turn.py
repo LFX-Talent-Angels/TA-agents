@@ -46,6 +46,7 @@ from talent_angels.runlog import (
     usage_from_stage,
 )
 from talent_angels.skills.locate import ESCO_SUITE_NAME
+from talent_angels.skills.locate.areas import Area, AreaRequest
 from talent_angels.suites.protocol import SuiteTools
 from talent_angels.suites.registry import SuiteRegistry, UnknownSuiteError
 
@@ -94,6 +95,8 @@ class TurnOutcome:
     record: RunLogRecord
     results: tuple[AgentResult, ...] = field(default_factory=tuple)
     plan_draft: PlanDraft | None = None
+    #: Per suite, the occupation groups of a broad search ("which area?").
+    areas: dict[str, list[Area]] = field(default_factory=dict)
 
     def __post_init__(self) -> None:
         if not self.results:
@@ -344,6 +347,7 @@ def run_turn(
     bound_nodes: dict[str, NodeRef] | None = None,
     persist: bool = True,
     thread_id: str | None = None,
+    area: AreaRequest | None = None,
 ) -> TurnOutcome:
     """Run one turn and append its run-log record.
 
@@ -395,6 +399,7 @@ def run_turn(
             persist=persist,
             thread_id=thread_id,
             input_warnings=input_warnings,
+            area=area,
         )
     except UnknownSuiteError:
         raise
@@ -442,6 +447,7 @@ def _run_turn_checked(
     persist: bool,
     thread_id: str | None,
     input_warnings: list[str],
+    area: AreaRequest | None = None,
 ) -> TurnOutcome:
     if registry is None:
         if suite is None:
@@ -507,6 +513,7 @@ def _run_turn_checked(
             force_locate=force_locate,
             suite_override=suite_override,
             input_warnings=input_warnings,
+            area=area,
         ),
         config=thread_config(thread_id) if thread_id else {},
     )
@@ -534,4 +541,5 @@ def _run_turn_checked(
         record=record,
         results=result_tuple,
         plan_draft=final.get("plan_draft"),
+        areas=dict(final.get("areas") or {}),
     )

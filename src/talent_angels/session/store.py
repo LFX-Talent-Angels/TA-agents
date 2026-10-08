@@ -12,6 +12,7 @@ from uuid import uuid4
 from talent_angels.contracts import AgentResult, NodeRef
 from talent_angels.memory.paths import default_sessions_dir
 from talent_angels.session.models import (
+    AreaChoice,
     LastBinding,
     PendingChoice,
     SessionState,
@@ -81,6 +82,7 @@ def save_session(state: SessionState, *, name: str | None = None, update_last: b
         "last_results": [r.model_dump() for r in state.last_results],
         "recent": list(state.recent),
         "pending_profile_intent": state.pending_profile_intent,
+        "areas": [area.model_dump() for area in state.areas],
     }
     (path / _BINDING).write_text(json.dumps(binding_payload, indent=2) + "\n", encoding="utf-8")
 
@@ -107,6 +109,7 @@ def load_session(name: str) -> SessionState:
     last_results: list[AgentResult] = []
     recent: list[str] = []
     pending_profile_intent: str | None = None
+    areas: list[AreaChoice] = []
     binding_path = path / _BINDING
     if binding_path.is_file():
         payload = json.loads(binding_path.read_text(encoding="utf-8"))
@@ -123,6 +126,7 @@ def load_session(name: str) -> SessionState:
             last_results.append(AgentResult.model_validate(raw_r))
         recent = [str(title) for title in payload.get("recent") or []]
         pending_profile_intent = payload.get("pending_profile_intent")
+        areas = [AreaChoice.model_validate(item) for item in payload.get("areas") or []]
 
     return SessionState(
         session_id=meta["session_id"],
@@ -135,6 +139,7 @@ def load_session(name: str) -> SessionState:
         last_results=last_results,
         recent=recent,
         pending_profile_intent=pending_profile_intent,
+        areas=areas,
     )
 
 

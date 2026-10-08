@@ -39,6 +39,27 @@ class MeasuredSuite:
                 )
             )
 
+    def search_group(self, text: str, group: str) -> SearchResult:
+        """Delegated when the suite can search inside one occupation group."""
+        inner = getattr(self._suite, "search_group", None)
+        if inner is None:
+            raise AttributeError("search_group")
+        start = time.perf_counter()
+        ok = False
+        try:
+            result: SearchResult = inner(text, group)
+            ok = True
+            return result
+        finally:
+            self.tool_calls.append(
+                ToolCall(
+                    name="search_group",
+                    ms=(time.perf_counter() - start) * 1000,
+                    ok=ok,
+                    args={"text": text, "group": group},
+                )
+            )
+
     def get_neighbors(self, node_id: str, rel_types: list[str] | None = None) -> NeighborResult:
         start = time.perf_counter()
         ok = False

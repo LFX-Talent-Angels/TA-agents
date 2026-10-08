@@ -7,10 +7,15 @@ from dataclasses import dataclass
 from datetime import UTC, datetime
 from typing import Literal, Protocol
 
-from talent_angels.assistant.answer import is_unimplemented_pathfind, summarize_result
-from talent_angels.assistant.connect_request import followup_connect_request
+from talent_angels.assistant.answer import summarize_result
+from talent_angels.assistant.connect_request import (
+    followup_connect_request,
+    is_describe_followup,
+)
 from talent_angels.assistant.intent import CAPABILITY_CONNECT
 from talent_angels.assistant.merge import suite_heading
+from talent_angels.assistant.suite_select import resolve_show_token
+from talent_angels.assistant.synthesize import synthesize
 from talent_angels.assistant.turn import TurnOutcome
 from talent_angels.contracts import AgentResult, NodeRef
 from talent_angels.llm import LLMClient
@@ -154,6 +159,8 @@ def handle_line(
         return _handle_pick(state, text, routed.pick or 0, runner=runner, llm_client=llm_client)
     if is_expand_list(text) or (is_bare_yes(text) and can_expand_connect(state.last_result)):
         return _handle_expand(state, text, runner=runner)
+    if routed.kind == "show_suite":
+        return _handle_show(state, text, routed.show_token or "")
     mention = parse_skill_mention(text)
     stored = state.last_result
     if mention is None and stored is not None and can_expand_connect(stored):
@@ -511,8 +518,6 @@ def _from_single_outcome(
             mode="intro",
         )
         text = render_picker(question, pending, omitted=omitted, intro=intro)
-    elif is_unimplemented_pathfind(result):
-        text = outcome.answer
     elif "not_found" in result.warnings:
         text = phrase_chat(
             llm_client,
@@ -557,6 +562,54 @@ def _from_single_outcome(
     return _reply(state, text, source_note=source)
 
 
+def _stacked_cards(
+    results: tuple[AgentResult, ...],
+    *,
+    question: str,
+    llm_client: LLMClient | None,
+) -> str:
+    blocks: list[str] = []
+    for result in results:
+        heading = suite_heading(result.suite) if result.suite else "Map"
+        if result.nodes and "ambiguous" not in result.warnings:
+            blocks.append(
+                _render_unique_block(
+                    result, question=question, llm_client=llm_client, heading=heading
+                )
+            )
+        else:
+            blocks.append(f"## {heading}\n\n{_map_answer(summarize_result(result))}")
+    return "\n\n---\n\n".join(blocks)
+
+
+def _handle_show(state: SessionState, text: str, token: str) -> ChatReply:
+    _record(state, "user", text)
+    known = tuple(dict.fromkeys([*[item.suite for item in state.last_results], *state.bindings]))
+    if not known:
+        message = "I don't have a map card stored yet. Name a job title first."
+        _record(state, "assistant", message)
+        return _reply(state, message)
+    resolved = resolve_show_token(token, known)
+    if resolved is None:
+        attached = ", ".join(suite_heading(name) for name in known)
+        message = f"I don't have a source called {token!r}. Attached: {attached}."
+        _record(state, "assistant", message)
+        return _reply(state, message)
+    if resolved == "all":
+        message = _stacked_cards(tuple(state.last_results), question=token, llm_client=None)
+        _record(state, "assistant", message)
+        return _reply(state, message, source_note=_source_note_for(tuple(state.last_results)))
+    match = next((item for item in state.last_results if item.suite == resolved), None)
+    if match is None:
+        message = f"No stored card for {suite_heading(resolved)}."
+        _record(state, "assistant", message)
+        return _reply(state, message)
+    heading = suite_heading(resolved)
+    message = _render_unique_block(match, question=token, llm_client=None, heading=heading)
+    _record(state, "assistant", message)
+    return _reply(state, message, source_note=heading)
+
+
 def _from_outcome(
     state: SessionState,
     outcome: TurnOutcome,
@@ -565,6 +618,7 @@ def _from_outcome(
     llm_client: LLMClient | None,
 ) -> ChatReply:
     results = _turn_results(outcome)
+    state.last_results = list(results)
     if len(results) <= 1:
         return _from_single_outcome(
             state,
@@ -581,6 +635,7 @@ def _from_outcome(
     state.last_result = preferred
 
     blocks: list[str] = []
+    unique_cards: list[str] = []
     pending_all: list[PendingChoice] = []
     unique_bind: NodeRef | None = None
     any_hit = False
@@ -588,10 +643,6 @@ def _from_outcome(
 
     for result in results:
         heading = suite_heading(result.suite) if result.suite else "Map"
-        if is_unimplemented_pathfind(result):
-            blocks.append(f"## {heading}\n\n{_map_answer(summarize_result(result))}")
-            all_miss = False
-            continue
         if "ambiguous" in result.warnings and result.nodes:
             all_miss = False
             any_hit = True
@@ -628,7 +679,7 @@ def _from_outcome(
         _set_bind(state, result.nodes[0])
         if unique_bind is None:
             unique_bind = result.nodes[0]
-        blocks.append(
+        unique_cards.append(
             _render_unique_block(result, question=question, llm_client=llm_client, heading=heading)
         )
 
@@ -654,9 +705,18 @@ def _from_outcome(
             ),
             mode="miss",
         )
+    elif pending_all:
+        text = synthesize(results, question=question, llm_client=llm_client)
+        extras = [*unique_cards]
+        picker_blocks = [
+            block for block in blocks if "I won't pick" in block or "Which one" in block
+        ]
+        extras.extend(picker_blocks)
+        if extras:
+            text = text + "\n\n---\n\n" + "\n\n---\n\n".join(extras)
     else:
-        text = "\n\n---\n\n".join(blocks)
-        if unique_bind is not None and not pending_all and MAP_NEXT_STEP not in text:
+        text = synthesize(results, question=question, llm_client=llm_client)
+        if unique_bind is not None and MAP_NEXT_STEP not in text:
             text = f"{text}\n\n{MAP_NEXT_STEP}"
 
     return _reply(state, text, source_note=_source_note_for(results))
@@ -700,6 +760,29 @@ def _handle_expand(state: SessionState, text: str, *, runner: TurnRunner) -> Cha
     return _reply(state, message, source_note=source)
 
 
+def _describe_bound(
+    state: SessionState,
+    text: str,
+    *,
+    llm_client: LLMClient | None,  # noqa: ARG001 — signature matches other handlers
+) -> ChatReply:
+    """Explain already-bound occupations. No new Locate."""
+    blocks: list[str] = []
+    for suite, node in state.bindings.items():
+        heading = suite_heading(suite)
+        desc = (node.description or "").strip()
+        if desc:
+            body = desc
+        else:
+            body = f"{node.pref_label} is on the {heading} map. I don't have a definition stored."
+        blocks.append(f"## {heading}\n\n**{node.pref_label}**\n\n{body}")
+    message = "\n\n---\n\n".join(blocks)
+    _record(state, "assistant", message)
+    names = [suite_heading(s) for s in state.bindings]
+    source_note = " · ".join(names) if names else None
+    return _reply(state, message, source_note=source_note)
+
+
 def _handle_map(
     state: SessionState,
     text: str,
@@ -711,6 +794,8 @@ def _handle_map(
     bound = state.binding.node if state.binding is not None else None
     sample = next(iter(state.bindings.values()), bound)
     bound_nodes = dict(state.bindings) if state.bindings else None
+    if bound_nodes and is_describe_followup(text, bound_nodes):
+        return _describe_bound(state, text, llm_client=llm_client)
     if sample is not None and followup_connect_request(text, sample) is not None:
         outcome = runner(
             text,

@@ -1,13 +1,11 @@
 """LFX Talent Angels — the assistant runtime over skill/task/occupation taxonomies.
 
-One main assistant (LangGraph loop) owns the user's goal and dispatches four
+One main assistant (LangGraph loop) owns the user's goal and dispatches two
 map-work capabilities implemented as skills + tools (see ARCHITECTURE.md and
 TA-workspace ADR-0003):
 
     - skills.locate    : free text -> node candidates + confidence  (Resolve)
     - skills.connect   : neighbors/hierarchy of a resolved node     (Reveal)
-    - skills.pathfind  : routes between two resolved nodes          (Compose)
-    - skills.evaluate  : rank routes under a named policy           (Rank)
 
 Supporting layers:
     - assistant : intent -> plan -> dispatch -> merge -> answer

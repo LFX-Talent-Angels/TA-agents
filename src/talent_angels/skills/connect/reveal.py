@@ -93,8 +93,15 @@ def connect(
     raw = suite.get_neighbors(center.id, rel_types=rel_types)
     edges = list(raw.edges)
     if request.relation_kind is not None:
+        _optional_aliases = {"optional", "transferable"}
         edges = [
-            edge for edge in edges if edge.properties.get("relation_type") == request.relation_kind
+            edge
+            for edge in edges
+            if edge.properties.get("relation_type") == request.relation_kind
+            or (
+                request.relation_kind == "optional"
+                and edge.properties.get("relation_type") in _optional_aliases
+            )
         ]
 
     kept_ids = {center.id}

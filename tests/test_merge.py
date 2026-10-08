@@ -39,11 +39,11 @@ def test_merge_labels_each_suite_and_keeps_both_ids() -> None:
 
     answer = merge_answers((esco, onet))
 
-    assert answer.startswith("ESCO · ")
-    assert "O*NET · " in answer
-    assert "esco:occupation:dev" in answer
-    assert "onet:occupation:15-1252.00" in answer
-    assert answer.count("\n\n") == 1
+    assert "software developer" in answer
+    assert "Software Developers" in answer
+    assert "Sources used: ESCO · O*NET" in answer
+    assert "separate official records" in answer
+    assert "esco:occupation:dev" not in answer or "not one shared id" in answer
 
 
 def test_unreachable_suites_surface_as_warnings() -> None:

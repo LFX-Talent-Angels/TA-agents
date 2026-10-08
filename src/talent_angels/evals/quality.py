@@ -31,7 +31,6 @@ Family = Literal[
     "locate_natural",
     "connect_template",
     "connect_natural",
-    "pathfind_refuse",
     "skill_locate",
 ]
 Tier = Literal["contract", "quality"]
@@ -45,7 +44,6 @@ FAMILIES: tuple[Family, ...] = (
     "locate_natural",
     "connect_template",
     "connect_natural",
-    "pathfind_refuse",
     "skill_locate",
 )
 TIERS: tuple[Tier, ...] = ("contract", "quality")
@@ -265,9 +263,6 @@ def score_case(case: QualityCase, observed: ObservedTurn) -> CaseVerdict:
 
     if case.family == "locate_not_found" and observed.node_ids:
         reasons.append("expected no nodes for not_found")
-
-    if case.family == "pathfind_refuse" and observed.node_ids:
-        reasons.append("pathfind refuse should return no nodes")
 
     default_hit = case.expected_top_id and not case.require_id_in_candidates
     if case.metric == "hit_at_1" or (case.metric is None and default_hit):

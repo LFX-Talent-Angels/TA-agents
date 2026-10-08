@@ -15,9 +15,7 @@ def test_runtime_packages_import() -> None:
     import talent_angels.contracts  # noqa: F401
     import talent_angels.runlog  # noqa: F401
     import talent_angels.skills.connect  # noqa: F401
-    import talent_angels.skills.evaluate  # noqa: F401
     import talent_angels.skills.locate  # noqa: F401
-    import talent_angels.skills.pathfind  # noqa: F401
     import talent_angels.suites  # noqa: F401
 
 

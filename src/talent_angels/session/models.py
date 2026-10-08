@@ -41,3 +41,4 @@ class SessionState(BaseModel):
     bindings: dict[str, NodeRef] = Field(default_factory=dict)
     pending: list[PendingChoice] = Field(default_factory=list)
     last_result: AgentResult | None = None
+    last_results: list[AgentResult] = Field(default_factory=list)

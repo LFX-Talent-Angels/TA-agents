@@ -66,20 +66,20 @@ def test_bound_followup_connects_without_search(monkeypatch, tmp_path) -> None:
 @pytest.mark.parametrize(
     ("question", "rel_types", "relation_kind"),
     [
-        ("essential skills", ("HAS_SKILL",), "essential"),
-        ("what are the essential skills?", ("HAS_SKILL",), "essential"),
-        ("list only essential skills", ("HAS_SKILL",), "essential"),
-        ("list essential skills", ("HAS_SKILL",), "essential"),
-        ("show me only essential skills", ("HAS_SKILL",), "essential"),
-        ("list the skills", ("HAS_SKILL",), None),
-        ("optional skills", ("HAS_SKILL",), "optional"),
-        ("what do I actually need?", ("HAS_SKILL",), "essential"),
-        ("what skills do I actually need?", ("HAS_SKILL",), "essential"),
+        ("essential skills", ("HAS_SKILL", "USES_SOFTWARE"), "essential"),
+        ("what are the essential skills?", ("HAS_SKILL", "USES_SOFTWARE"), "essential"),
+        ("list only essential skills", ("HAS_SKILL", "USES_SOFTWARE"), "essential"),
+        ("list essential skills", ("HAS_SKILL", "USES_SOFTWARE"), "essential"),
+        ("show me only essential skills", ("HAS_SKILL", "USES_SOFTWARE"), "essential"),
+        ("list the skills", ("HAS_SKILL", "USES_SOFTWARE"), None),
+        ("optional skills", ("HAS_SKILL", "USES_SOFTWARE"), "optional"),
+        ("what do I actually need?", ("HAS_SKILL", "USES_SOFTWARE"), "essential"),
+        ("what skills do I actually need?", ("HAS_SKILL", "USES_SOFTWARE"), "essential"),
         ("neighbors", (), None),
         ("neighbors of that", (), None),
-        ("how to become one", ("HAS_SKILL",), "essential"),
-        ("how do I become one?", ("HAS_SKILL",), "essential"),
-        ("how to become that", ("HAS_SKILL",), "essential"),
+        ("how to become one", ("HAS_SKILL", "USES_SOFTWARE"), "essential"),
+        ("how do I become one?", ("HAS_SKILL", "USES_SOFTWARE"), "essential"),
+        ("how to become that", ("HAS_SKILL", "USES_SOFTWARE"), "essential"),
     ],
 )
 def test_followup_connect_request_short_phrases(
@@ -102,7 +102,7 @@ def test_followup_connect_request_same_occupation_keeps_extract() -> None:
     )
     assert request == ConnectRequest(
         subject="software developer",
-        rel_types=("HAS_SKILL",),
+        rel_types=("HAS_SKILL", "USES_SOFTWARE"),
         relation_kind="essential",
     )
 

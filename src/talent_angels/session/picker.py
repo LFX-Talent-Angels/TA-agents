@@ -58,7 +58,13 @@ def render_picker(
                 lines.append(f"**{choice.group_label}**")
             lines.append(f"{choice.number}. {choice.node.pref_label}")
         lines.append("")
-        lines.append("I won't pick #1 for you — reply with a number.")
+        first = pending[0].number
+        last = pending[-1].number
+        if first == last:
+            hint = f"I won't pick for you — reply with {first}."
+        else:
+            hint = f"I won't pick for you — reply with {first}–{last}."
+        lines.append(hint)
 
     if omitted > 0:
         lines.append(

@@ -1,8 +1,8 @@
 """The main assistant: the only piece that talks to the user.
 
-Owns intent, the plan (L / L+C / L+C+P / ...+E), suite selection, merging
-across suites, honesty rules, and the final answer. Implemented as a LangGraph
-stateful loop. See ARCHITECTURE.md.
+Owns intent, the plan (L / L+C), suite selection, merging across suites,
+honesty rules, and the final answer. Implemented as a LangGraph stateful
+loop. See ARCHITECTURE.md.
 """
 
 from talent_angels.assistant.cache import ResultCache
@@ -10,7 +10,6 @@ from talent_angels.assistant.graph import build_graph
 from talent_angels.assistant.intent import (
     CAPABILITY_CONNECT,
     CAPABILITY_LOCATE,
-    CAPABILITY_PATHFIND,
     classify_capability,
     extract_locate_subject,
 )
@@ -27,7 +26,6 @@ from talent_angels.assistant.turn import TurnOutcome, run_turn
 __all__ = [
     "CAPABILITY_CONNECT",
     "CAPABILITY_LOCATE",
-    "CAPABILITY_PATHFIND",
     "AssistantState",
     "ExecutionPlan",
     "Intent",

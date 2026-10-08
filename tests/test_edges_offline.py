@@ -77,16 +77,6 @@ class FakeSuite:
             evidence=[f"test:neighbors:{node_id}"],
         )
 
-    def enumerate_paths(
-        self,
-        from_id: str,
-        to_id: str,
-        *,
-        max_depth: int = 4,
-        max_paths: int = 20,
-    ) -> FakeToolResult:
-        return FakeToolResult(warnings=["no_path"], evidence=[f"test:paths:{from_id}->{to_id}"])
-
 
 def _registry(*, reachable: bool = True) -> SuiteRegistry:
     @contextmanager
@@ -132,9 +122,33 @@ def test_cli_query_searches_all_attached_suites(capsys: pytest.CaptureFixture[st
     assert set(events) == {"esco", "onet"}
     output = json.loads(capsys.readouterr().out)
     assert output["suites"] == ["esco", "onet"]
-    assert "ESCO · " in output["answer"]
-    assert "O*NET · " in output["answer"]
+    assert "Sources used:" in output["answer"]
+    assert "ESCO" in output["answer"] and "O*NET" in output["answer"]
     assert output["node_count"] == 2
+
+
+def test_cli_refuses_catalogue_and_advice(capsys: pytest.CaptureFixture[str]) -> None:
+    assert main(["query", "list all jobs"], registry=_registry()) == 0
+    catalogue = json.loads(capsys.readouterr().out)
+    assert "catalogue_refused" in catalogue["warnings"]
+    assert catalogue["node_count"] == 0
+
+    assert main(["query", "should I study medicine or CS"], registry=_registry()) == 0
+    advice = json.loads(capsys.readouterr().out)
+    assert "advice_refused" in advice["warnings"]
+    assert advice["node_count"] == 0
+
+    assert main(["query", "thanks"], registry=_registry()) == 0
+    greet = json.loads(capsys.readouterr().out)
+    assert "not_a_map_question" in greet["warnings"]
+
+    assert main(["query", "help"], registry=_registry()) == 0
+    help_out = json.loads(capsys.readouterr().out)
+    assert "not_a_map_question" in help_out["warnings"]
+
+    assert main(["query", "1"], registry=_registry()) == 0
+    pick = json.loads(capsys.readouterr().out)
+    assert "not_a_map_question" in pick["warnings"]
 
 
 def test_cli_opens_named_suite(capsys: pytest.CaptureFixture[str]) -> None:
@@ -183,8 +197,8 @@ def test_api_query_searches_all_attached_suites() -> None:
     body = response.json()
     assert body["suites"] == ["esco", "onet"]
     assert [item["suite"] for item in body["results"]] == ["esco", "onet"]
-    assert "ESCO · " in body["answer"]
-    assert "O*NET · " in body["answer"]
+    assert "Sources used:" in body["answer"]
+    assert "ESCO" in body["answer"] and "O*NET" in body["answer"]
 
 
 def test_api_unknown_suite_is_404() -> None:
@@ -235,23 +249,6 @@ def test_api_uses_injected_registry_and_adapter_health() -> None:
     assert response.json()["result"]["nodes"][0]["pref_label"] == "accountant"
 
 
-def test_cli_pathfind_question_is_honest(
-    capsys: pytest.CaptureFixture[str],
-) -> None:
-    exit_code = main(
-        ["query", "What is the skill path from data analyst to data scientist?"],
-        registry=_registry(),
-    )
-
-    assert exit_code == 0
-    output = json.loads(capsys.readouterr().out)
-    assert output["capability"] == "pathfind"
-    assert output["plan"] == ["locate", "connect", "pathfind"]
-    assert "capability_not_implemented:pathfind" not in output["warnings"]
-    assert "Pathfind is not in this MVP" not in output["answer"]
-    assert "no_path" in output["warnings"] or "endpoint_not_found" in output["warnings"]
-
-
 def test_cli_quality_writes_full_report(capsys: pytest.CaptureFixture[str], tmp_path: Path) -> None:
     suite = tmp_path / "suite.json"
     suite.write_text(
@@ -299,22 +296,6 @@ def test_cli_report_reads_runlog(
     printed = capsys.readouterr().out
     assert "TA-agents run log" in printed
     assert "nurse" in printed or "locate" in printed
-
-
-def test_api_pathfind_question_is_honest() -> None:
-    with TestClient(create_app(registry=_registry())) as client:
-        response = client.post(
-            "/v1/query",
-            json={"question": "skill path from data analyst to data scientist"},
-        )
-
-    assert response.status_code == 200
-    body = response.json()
-    assert body["capability"] == "pathfind"
-    assert "capability_not_implemented:pathfind" not in body["result"]["warnings"]
-    assert "Pathfind is not in this MVP" not in body["answer"]
-    warnings = body["result"]["warnings"]
-    assert "no_path" in warnings or "endpoint_not_found" in warnings
 
 
 def test_cli_connect_uses_the_same_assistant_flow(

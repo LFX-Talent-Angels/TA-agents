@@ -7,16 +7,12 @@ import re
 from dataclasses import dataclass, field
 
 from talent_angels.assistant.answer import (
-    PATHFIND_UNAVAILABLE,
-    PATHFIND_UNIMPLEMENTED_WARNING,
     is_terminal_locate,
-    is_unimplemented_pathfind,
     summarize_result,
 )
 from talent_angels.assistant.intent import (
     CAPABILITY_CONNECT,
     CAPABILITY_LOCATE,
-    CAPABILITY_PATHFIND,
     Capability,
     classify_capability,
     extract_locate_subject,
@@ -41,13 +37,13 @@ Return ONLY a JSON object each turn. Do not invent node IDs or skills.
 
 Call a graph tool:
 {"tool":"search_nodes","text":"software developer","kind":"occupation"}
-{"tool":"get_neighbors","node_id":"esco:occupation:...","rel_types":["HAS_SKILL"],"relation_filter":"essential"}
+{"tool":"get_neighbors","node_id":"esco:occupation:...","rel_types":["HAS_SKILL","USES_SOFTWARE"],"relation_filter":"essential"}
 
 Or finish with the user-facing answer:
 {"final":"one sentence using only returned labels, ids, and confidence"}
 
 Search the occupation or skill phrase from the question (not the whole sentence).
-Skills questions: search_nodes first, then get_neighbors with HAS_SKILL if the search is unique.
+Skills questions: search_nodes first, then get_neighbors with HAS_SKILL and USES_SOFTWARE if the search is unique.
 If TOOL_RESULT warnings include ambiguous or not_found, return final and stop. Do not search again.
 If node_count is larger than the listed nodes, mention the count and a few examples.
 Do not offer to fetch, paginate, or retrieve the rest.
@@ -145,7 +141,7 @@ def _execute_tool(
         if isinstance(rel_raw, list) and rel_raw:
             rel_types = tuple(str(item) for item in rel_raw)
         else:
-            rel_types = ("HAS_SKILL",)
+            rel_types = ("HAS_SKILL", "USES_SOFTWARE")
         relation = args.get("relation_filter")
         relation_kind = relation if isinstance(relation, str) else None
         center = None
@@ -242,22 +238,7 @@ def _capability_from_result(result: AgentResult | None) -> Capability:
         return CAPABILITY_LOCATE
     if result.capability == CAPABILITY_CONNECT:
         return CAPABILITY_CONNECT
-    if result.capability == CAPABILITY_PATHFIND:
-        return CAPABILITY_PATHFIND
     return CAPABILITY_LOCATE
-
-
-def _unimplemented_pathfind(suite_name: str) -> AgentLoopOutcome:
-    result = AgentResult(
-        capability=CAPABILITY_PATHFIND,
-        suite=suite_name,
-        warnings=[PATHFIND_UNIMPLEMENTED_WARNING],
-    )
-    return AgentLoopOutcome(
-        answer=PATHFIND_UNAVAILABLE,
-        result=result,
-        plan=build_plan_for_capability(CAPABILITY_PATHFIND, suites=(suite_name,)),
-    )
 
 
 def run_tool_loop(
@@ -268,9 +249,6 @@ def run_tool_loop(
     llm_client: LLMClient,
     kind: str | None = None,
 ) -> AgentLoopOutcome:
-    if classify_capability(question) == CAPABILITY_PATHFIND:
-        return _unimplemented_pathfind(suite_name)
-
     measured = MeasuredSuite(suite)
     messages: list[Message] = [
         Message(role="system", content=LOOP_SYSTEM),
@@ -366,7 +344,7 @@ def run_tool_loop(
             located.nodes[0],
             request=ConnectRequest(
                 subject=located.nodes[0].pref_label,
-                rel_types=("HAS_SKILL",),
+                rel_types=("HAS_SKILL", "USES_SOFTWARE"),
                 relation_kind="essential",
             ),
             confidence=located.confidence,
@@ -384,7 +362,7 @@ def run_tool_loop(
     if intent == CAPABILITY_CONNECT and is_terminal_locate(last_result):
         last_result = last_result.model_copy(update={"capability": CAPABILITY_CONNECT})
 
-    if is_unimplemented_pathfind(last_result) or is_terminal_locate(last_result):
+    if is_terminal_locate(last_result):
         answer = summarize_result(last_result)
     elif (
         (last_result.capability == CAPABILITY_CONNECT and len(last_result.edges) > 5)

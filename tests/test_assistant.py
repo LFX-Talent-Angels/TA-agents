@@ -78,10 +78,9 @@ def _occupation_node() -> FakeNode:
     [
         ("Where is software developer in ESCO?", "locate"),
         ("What essential skills does a software developer need?", "connect"),
-        ("What is the skill gap from data analyst to data scientist?", "pathfind"),
-        ("skill path from data analyst to data scientist", "pathfind"),
-        ("path analyst → scientist", "pathfind"),
         ("what skills I need to become a nurse", "connect"),
+        ("software engineer vs web developer", "locate"),
+        ("web developer AND plumber", "locate"),
     ],
 )
 def test_classify_capability_heuristics(question: str, expected: str) -> None:
@@ -92,6 +91,8 @@ def test_classify_capability_heuristics(question: str, expected: str) -> None:
     ("question", "expected"),
     [
         ("Where is nurse in ESCO?", "nurse"),
+        ("Where is firefighter in O*NET?", "firefighter"),
+        ("What does Urologists do?", "Urologists"),
         ("software developer", "software developer"),
         ("Find accountant", "accountant"),
         (
@@ -167,7 +168,7 @@ def test_graph_executes_locate_then_connect_for_skill_question() -> None:
     assert final_state["capability"] == "connect"
     assert final_state["plan"].capabilities == ("locate", "connect")
     assert suite.search_calls == [("software developer", "occupation")]
-    assert suite.neighbor_calls == [(occupation.id, ["HAS_SKILL"])]
+    assert suite.neighbor_calls == [(occupation.id, ["HAS_SKILL", "USES_SOFTWARE"])]
     assert [node.pref_label for node in final_state["result"].nodes] == [
         "software developer",
         "computer programming",
@@ -346,10 +347,6 @@ def test_turn_separates_cache_and_runlog_by_suite(
         (
             "What essential skills does a software developer need?",
             ("locate", "connect"),
-        ),
-        (
-            "What is the skill gap from data analyst to data scientist?",
-            ("locate", "connect", "pathfind"),
         ),
     ],
 )

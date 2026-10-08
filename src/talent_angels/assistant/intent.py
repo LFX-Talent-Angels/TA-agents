@@ -36,9 +36,16 @@ _CONNECT_KEYWORDS = (
     "need to become",
     "become a",
     "become an",
+    "become one",
+    "become that",
+    "how to become",
     "neighbors",
     "essential skill",
     "optional skill",
+    "those skills",
+    "the skills",
+    "list skills",
+    "its skills",
 )
 
 

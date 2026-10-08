@@ -1,4 +1,5 @@
 """Tests for LLM phrasing functions — cards, guards, and profile injection."""
+
 from __future__ import annotations
 
 from pathlib import Path

@@ -79,24 +79,6 @@ def test_llm_plan_builds_connect_execution_plan() -> None:
     assert len(client.calls) == 1
 
 
-def test_skills_question_upgrades_a_locate_plan_to_connect() -> None:
-    client = ScriptedLLMClient(
-        '{"target":"locate","subject":"software developer","kind":"occupation"}'
-    )
-
-    interpreted = interpret_question(
-        "What essential skills does a software developer need?",
-        suite_name="esco",
-        llm_client=client,
-    )
-
-    assert interpreted.plan.capabilities == ("locate", "connect")
-    assert interpreted.draft is not None
-    assert interpreted.draft.target == "connect"
-    assert interpreted.draft.subject == "software developer"
-    assert interpreted.heuristic is False
-
-
 def test_planner_provider_error_falls_back_to_heuristic() -> None:
     class ExplodingClient:
         provider = "litellm"

@@ -12,6 +12,7 @@ class QueryRequest(BaseModel):
     question: str
     suite: str | None = None
     kind: str | None = None
+    session_id: str | None = None
 
 
 class UsageInfo(BaseModel):
@@ -23,6 +24,7 @@ class UsageInfo(BaseModel):
 
 class QueryResponse(BaseModel):
     run_id: str
+    session_id: str
     capability: str
     suite: str
     suites: list[str] = []

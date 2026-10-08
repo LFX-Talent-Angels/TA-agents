@@ -52,6 +52,26 @@ class ScriptedPlanClient:
         )
 
 
+class _MultiReplyClient:
+    """LLM client that returns a pre-scripted reply per call in order."""
+
+    provider = "litellm"
+    model = "azure_ai/claude-sonnet-4-6"
+
+    def __init__(self, replies: list[str]) -> None:
+        self._replies = list(replies)
+        self.calls: list[list[Message]] = []
+
+    def complete(self, messages: list[Message], *, tools=None) -> LLMResult:
+        self.calls.append(messages)
+        return LLMResult(
+            text=self._replies.pop(0),
+            provider=self.provider,
+            model=self.model,
+            usage=LLMUsage(input_tokens=8, output_tokens=4),
+        )
+
+
 class FakeSuite:
     def __init__(
         self, result: FakeToolResult, neighbor_result: FakeToolResult | None = None
@@ -254,9 +274,14 @@ def test_graph_planner_owns_subject_before_search() -> None:
             evidence=[f"esco:neighbors:{node.id}"],
         ),
     )
-    client = ScriptedPlanClient(
-        '{"target":"connect","subject":"software developer","kind":"occupation",'
-        '"rel_types":["HAS_SKILL"]}'
+    # interpret_intent call → plan JSON; dispatch_plan tool loop calls → tool calls + final answer
+    client = _MultiReplyClient(
+        [
+            '{"target":"connect","subject":"software developer","kind":"occupation"}',
+            '{"tool":"search_nodes","text":"software developer","kind":"occupation"}',
+            f'{{"tool":"get_neighbors","node_id":"{node.id}","relation_filter":"essential"}}',
+            '{"final":"A software developer needs computer programming."}',
+        ]
     )
     graph = build_graph(suite=suite, llm_client=client, answer_mode="structured")
 
@@ -264,11 +289,11 @@ def test_graph_planner_owns_subject_before_search() -> None:
 
     assert final_state["capability"] == "connect"
     assert suite.search_calls == [("software developer", "occupation")]
-    # Schema always overrides LLM-suggested rel_types; fake suite schema returns
-    # ("HAS_SKILL", "USES_SOFTWARE") regardless of what the LLM sent.
+    # Tool loop omits rel_types → falls back to suite schema ("HAS_SKILL", "USES_SOFTWARE").
     assert suite.neighbor_calls == [(node.id, ["HAS_SKILL", "USES_SOFTWARE"])]
+    # interpret_intent uses PLAN_SYSTEM; dispatch_plan tool loop uses LOOP_SYSTEM
     assert PLAN_SYSTEM in client.calls[0][0].content
-    assert LOOP_SYSTEM not in client.calls[0][0].content
+    assert LOOP_SYSTEM in client.calls[1][0].content
 
 
 def test_graph_planner_locate_does_not_fetch_neighbors() -> None:
@@ -286,7 +311,14 @@ def test_graph_planner_locate_does_not_fetch_neighbors() -> None:
             nodes=[node],
         )
     )
-    client = ScriptedPlanClient('{"target":"locate","subject":"firefighter","kind":"occupation"}')
+    # interpret_intent call → plan JSON; dispatch_plan tool loop → search then final (no neighbors)
+    client = _MultiReplyClient(
+        [
+            '{"target":"locate","subject":"firefighter","kind":"occupation"}',
+            '{"tool":"search_nodes","text":"firefighter","kind":"occupation"}',
+            '{"final":"Firefighter occupation found."}',
+        ]
+    )
     graph = build_graph(suite=suite, llm_client=client, answer_mode="structured")
 
     final_state = graph.invoke({"question": "what does a firefighter do"})
@@ -388,12 +420,14 @@ def test_route_line_show_suite_with_me_and_on():
     # "show me skills for web developer on O*NET" has multiple words after "show me"
     # so it falls through to the LLM path (suite_override), not the regex show_suite route.
     from talent_angels.session.router import route_line
+
     result = route_line("show me skills for web developer on O*NET")
     assert result.kind != "show_suite"
 
 
 def test_route_line_show_suite_simple():
     from talent_angels.session.router import route_line
+
     result = route_line("show ESCO")
     assert result.kind == "show_suite"
     assert result.show_token is not None
@@ -402,6 +436,7 @@ def test_route_line_show_suite_simple():
 
 def test_route_line_show_me_suite():
     from talent_angels.session.router import route_line
+
     result = route_line("show me ESCO")
     assert result.kind == "show_suite"
     assert result.show_token is not None
@@ -410,35 +445,41 @@ def test_route_line_show_me_suite():
 
 def test_pathfind_redirect_constant_exists():
     from talent_angels.session.copy import PATHFIND_REDIRECT
+
     assert "path" in PATHFIND_REDIRECT.lower() or "coming" in PATHFIND_REDIRECT.lower()
     assert len(PATHFIND_REDIRECT) > 20
 
 
 def test_plan_draft_has_profile_intent_field():
     from talent_angels.assistant.llm_plan import PlanDraft
+
     draft = PlanDraft(target="locate", subject="nurse")
     assert draft.profile_intent is None
 
 
 def test_plan_draft_profile_intent_goal():
     from talent_angels.assistant.llm_plan import PlanDraft
+
     draft = PlanDraft(target="connect", subject="data scientist", profile_intent="goal")
     assert draft.profile_intent == "goal"
 
 
 def test_plan_draft_profile_intent_reject():
     from talent_angels.assistant.llm_plan import PlanDraft
+
     draft = PlanDraft(target="locate", subject="web developer", profile_intent="reject")
     assert draft.profile_intent == "reject"
 
 
 def test_plan_draft_has_suite_override_field():
     from talent_angels.assistant.llm_plan import PlanDraft
+
     draft = PlanDraft(target="locate", subject="nurse")
     assert draft.suite_override is None
 
 
 def test_plan_draft_suite_override_is_set():
     from talent_angels.assistant.llm_plan import PlanDraft
+
     draft = PlanDraft(target="locate", subject="nurse", suite_override="esco")
     assert draft.suite_override == "esco"

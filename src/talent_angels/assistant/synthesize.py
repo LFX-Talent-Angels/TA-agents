@@ -12,6 +12,7 @@ from collections.abc import Sequence
 from talent_angels.assistant.merge import suite_heading
 from talent_angels.contracts import AgentResult
 from talent_angels.llm import LLMClient, Message
+from talent_angels.memory.agent_notes import notes_prefix
 from talent_angels.memory.profile import profile_prefix
 from talent_angels.session.phrase import uses_chat_phrasing
 
@@ -131,7 +132,7 @@ def synthesize(
     if not uses_chat_phrasing(llm_client) or not results:
         return fallback
     assert llm_client is not None
-    system_prompt = profile_prefix() + _SYNTH_SYSTEM
+    system_prompt = profile_prefix() + notes_prefix() + _SYNTH_SYSTEM
     messages = [
         Message(role="system", content=system_prompt),
         Message(

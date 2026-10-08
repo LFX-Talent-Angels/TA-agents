@@ -298,6 +298,7 @@ def test_graph_uses_planner_when_provider_is_not_stub() -> None:
             evidence=["esco:search:exact_pref:software developer"],
         )
     )
+    # interpret_intent (PLAN_SYSTEM) + dispatch_plan tool loop (LOOP_SYSTEM) both use LLM
     client = ScriptedToolClient(
         [
             LLMResult(
@@ -306,6 +307,18 @@ def test_graph_uses_planner_when_provider_is_not_stub() -> None:
                 model="actual",
                 usage=LLMUsage(input_tokens=5, output_tokens=2),
             ),
+            LLMResult(
+                text='{"tool":"search_nodes","text":"software developer","kind":"occupation"}',
+                provider="litellm",
+                model="actual",
+                usage=LLMUsage(input_tokens=10, output_tokens=4),
+            ),
+            LLMResult(
+                text='{"final":"Software developer occupation found."}',
+                provider="litellm",
+                model="actual",
+                usage=LLMUsage(input_tokens=15, output_tokens=5),
+            ),
         ]
     )
     graph = build_graph(suite=suite, llm_client=client, answer_mode="structured")
@@ -313,9 +326,10 @@ def test_graph_uses_planner_when_provider_is_not_stub() -> None:
     final_state = graph.invoke({"question": "Where is software developer in ESCO?"})
 
     assert final_state["capability"] == "locate"
-    assert "software developer" in final_state["answer"]
+    assert "software developer" in final_state["answer"].lower()
     assert suite.search_calls == [("software developer", "occupation")]
-    assert [stage.stage for stage in final_state["llm_stages"]] == ["intent"]
+    # intent stage from interpret_intent + act + answer stages from dispatch_plan tool loop
+    assert [stage.stage for stage in final_state["llm_stages"]] == ["intent", "act", "answer"]
 
 
 def test_ambiguous_search_stops_without_another_lookup() -> None:

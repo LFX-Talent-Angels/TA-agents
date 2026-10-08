@@ -2,8 +2,6 @@
 
 from unittest.mock import patch
 
-import pytest
-
 
 def _make_node(suite: str, source_id: str, pref_label: str):
     from talent_angels.contracts.models import NodeRef

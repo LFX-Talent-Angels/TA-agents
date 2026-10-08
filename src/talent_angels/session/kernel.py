@@ -8,10 +8,7 @@ from datetime import UTC, datetime
 from typing import Literal, Protocol
 
 from talent_angels.assistant.answer import summarize_result
-from talent_angels.assistant.connect_request import (
-    followup_connect_request,
-    is_describe_followup,
-)
+from talent_angels.assistant.connect_request import followup_connect_request, is_describe_followup
 from talent_angels.assistant.intent import CAPABILITY_CONNECT
 from talent_angels.assistant.merge import suite_heading
 from talent_angels.assistant.suite_select import resolve_show_token
@@ -822,19 +819,10 @@ def _handle_map(
 ) -> ChatReply:
     _record(state, "user", text)
     bound = state.binding.node if state.binding is not None else None
-    sample = next(iter(state.bindings.values()), bound)
     bound_nodes = dict(state.bindings) if state.bindings else None
     if bound_nodes and is_describe_followup(text, bound_nodes):
         return _describe_bound(state, text, llm_client=llm_client)
-    if sample is not None and followup_connect_request(text, sample) is not None:
-        outcome = runner(
-            text,
-            bound_node=bound,
-            bound_nodes=bound_nodes,
-            force_capability=CAPABILITY_CONNECT,
-        )
-    else:
-        outcome = runner(text, bound_node=bound, bound_nodes=bound_nodes)
+    outcome = runner(text, bound_node=bound, bound_nodes=bound_nodes)
     # Semantic suite switch: LLM detected user wants to see cached results on a specific suite.
     # Re-render from state.last_results (previous turn) without running a new query.
     _draft = getattr(outcome, "plan_draft", None)

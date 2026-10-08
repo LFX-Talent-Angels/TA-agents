@@ -13,8 +13,11 @@ from fastapi import FastAPI, HTTPException
 from talent_angels.api.schemas import HealthResponse, QueryRequest, QueryResponse, UsageInfo
 from talent_angels.assistant import run_turn
 from talent_angels.assistant.intent import CAPABILITY_CONNECT, Capability
+from talent_angels.contracts import NodeRef
 from talent_angels.env import load_local_dotenv
 from talent_angels.llm.factory import get_answer_mode, get_llm_client
+from talent_angels.session.models import LastBinding, SessionState
+from talent_angels.session.store import load_session, new_session, save_session
 from talent_angels.suites import SuiteRegistry, UnknownSuiteError, default_suite_registry
 
 
@@ -55,6 +58,18 @@ def create_app(*, registry: SuiteRegistry | None = None) -> FastAPI:
     return app
 
 
+def _apply_outcome_bindings(state: SessionState, outcome: object) -> None:
+    """Update per-suite bindings from turn outcome, mirroring kernel._set_bind logic."""
+    results = getattr(outcome, "results", ())
+    for result in results:
+        nodes = getattr(result, "nodes", [])
+        warnings = getattr(result, "warnings", [])
+        if nodes and "ambiguous" not in warnings and len(nodes) == 1:
+            node: NodeRef = nodes[0]
+            state.bindings[node.suite] = node
+            state.binding = LastBinding(node=node)
+
+
 def _handle(
     app: FastAPI,
     payload: QueryRequest,
@@ -62,6 +77,18 @@ def _handle(
     force_locate: bool = False,
     force_capability: Capability | None = None,
 ) -> QueryResponse:
+    # Load or create session — gives the API the same bound-node continuity as the TUI.
+    if payload.session_id:
+        try:
+            state = load_session(payload.session_id)
+        except Exception:  # noqa: BLE001 — unknown/corrupt session starts fresh
+            state = new_session()
+    else:
+        state = new_session()
+
+    bound_node = state.binding.node if state.binding is not None else None
+    bound_nodes = dict(state.bindings) if state.bindings else None
+
     try:
         outcome = run_turn(
             registry=app.state.registry,
@@ -72,12 +99,20 @@ def _handle(
             answer_mode=app.state.answer_mode,
             force_locate=force_locate,
             force_capability=force_capability,
+            bound_node=bound_node,
+            bound_nodes=bound_nodes,
+            thread_id=state.session_id,
         )
     except UnknownSuiteError as exc:
         raise HTTPException(status_code=404, detail=str(exc)) from exc
+
+    _apply_outcome_bindings(state, outcome)
+    save_session(state)
+
     record = outcome.record
     return QueryResponse(
         run_id=record.run_id,
+        session_id=state.session_id,
         capability=outcome.capability,
         suite=outcome.result.suite,
         suites=[item.suite for item in outcome.results],

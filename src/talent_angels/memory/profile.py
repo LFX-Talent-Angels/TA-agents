@@ -68,7 +68,7 @@ def write_rejected(node: NodeRef) -> None:
     lines = content.splitlines()
     for i, line in enumerate(lines):
         if line.startswith("REJECTED:"):
-            existing = line[len("REJECTED:"):].strip()
+            existing = line[len("REJECTED:") :].strip()
             lines[i] = f"REJECTED: {existing}, {entry}" if existing else f"REJECTED: {entry}"
             USER_MD.write_text("\n".join(lines) + "\n")
             return

@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 from pathlib import Path
-from unittest.mock import patch
 
 import pytest
 
@@ -12,7 +11,6 @@ from talent_angels.assistant.synthesize import sources_line, synthesize, synthes
 from talent_angels.contracts import AgentResult, NodeRef
 from talent_angels.llm.protocol import LLMResult, LLMUsage
 from talent_angels.memory.episodes import record_episode
-from talent_angels.memory.fts_retriever import Fts5EpisodeRetriever
 from talent_angels.runlog.models import ResultSummary, RunLogRecord
 
 
@@ -120,114 +118,37 @@ def _system_prompt(client: _Scripted) -> str:
     return client.calls[0][0].content
 
 
-def test_synthesize_recalls_earlier_turns(db_path: Path) -> None:
-    """The prompt carries what the user asked before, between the notes and the brief.
+def test_synthesize_never_shows_past_turns_to_the_model(db_path: Path) -> None:
+    """A reply prompt carries no earlier turns, even with recall on.
 
-    Ordering is part of the contract, not decoration: recall has to sit with the
-    other user-context blocks, *before* `_SYNTH_SYSTEM`, so the instructions read
-    as instructions about content the model has already been given. Asserted
-    against the real retriever over a real database — a stubbed `recall_prefix`
-    would pass here and fail in production, which is how the gap survived the
-    first three wirings.
+    Given them, the model told a user "you asked which is most important and
+    the answer was X" about an exchange that never happened (2026-10-08).
+    "What did we talk about?" is answered in code (session.recall) instead.
     """
     _episode(db_path, "old-1", "what skills does a nurse need?", "nurse")
     client = _Scripted("A nurse needs a licence and a training certificate.")
-
-    with patch.object(synth, "episode_retriever", lambda: Fts5EpisodeRetriever(db_path=db_path)):
-        answer = synthesize(
-            (_occ("esco", "esco:occupation:dev", "nurse"),),
-            question="what training does a nurse need",
-            llm_client=client,
-        )
-
+    answer = synthesize(
+        (_occ("esco", "esco:occupation:dev", "nurse"),),
+        question="what training does a nurse need",
+        llm_client=client,
+    )
     assert answer.startswith("A nurse needs")
     system = _system_prompt(client)
-    assert "nurse" in system.split(synth._SYNTH_SYSTEM)[0], "no recalled turn in the prompt"
-    assert "old-1" not in system, "the prefix renders a summary, not raw run ids"
-    # The brief still comes last, after the context blocks.
-    assert system.index("skills does a nurse need") < system.index(synth._SYNTH_SYSTEM)
-
-
-def test_synthesize_recalls_on_the_question_not_the_fact_card(db_path: Path) -> None:
-    """Retrieval is keyed to the user's words, not to the taxonomy labels we matched.
-
-    The fact card is full of node ids, `kind=occupation` and pref_labels, all of
-    which are in the index. Recalling on it would return the turns that happen to
-    share a label with the answer instead of the turn about the question — the
-    same mistake already documented on the agent loop's call, asserted here so
-    the two sites cannot drift apart.
-    """
-    _episode(db_path, "old-1", "how do i become a plumber?", "plumber")
-    client = _Scripted("Plumbing needs an apprenticeship.")
-
-    with patch.object(synth, "episode_retriever", lambda: Fts5EpisodeRetriever(db_path=db_path)):
-        synthesize(
-            (_occ("esco", "esco:occupation:dev", "plumber"),),
-            question="how do i become a plumber",
-            llm_client=client,
-        )
-
-    recalled = _system_prompt(client).split(synth._SYNTH_SYSTEM)[0]
-    assert "how do i become a plumber?" in recalled
-    assert "esco:occupation:dev" not in recalled, "recalled on the card, not the question"
-    assert "nurse" not in recalled, "a turn about an unrelated topic leaked in"
-
-
-def test_synthesize_prompt_is_unchanged_when_recall_is_off(db_path: Path) -> None:
-    """No retriever means no recall block, so the prompt is byte-identical to before.
-
-    `episode_retriever()` returns a `NullRetriever` when recall is not configured,
-    and `recall_prefix` then returns `""`. The opt-in has to stay opt-in: a user
-    who has not enabled memory should not be sent a block that says so.
-    """
-    _episode(db_path, "old-1", "what skills does a nurse need?", "nurse")
-    client = _Scripted("A nurse needs a licence.")
-
-    with patch.object(synth, "episode_retriever", lambda: None):
-        synthesize(
-            (_occ("esco", "esco:occupation:dev", "nurse"),),
-            question="what training does a nurse need",
-            llm_client=client,
-        )
-
-    system = _system_prompt(client)
-    assert "nurse needs" not in system.split(synth._SYNTH_SYSTEM)[0]
+    assert "skills does a nurse need" not in system
     assert system.endswith(synth._SYNTH_SYSTEM)
 
 
-def test_synthesize_short_circuits_before_recalling(db_path: Path) -> None:
-    """The no-results fallback must not reach the retriever or the model.
-
-    Asserted by the absence of a call rather than by the returned string,
-    because the interesting failure is a *new* code path running the model on an
-    empty fact card, which no assertion about the answer text would catch.
-    """
-    _episode(db_path, "old-1", "what skills does a nurse need?", "nurse")
+def test_synthesize_short_circuits_before_the_model(db_path: Path) -> None:
+    """The no-results fallback must not reach the model."""
     client = _Scripted("should not be called")
-    with patch.object(synth, "episode_retriever", lambda: Fts5EpisodeRetriever(db_path=db_path)):
-        answer = synthesize((), question="anything", llm_client=client)
-
+    answer = synthesize((), question="anything", llm_client=client)
     assert client.calls == []
     assert answer == synthesize_structured((), extra_warnings=())
 
 
 def test_synthesize_with_no_question_still_answers(db_path: Path) -> None:
-    """`question` defaults to `""`, and callers that omit it must be unaffected.
-
-    Worth pinning because the recall wiring made the prompt depend on a parameter
-    that did not exist on this function before. An empty question retrieves
-    nothing — correctly, since there is nothing to retrieve on — and the prompt
-    falls back to being exactly what it was before this change, with the model
-    still called.
-    """
-    _episode(db_path, "old-1", "what skills does a nurse need?", "nurse")
+    """`question` defaults to `""`, and callers that omit it are unaffected."""
     client = _Scripted("A nurse needs a licence.")
-    with patch.object(synth, "episode_retriever", lambda: Fts5EpisodeRetriever(db_path=db_path)):
-        answer = synthesize((_occ("esco", "esco:occupation:dev", "nurse"),), llm_client=client)
-
+    answer = synthesize((_occ("esco", "esco:occupation:dev", "nurse"),), llm_client=client)
     assert answer.startswith("A nurse needs a licence.")
-    system = _system_prompt(client)
-    assert system.endswith(synth._SYNTH_SYSTEM)
-    # Nothing recalled: an empty question has no terms, so the prefix is empty and
-    # the memory blocks sit directly against the brief, exactly as before.
-    assert "nurse needs" not in system.split(synth._SYNTH_SYSTEM)[0]
+    assert _system_prompt(client).endswith(synth._SYNTH_SYSTEM)

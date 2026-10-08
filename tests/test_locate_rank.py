@@ -318,3 +318,30 @@ def test_a_single_alias_substring_hit_is_offered_not_selected() -> None:
             NoNeighbours(), exact_alias, "HR manager", suite_name="esco"
         ).warnings
     )  # type: ignore[arg-type]
+
+
+def test_a_code_lookup_is_selected() -> None:
+    from talent_angels.contracts import AgentResult, EvidencePointer, NodeRef
+    from talent_angels.skills.locate.rank import group_and_sort_locate
+
+    dev = NodeRef(
+        id="onet:occupation:15-1252.00",
+        suite="onet",
+        source="onet",
+        source_id="15-1252.00",
+        kind="Occupation",
+        pref_label="Software Developers",
+    )
+    result = AgentResult(
+        capability="locate",
+        suite="onet",
+        nodes=[dev],
+        evidence=[EvidencePointer(suite="onet", pointer="onet:search:exact_code:15-1252.00")],
+    )
+
+    class NoNeighbours:
+        def get_neighbors(self, node_id: str, rel_types: list[str] | None = None) -> object:
+            raise AssertionError("not needed")
+
+    ranked = group_and_sort_locate(NoNeighbours(), result, "15-1252.00", suite_name="onet")  # type: ignore[arg-type]
+    assert "ambiguous" not in ranked.warnings

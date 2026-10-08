@@ -109,8 +109,10 @@ def group_and_sort_locate(
     group_node_kinds: frozenset[str] = frozenset({"ISCOGroup", "isco group"}),
 ) -> AgentResult:
     """Reorder Locate hits; attach group edges; mark multi-hit as ambiguous."""
+    by_code = any(":search:exact_code:" in pointer.pointer for pointer in result.evidence)
     if (
         len(result.nodes) == 1
+        and not by_code  # a code names exactly one record ("15-1252.00")
         and lexical_rank(_plain(query), result.nodes[0])[0] > _MAX_AUTO_SELECT_TIER
     ):
         # One hit found only inside an alias ("qa tester" -> "localiser") or by

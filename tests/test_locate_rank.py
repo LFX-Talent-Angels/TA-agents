@@ -59,9 +59,12 @@ def test_group_and_sort_marks_multi_hit_ambiguous_and_groups() -> None:
             )
 
     ranked = group_and_sort_locate(Suite(), result, "developer", suite_name="esco")
-    labels = [node.pref_label for node in ranked.nodes]
-    assert labels.index("web developer") < labels.index("3D modeller")
-    assert "ambiguous" in ranked.warnings
+    # "web developer" has "developer" as a pref_label token (tier 1);
+    # "3D modeller" only has it in an alt_label (tier 4). Clear tier gap →
+    # auto-select the pref_label winner rather than marking ambiguous.
+    assert [n.pref_label for n in ranked.nodes] == ["web developer"]
+    assert "ambiguous" not in ranked.warnings
+    assert "also_matched:1" in ranked.warnings
     assert any(edge.type == "CLASSIFIED_UNDER" for edge in ranked.edges)
 
 

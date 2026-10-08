@@ -75,7 +75,7 @@ def _dispatch_heuristic(
         locate_text = (
             draft.subject if draft and draft.subject else extract_locate_subject(state["question"])
         )
-        locate_kind = state.get("kind") or (draft.kind if draft else None)
+        locate_kind = state.get("kind") or (draft.kind if draft else None) or "occupation"
         result = locate(
             measured,
             suite_name,
@@ -141,9 +141,7 @@ def _dispatch_heuristic(
                         "tool_calls": [],
                     }
 
-        locate_kind = state.get("kind") or (draft.kind if draft else None)
-        if locate_kind is None and "HAS_SKILL" in request.rel_types:
-            locate_kind = "occupation"
+        locate_kind = state.get("kind") or (draft.kind if draft else None) or "occupation"
         bound = state.get("bound_node")
         if bound is None and request.subject.strip().casefold() in {
             "it",

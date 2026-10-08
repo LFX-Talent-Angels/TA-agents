@@ -483,3 +483,100 @@ def test_plan_draft_suite_override_is_set():
 
     draft = PlanDraft(target="locate", subject="nurse", suite_override="esco")
     assert draft.suite_override == "esco"
+
+
+def test_multisuite_turn_does_not_double_count_llm_stages() -> None:
+    """Each suite's dispatch appends only its own stages — never earlier suites'."""
+    from contextlib import contextmanager
+
+    from talent_angels.suites import SuiteRegistry, SuiteRuntime
+
+    occupation = FakeNode(
+        id="esco:occupation:fixture-1",
+        kind="Occupation",
+        label="software developer",
+        source="esco",
+        source_id="http://data.europa.eu/esco/occupation/fixture-1",
+        properties={},
+    )
+
+    class MonoSuite:
+        invoice: list[tuple[str, str | None]] = []
+
+        @property
+        def suite_schema(self) -> SuiteSchema:
+            return SuiteSchema(
+                skill_rel_types=("HAS_SKILL", "USES_SOFTWARE"),
+                optional_rel_values=frozenset(),
+                group_rel_type=None,
+                group_node_kinds=frozenset(),
+            )
+
+        def search_nodes(self, text: str, kind: str | None = None) -> FakeToolResult:
+            MonoSuite.invoice.append((text, kind))
+            return FakeToolResult(
+                candidates=[FakeCandidate(node=occupation, confidence=0.9, method="exact_pref")],
+                nodes=[occupation],
+                evidence=[f"{self.name}:search:exact_pref:{text}"],
+            )
+
+        def get_neighbors(self, node_id: str, rel_types: list[str] | None = None) -> FakeToolResult:
+            return FakeToolResult(warnings=["node_not_found"])
+
+    class SuiteA(MonoSuite):
+        name = "suite_a"
+
+    class SuiteB(MonoSuite):
+        name = "suite_b"
+
+    def factory(suite):
+        @contextmanager
+        def open_runtime():
+            yield SuiteRuntime(name=suite.name, suite=suite, health_check=lambda: True)
+
+        return open_runtime
+
+    registry = SuiteRegistry(
+        {
+            "suite_a": factory(SuiteA()),
+            "suite_b": factory(SuiteB()),
+        },
+        default="suite_a",
+    )
+
+    # One interpret + per-suite (search act) + per-suite answer, each producing a stage.
+    from tests.test_agent_loop import ScriptedToolClient
+
+    client = ScriptedToolClient(
+        [
+            LLMResult(text='{"kind":"occupation"}', provider="litellm", model="actual"),
+            LLMResult(text='{"kind":"occupation"}', provider="litellm", model="actual"),
+            LLMResult(
+                text='{"tool":"search_nodes","text":"software developer","kind":"occupation"}',
+                provider="litellm",
+                model="actual",
+            ),
+            LLMResult(text='{"final":"found"}', provider="litellm", model="actual"),
+            LLMResult(
+                text='{"tool":"search_nodes","text":"software developer","kind":"occupation"}',
+                provider="litellm",
+                model="actual",
+            ),
+            LLMResult(text='{"final":"found"}', provider="litellm", model="actual"),
+        ]
+    )
+
+    outcome = run_turn(
+        registry=registry,
+        question="what is a software developer",
+        llm_client=client,
+        kind="occupation",
+    )
+
+    stage_labels = [stage.stage for stage in outcome.record.gen_ai.stages]
+    # 6 scripted LLM replies => 6 stages, each counted exactly once. The buggy
+    # pre-fix code re-appended suite A's stages after suite B and recorded 9.
+    assert len(stage_labels) == 6
+    assert stage_labels.count("act") == 2
+    assert stage_labels.count("intent") == 1
+    assert outcome.record.gen_ai.calls == 6

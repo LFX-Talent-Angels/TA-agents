@@ -333,11 +333,11 @@ def run_turn(
         "heuristic_intent": interpreted.heuristic,
         "llm_stages": stages,
     }
-    # Number of stages already in seed_state (from interpret_question). dispatch_plan
-    # accumulates on top of these, so we only extend with the *new* stages it adds.
-    seed_stages_len = len(stages)
-
+    # dispatch_plan returns the *accumulated* llm_stages (shared seed + its own).
+    # Slice from the baseline taken right before each suite so we only append the
+    # stages that suite actually added — never re-append earlier suites' stages.
     for name in selected:
+        prior_stages_len = len(stages)
         per_state = {
             **seed_state,
             "bound_node": _bound_for_suite(name, bound_node, bound_nodes),
@@ -361,7 +361,7 @@ def run_turn(
                 )
                 collected.append(dispatched["result"])
                 tools.extend(dispatched.get("tool_calls") or [])
-                stages.extend((dispatched.get("llm_stages") or [])[seed_stages_len:])
+                stages.extend((dispatched.get("llm_stages") or [])[prior_stages_len:])
         except UnknownSuiteError:
             raise
         except Exception:  # noqa: BLE001 — a down suite must not fail the turn

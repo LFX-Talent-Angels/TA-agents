@@ -113,6 +113,41 @@ The suite contract itself (`search_nodes`, `get_neighbors`, `enumerate_paths`,
 `score_paths`) is implemented in **`TA-taxonomies`** and consumed here as a
 versioned library. This repo may import **only** that surface.
 
+## Search pipeline contract
+
+`search_nodes(text, kind)` returns a `ToolResult`. This contract has two rules
+that TA-agents enforces but must **never** violate:
+
+**`Candidate.confidence` is a declared policy value, not a similarity score.**
+
+| Method       | Confidence | When |
+|---|---|---|
+| `exact_pref` | 0.95 | pref_label exact match (case-sensitive) |
+| `exact_alt`  | 0.90 | alt_label exact match |
+| `casefold_unique` | 0.85 | case-insensitive pref, unique hit |
+| `casefold_ambiguous` | 0.80 | case-insensitive pref, multiple hits |
+| `contains`   | 0.70 | pref_label or alt_label substring |
+| `hybrid_rrf` | 0.75 | BM25 + vector ANN, RRF merged (Tier 5 fallback) |
+
+Raw Lucene/cosine similarity scores are **never** written into `confidence`.
+The field means "how was this match made", not "how probable is this result".
+
+**Hybrid search is an internal suite implementation detail.**
+
+TA-agents calls `search_nodes(text)` and receives a `ToolResult`. Whether the
+suite used keyword tiers, vector ANN, or RRF fusion is invisible to this repo.
+The strategy is **never** configured from TA-agents; it lives entirely inside
+each suite's `search_nodes()`. After `locate()` returns, `group_and_sort_locate()`
+re-ranks candidates using `lexical_rank()` and may raise confidence when a
+clear winner emerges (e.g. exact pref_label token → auto-select, confidence → 0.90).
+
+**`group_and_sort_locate()` must be called after every `locate()` call.**
+
+This applies to both the heuristic dispatch path and the tool loop path
+(`_execute_tool()` in `agent_loop.py`). Skipping it means Neo4j's internal
+sort order (shortest pref_label first) is shown to the user instead of the
+semantically closest result.
+
 ## Layout
 
 ```

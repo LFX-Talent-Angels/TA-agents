@@ -61,7 +61,7 @@ async def _drive() -> dict[str, Any]:
                 "enumerate_paths",
                 {"from_id": DEV.id, "to_id": PYTHON.id, "max_depth": 0},
             )
-            await call("unknown_suite", "search_nodes", {"text": "x", "suite": "onet"})
+            await call("unknown_suite", "search_nodes", {"text": "x", "suite": "sfia"})
             await call("suite_down", "search_nodes", {"text": "x", "suite": "down"})
             await call("suite_broken", "search_nodes", {"text": "x", "suite": "broken"})
             await call(
@@ -167,7 +167,7 @@ def test_scored_paths_pass_the_suite_refusal_through(served: dict[str, Any]) -> 
     [
         ("miss", "not_found"),
         ("neighbors_missing", "node_not_found"),
-        ("unknown_suite", "unknown_suite:onet"),
+        ("unknown_suite", "unknown_suite:sfia"),
         ("suite_down", "suite_unavailable:ConnectionRefusedError"),
         ("suite_broken", "suite_unavailable:RuntimeError"),
         ("no_pathfind", "capability_unavailable:enumerate_paths:locate_only"),

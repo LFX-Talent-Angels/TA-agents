@@ -97,6 +97,41 @@ def group_and_sort_locate(
         result.nodes,
         key=lambda node: (group_order[group_id(node)], lexical_rank(query, node)),
     )
+    top_tier = lexical_rank(query, ordered[0])[0]
+    second_tier = lexical_rank(query, ordered[1])[0]
+    # Exact preferred label (0) or exact alias (3) that beats the next hit
+    # is unique enough — extra full-text noise is not a picker.
+    unique_enough = top_tier in {0, 3} and top_tier < second_tier
+    if unique_enough:
+        extra = len(ordered) - 1
+        winner = ordered[0]
+        parent = parents.get(winner.id)
+        edges = (
+            [
+                EdgeRef(
+                    type="CLASSIFIED_UNDER",
+                    suite=suite_name,
+                    source_node_id=winner.id,
+                    target_node_id=parent.id,
+                    properties={"group_label": parent.pref_label},
+                )
+            ]
+            if parent is not None
+            else []
+        )
+        warnings = [item for item in result.warnings if item != "ambiguous"]
+        if extra:
+            warnings.append(f"also_matched:{extra}")
+        confidence = 0.95 if top_tier == 0 else 0.90
+        return result.model_copy(
+            update={
+                "nodes": [winner],
+                "edges": edges,
+                "warnings": warnings,
+                "confidence": confidence,
+            }
+        )
+
     edges = [
         EdgeRef(
             type="CLASSIFIED_UNDER",

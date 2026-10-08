@@ -1,11 +1,14 @@
 # TA-agents
 
 Headless assistant runtime for **Talent Angels**. One main assistant
-interprets a natural-language question, calls deterministic ESCO graph tools
-(Locate / Connect), and returns a cited JSON answer with tokens and cost.
+interprets a natural-language question, searches **every attached taxonomy**
+(ESCO and O*NET today; more suites register the same way), and returns a
+cited JSON answer with tokens and cost.
 
-Pathfind (routes between two occupations) is not implemented yet: those
-questions are refused honestly. Evaluate and multi-taxonomy merge come later.
+`--suite` / API `suite` forces one taxonomy for debugging. Pathfind walks
+`enumerate_paths` **per suite** (never ESCO→O*NET without a crosswalk).
+Evaluate ranks those paths with a named policy. Cross-suite identity
+(crosswalks) is still out of scope.
 
 Sibling graph library: [`TA-taxonomies`](https://github.com/LFX-Talent-Angels/TA-taxonomies).
 Workspace policy: [`TA-workspace`](https://github.com/LFX-Talent-Angels/TA-workspace).
@@ -18,8 +21,8 @@ Internals: [`ARCHITECTURE.md`](./ARCHITECTURE.md).
 ```text
 you  →  CLI or FastAPI (/docs)
            →  main assistant (LLM tool loop)
-                 →  search_nodes / get_neighbors   (TA-taxonomies)
-                       →  Neo4j ESCO graph
+                 →  search_nodes / get_neighbors / enumerate_paths
+                       →  Neo4j (ESCO, O*NET, … attached suites)
 ```
 
 - CLI prints one JSON object (`answer`, `plan`, `tools`, `tokens`, `cost_usd`).
@@ -184,6 +187,10 @@ python -m talent_angels.cli query "Where is nurse in ESCO?"
 python -m talent_angels.cli query "What essential skills does a software developer need?"
 python -m talent_angels.cli query "developer"
 python -m talent_angels.cli query "What is the skill path from data analyst to data scientist?"
+
+# O*NET is a second suite on the same Neo4j, not a merge. Default remains ESCO.
+python -m talent_angels.cli query --suite onet "Where is Software Engineer?"
+python -m talent_angels.cli connect --suite onet "What skills does a software developer need?"
 ```
 
 Expect JSON with `plan`, `answer`, `tools`, `tokens`, `cost_usd`.
@@ -202,7 +209,8 @@ uvicorn talent_angels.api.app:app --reload
 ```
 
 Open http://127.0.0.1:8000/docs and `POST /v1/query` with
-`{"question": "What essential skills does a software developer need?"}`.
+`{"question": "What essential skills does a software developer need?"}`
+or `{"question": "Software Engineer", "suite": "onet", "kind": "occupation"}`.
 
 ---
 

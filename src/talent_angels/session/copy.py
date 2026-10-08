@@ -6,7 +6,7 @@ LFX Talent Angels voice — no taxonomy product names in identity lines.
 GREETING = "Hey. I'm here.\n\nTry a job title, or ask what I can do."
 
 WELCOME = (
-    "LFX Talent Angels — map jobs and skills from the bound taxonomy suite.\n\n"
+    "LFX Talent Angels — map jobs and skills across the attached taxonomies.\n\n"
     "Type a job title to locate it, or /help for commands."
 )
 

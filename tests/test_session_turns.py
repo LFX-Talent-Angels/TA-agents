@@ -131,7 +131,7 @@ def _runner_for(suite: RecordingFakeSuite):
 
     registry = SuiteRegistry({"test": factory}, default="test")
 
-    def runner(question: str, *, bound_node=None, force_capability=None):
+    def runner(question: str, *, bound_node=None, bound_nodes=None, force_capability=None):
         with registry.open() as runtime:
             return run_turn(
                 suite=runtime.suite,
@@ -140,6 +140,7 @@ def _runner_for(suite: RecordingFakeSuite):
                 question=question,
                 answer_mode="structured",
                 bound_node=bound_node,
+                bound_nodes=bound_nodes,
                 force_capability=force_capability,
             )
 
@@ -482,7 +483,7 @@ def test_unique_locate_appends_next_step_when_bound() -> None:
     )
 
 
-def test_unique_locate_keeps_record_under_phrasing() -> None:
+def test_unique_locate_phrasing_omits_raw_id_line() -> None:
     from talent_angels.llm.protocol import LLMResult, LLMUsage
     from talent_angels.session.kernel import handle_line
 
@@ -505,7 +506,7 @@ def test_unique_locate_keeps_record_under_phrasing() -> None:
         llm_client=Voice(),
     )
     assert "implements nursing care" in reply.text
-    assert "confidence" in reply.text.casefold()
+    assert "id=" not in reply.text
     assert "You can ask for essential skills, optional skills, or pick another number." in (
         reply.text
     )
@@ -955,3 +956,189 @@ def test_greeting_uses_llm_when_phrasing_client_is_live() -> None:
     reply = handle_line(new_session(), "hi", runner=_boom, llm_client=LiveClient())
     assert "name a job title" in reply.text
     assert "Hey. I'm here." not in reply.text
+
+
+def test_tui_renders_a_card_per_suite() -> None:
+    from talent_angels.assistant.planning import build_plan_for_capability
+    from talent_angels.assistant.turn import TurnOutcome
+    from talent_angels.contracts import AgentResult, NodeRef
+    from talent_angels.runlog import RunLogRecord
+    from talent_angels.session.kernel import handle_line
+
+    esco = AgentResult(
+        capability="locate",
+        suite="esco",
+        nodes=[
+            NodeRef(
+                id="esco:occupation:dev",
+                suite="esco",
+                source="esco",
+                source_id="esco-dev",
+                kind="Occupation",
+                pref_label="software developer",
+            )
+        ],
+        confidence=0.95,
+    )
+    onet = AgentResult(
+        capability="locate",
+        suite="onet",
+        nodes=[
+            NodeRef(
+                id="onet:occupation:15-1252.00",
+                suite="onet",
+                source="onet",
+                source_id="15-1252.00",
+                kind="Occupation",
+                pref_label="Software Developers",
+            )
+        ],
+        confidence=0.95,
+    )
+
+    def runner(question: str, **_kwargs: object) -> TurnOutcome:
+        return TurnOutcome(
+            capability="locate",
+            plan=build_plan_for_capability("locate", suites=("esco", "onet")),
+            result=esco,
+            results=(esco, onet),
+            answer="ignored",
+            record=RunLogRecord(suite="esco,onet", plan=["locate"], question=question),
+        )
+
+    reply = handle_line(new_session(), "software developer", runner=runner)
+    assert "## ESCO" in reply.text
+    assert "## O*NET" in reply.text
+    assert "software developer" in reply.text
+    assert "Software Developers" in reply.text
+    assert reply.source_note == "ESCO · O*NET"
+
+
+def test_tui_shows_onet_picker_next_to_esco_card() -> None:
+    from talent_angels.assistant.planning import build_plan_for_capability
+    from talent_angels.assistant.turn import TurnOutcome
+    from talent_angels.contracts import AgentResult, NodeRef
+    from talent_angels.runlog import RunLogRecord
+    from talent_angels.session.kernel import handle_line
+
+    esco = AgentResult(
+        capability="connect",
+        suite="esco",
+        nodes=[
+            NodeRef(
+                id="esco:occupation:dev",
+                suite="esco",
+                source="esco",
+                source_id="esco-dev",
+                kind="Occupation",
+                pref_label="software developer",
+            )
+        ],
+        confidence=0.95,
+    )
+    onet = AgentResult(
+        capability="connect",
+        suite="onet",
+        nodes=[
+            NodeRef(
+                id="onet:occupation:15-1252.00",
+                suite="onet",
+                source="onet",
+                source_id="15-1252.00",
+                kind="Occupation",
+                pref_label="Software Developers",
+            ),
+            NodeRef(
+                id="onet:occupation:15-1299.07",
+                suite="onet",
+                source="onet",
+                source_id="15-1299.07",
+                kind="Occupation",
+                pref_label="Blockchain Engineers",
+            ),
+        ],
+        warnings=["ambiguous"],
+        confidence=0.7,
+    )
+
+    def runner(question: str, **_kwargs: object) -> TurnOutcome:
+        return TurnOutcome(
+            capability="connect",
+            plan=build_plan_for_capability("connect", suites=("esco", "onet")),
+            result=esco,
+            results=(esco, onet),
+            answer="ignored",
+            record=RunLogRecord(suite="esco,onet", plan=["locate", "connect"], question=question),
+        )
+
+    state = new_session()
+    reply = handle_line(state, "I want to be a software engineer", runner=runner)
+    assert "## ESCO" in reply.text
+    assert "## O*NET" in reply.text
+    assert "software developer" in reply.text
+    assert "Blockchain Engineers" in reply.text
+    assert reply.source_note == "ESCO · O*NET"
+    assert state.binding is not None
+    assert state.binding.node.suite == "esco"
+    assert state.bindings["esco"].id == "esco:occupation:dev"
+    assert "onet" not in state.bindings
+    assert reply.pending_count == 2
+
+
+def test_tui_pick_keeps_the_other_suite_binding() -> None:
+    from talent_angels.assistant.planning import build_plan_for_capability
+    from talent_angels.assistant.turn import TurnOutcome
+    from talent_angels.contracts import AgentResult, NodeRef
+    from talent_angels.runlog import RunLogRecord
+    from talent_angels.session.kernel import handle_line
+
+    esco_node = NodeRef(
+        id="esco:occupation:dev",
+        suite="esco",
+        source="esco",
+        source_id="esco-dev",
+        kind="Occupation",
+        pref_label="software developer",
+    )
+    onet_a = NodeRef(
+        id="onet:occupation:15-1252.00",
+        suite="onet",
+        source="onet",
+        source_id="15-1252.00",
+        kind="Occupation",
+        pref_label="Software Developers",
+    )
+    onet_b = NodeRef(
+        id="onet:occupation:15-1254.00",
+        suite="onet",
+        source="onet",
+        source_id="15-1254.00",
+        kind="Occupation",
+        pref_label="Web Developers",
+    )
+    esco = AgentResult(capability="locate", suite="esco", nodes=[esco_node], confidence=0.95)
+    onet = AgentResult(
+        capability="locate",
+        suite="onet",
+        nodes=[onet_a, onet_b],
+        warnings=["ambiguous"],
+        confidence=0.7,
+    )
+
+    def runner(question: str, **_kwargs: object) -> TurnOutcome:
+        return TurnOutcome(
+            capability="locate",
+            plan=build_plan_for_capability("locate", suites=("esco", "onet")),
+            result=esco,
+            results=(esco, onet),
+            answer="ignored",
+            record=RunLogRecord(suite="esco,onet", plan=["locate"], question=question),
+        )
+
+    state = new_session()
+    handle_line(state, "software engineer", runner=runner)
+    picked = handle_line(state, "1", runner=_boom)
+    assert state.bindings["esco"].id == esco_node.id
+    assert state.bindings["onet"].id == onet_a.id
+    assert "ESCO" in (picked.bound_label or "")
+    assert "O*NET" in (picked.bound_label or "")

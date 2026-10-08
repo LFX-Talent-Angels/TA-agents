@@ -77,6 +77,16 @@ class FakeSuite:
             evidence=[f"test:neighbors:{node_id}"],
         )
 
+    def enumerate_paths(
+        self,
+        from_id: str,
+        to_id: str,
+        *,
+        max_depth: int = 4,
+        max_paths: int = 20,
+    ) -> FakeToolResult:
+        return FakeToolResult(warnings=["no_path"], evidence=[f"test:paths:{from_id}->{to_id}"])
+
 
 def _registry(*, reachable: bool = True) -> SuiteRegistry:
     @contextmanager
@@ -99,6 +109,91 @@ def test_cli_module_entrypoint_calls_main() -> None:
     source = Path(cli.__file__).read_text(encoding="utf-8")
     assert 'if __name__ == "__main__":' in source
     assert "sys.exit(main())" in source
+
+
+def test_cli_query_searches_all_attached_suites(capsys: pytest.CaptureFixture[str]) -> None:
+    events: list[str] = []
+
+    def factory(name: str):
+        @contextmanager
+        def open_runtime():
+            events.append(name)
+            yield SuiteRuntime(name=name, suite=FakeSuite(), health_check=lambda: True)
+
+        return open_runtime
+
+    registry = SuiteRegistry(
+        {"esco": factory("esco"), "onet": factory("onet")},
+        default="esco",
+    )
+    exit_code = main(["locate", "accountant"], registry=registry)
+
+    assert exit_code == 0
+    assert set(events) == {"esco", "onet"}
+    output = json.loads(capsys.readouterr().out)
+    assert output["suites"] == ["esco", "onet"]
+    assert "ESCO · " in output["answer"]
+    assert "O*NET · " in output["answer"]
+    assert output["node_count"] == 2
+
+
+def test_cli_opens_named_suite(capsys: pytest.CaptureFixture[str]) -> None:
+    events: list[str] = []
+
+    def factory(name: str):
+        @contextmanager
+        def open_runtime():
+            events.append(name)
+            yield SuiteRuntime(name=name, suite=FakeSuite(), health_check=lambda: True)
+
+        return open_runtime
+
+    registry = SuiteRegistry(
+        {"esco": factory("esco"), "onet": factory("onet")},
+        default="esco",
+    )
+    exit_code = main(["locate", "Software Engineer", "--suite", "onet"], registry=registry)
+
+    assert exit_code == 0
+    assert events == ["onet"]
+    output = json.loads(capsys.readouterr().out)
+    assert output["suite"] == "onet"
+
+
+def test_api_query_searches_all_attached_suites() -> None:
+    events: list[str] = []
+
+    def factory(name: str):
+        @contextmanager
+        def open_runtime():
+            events.append(name)
+            yield SuiteRuntime(name=name, suite=FakeSuite(), health_check=lambda: True)
+
+        return open_runtime
+
+    registry = SuiteRegistry(
+        {"esco": factory("esco"), "onet": factory("onet")},
+        default="esco",
+    )
+    with TestClient(create_app(registry=registry)) as client:
+        response = client.post("/v1/query", json={"question": "accountant"})
+
+    assert response.status_code == 200
+    assert set(events) == {"esco", "onet"}
+    body = response.json()
+    assert body["suites"] == ["esco", "onet"]
+    assert [item["suite"] for item in body["results"]] == ["esco", "onet"]
+    assert "ESCO · " in body["answer"]
+    assert "O*NET · " in body["answer"]
+
+
+def test_api_unknown_suite_is_404() -> None:
+    with TestClient(create_app(registry=_registry())) as client:
+        response = client.post(
+            "/v1/query",
+            json={"question": "developer", "suite": "sfia"},
+        )
+    assert response.status_code == 404
 
 
 def test_cli_uses_injected_registry(capsys: pytest.CaptureFixture[str]) -> None:
@@ -152,9 +247,9 @@ def test_cli_pathfind_question_is_honest(
     output = json.loads(capsys.readouterr().out)
     assert output["capability"] == "pathfind"
     assert output["plan"] == ["locate", "connect", "pathfind"]
-    assert "capability_not_implemented:pathfind" in output["warnings"]
-    assert "Pathfind is not in this MVP" in output["answer"]
-    assert output["tools"] == []
+    assert "capability_not_implemented:pathfind" not in output["warnings"]
+    assert "Pathfind is not in this MVP" not in output["answer"]
+    assert "no_path" in output["warnings"] or "endpoint_not_found" in output["warnings"]
 
 
 def test_cli_quality_writes_full_report(capsys: pytest.CaptureFixture[str], tmp_path: Path) -> None:
@@ -216,9 +311,10 @@ def test_api_pathfind_question_is_honest() -> None:
     assert response.status_code == 200
     body = response.json()
     assert body["capability"] == "pathfind"
-    assert "capability_not_implemented:pathfind" in body["result"]["warnings"]
-    assert "Pathfind is not in this MVP" in body["answer"]
-    assert body["usage"]["tools"] == []
+    assert "capability_not_implemented:pathfind" not in body["result"]["warnings"]
+    assert "Pathfind is not in this MVP" not in body["answer"]
+    warnings = body["result"]["warnings"]
+    assert "no_path" in warnings or "endpoint_not_found" in warnings
 
 
 def test_cli_connect_uses_the_same_assistant_flow(

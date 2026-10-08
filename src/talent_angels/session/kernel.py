@@ -7,9 +7,10 @@ from dataclasses import dataclass
 from datetime import UTC, datetime
 from typing import Literal, Protocol
 
-from talent_angels.assistant.answer import is_unimplemented_pathfind
+from talent_angels.assistant.answer import is_unimplemented_pathfind, summarize_result
 from talent_angels.assistant.connect_request import followup_connect_request
 from talent_angels.assistant.intent import CAPABILITY_CONNECT
+from talent_angels.assistant.merge import suite_heading
 from talent_angels.assistant.turn import TurnOutcome
 from talent_angels.contracts import AgentResult, NodeRef
 from talent_angels.llm import LLMClient
@@ -91,6 +92,7 @@ class TurnRunner(Protocol):
         question: str,
         *,
         bound_node: NodeRef | None = None,
+        bound_nodes: dict[str, NodeRef] | None = None,
         force_capability: str | None = None,
     ) -> TurnOutcome: ...
 
@@ -169,6 +171,23 @@ def _record(state: SessionState, role: Literal["user", "assistant", "system"], t
     state.transcript.append(TranscriptLine(role=role, text=text, ts=_now()))
 
 
+def _set_bind(state: SessionState, node: NodeRef) -> None:
+    state.bindings[node.suite] = node
+    state.binding = LastBinding(node=node)
+
+
+def _bound_status(state: SessionState) -> str | None:
+    if len(state.bindings) > 1:
+        return " · ".join(
+            f"{suite_heading(suite)} {node.pref_label}" for suite, node in state.bindings.items()
+        )
+    if state.binding is not None:
+        return state.binding.node.pref_label
+    if state.bindings:
+        return next(iter(state.bindings.values())).pref_label
+    return None
+
+
 def _reply(
     state: SessionState,
     text: str,
@@ -186,7 +205,7 @@ def _reply(
         new_llm_client=new_llm_client,
         request_key=request_key,
         request_model_pick=request_model_pick,
-        bound_label=state.binding.node.pref_label if state.binding is not None else None,
+        bound_label=_bound_status(state),
         pending_count=len(state.pending),
     )
 
@@ -324,7 +343,7 @@ def _handle_pick(
                 )
             _record(state, "assistant", _BAD_PICK)
             return _reply(state, _BAD_PICK)
-        state.binding = LastBinding(node=node)
+        _set_bind(state, node)
         _write_picker_event(
             state,
             query=_last_map_query(state),
@@ -407,14 +426,73 @@ def _map_answer(text: str) -> str:
     return text.replace(_PAYLOAD_CLAUSE, _DETAILS_CLAUSE)
 
 
-def _from_outcome(
+def _turn_results(outcome: TurnOutcome) -> tuple[AgentResult, ...]:
+    if outcome.results:
+        return outcome.results
+    return (outcome.result,)
+
+
+def _source_note_for(results: tuple[AgentResult, ...]) -> str | None:
+    names: list[str] = []
+    for result in results:
+        if not result.suite:
+            continue
+        label = suite_heading(result.suite)
+        if label not in names:
+            names.append(label)
+    return " · ".join(names) if names else None
+
+
+def _renumber_pending(choices: list[PendingChoice], *, start: int) -> list[PendingChoice]:
+    return [
+        PendingChoice(number=start + index, node=choice.node, group_label=choice.group_label)
+        for index, choice in enumerate(choices)
+    ]
+
+
+def _render_unique_block(
+    result: AgentResult,
+    *,
+    question: str,
+    llm_client: LLMClient | None,
+    heading: str | None,
+) -> str:
+    fallback = _map_answer(summarize_result(result))
+    if result.capability == "connect" and result.nodes:
+        body = phrase_map(
+            llm_client,
+            question=question,
+            result=result,
+            fallback=fallback,
+            card=connect_card(result),
+        )
+    else:
+        record = fallback
+        phrased = phrase_map(
+            llm_client,
+            question=question,
+            result=result,
+            fallback=record,
+            card=locate_card(result),
+        )
+        if uses_chat_phrasing(llm_client) and phrased.strip() != record.strip():
+            body = phrased
+        else:
+            body = phrased
+    if heading:
+        # Plain ATX heading — TUI treats **bold** lines as picker group names.
+        return f"## {heading}\n\n{body}"
+    return body
+
+
+def _from_single_outcome(
     state: SessionState,
+    result: AgentResult,
     outcome: TurnOutcome,
     *,
     question: str,
     llm_client: LLMClient | None,
 ) -> ChatReply:
-    result = outcome.result
     state.last_result = result
     text = outcome.answer
     if "ambiguous" in result.warnings:
@@ -422,19 +500,18 @@ def _from_outcome(
         omitted = max(0, len(result.nodes) - len(pending))
         state.pending = pending
         state.binding = None
+        state.bindings.clear()
         intro = phrase_chat(
             llm_client,
             user_text=question,
             fallback=f'I found several matches for "{question}". Which one did you mean?',
             hint=ambiguous_intro_card(
-                question, [c.node.pref_label for c in pending], omitted=omitted
+                question, [choice.node.pref_label for choice in pending], omitted=omitted
             ),
             mode="intro",
         )
         text = render_picker(question, pending, omitted=omitted, intro=intro)
     elif is_unimplemented_pathfind(result):
-        # Do not let the phrasing model invent a gap, curriculum, or skills.
-        # The graph did not walk; the typed warning is the answer.
         text = outcome.answer
     elif "not_found" in result.warnings:
         text = phrase_chat(
@@ -448,7 +525,7 @@ def _from_outcome(
             mode="miss",
         )
     elif result.capability == "locate" and result.nodes:
-        state.binding = LastBinding(node=result.nodes[0])
+        _set_bind(state, result.nodes[0])
         state.pending = []
         record = f"{_map_answer(outcome.answer)}\n\n{MAP_NEXT_STEP}"
         phrased = phrase_map(
@@ -459,11 +536,11 @@ def _from_outcome(
             card=locate_card(result),
         )
         if uses_chat_phrasing(llm_client) and phrased.strip() != record.strip():
-            text = f"{phrased}\n\n{record}"
+            text = f"{phrased}\n\n{MAP_NEXT_STEP}"
         else:
             text = record
     elif result.capability == "connect" and result.nodes:
-        state.binding = LastBinding(node=result.nodes[0])
+        _set_bind(state, result.nodes[0])
         fallback = _map_answer(outcome.answer)
         if not uses_chat_phrasing(llm_client):
             fallback = f"{fallback}\n\n{MAP_NEXT_STEP}"
@@ -478,6 +555,111 @@ def _from_outcome(
         text = _map_answer(outcome.answer)
     source = result.suite.upper() if result.suite else None
     return _reply(state, text, source_note=source)
+
+
+def _from_outcome(
+    state: SessionState,
+    outcome: TurnOutcome,
+    *,
+    question: str,
+    llm_client: LLMClient | None,
+) -> ChatReply:
+    results = _turn_results(outcome)
+    if len(results) <= 1:
+        return _from_single_outcome(
+            state,
+            results[0] if results else outcome.result,
+            outcome,
+            question=question,
+            llm_client=llm_client,
+        )
+
+    preferred = next(
+        (item for item in results if item.nodes and "ambiguous" not in item.warnings),
+        results[0],
+    )
+    state.last_result = preferred
+
+    blocks: list[str] = []
+    pending_all: list[PendingChoice] = []
+    unique_bind: NodeRef | None = None
+    any_hit = False
+    all_miss = True
+
+    for result in results:
+        heading = suite_heading(result.suite) if result.suite else "Map"
+        if is_unimplemented_pathfind(result):
+            blocks.append(f"## {heading}\n\n{_map_answer(summarize_result(result))}")
+            all_miss = False
+            continue
+        if "ambiguous" in result.warnings and result.nodes:
+            all_miss = False
+            any_hit = True
+            choices = _renumber_pending(choices_from_result(result), start=len(pending_all) + 1)
+            omitted = max(0, len(result.nodes) - len(choices))
+            intro = phrase_chat(
+                llm_client,
+                user_text=question,
+                fallback=(
+                    f'I found several {heading} matches for "{question}". Which one did you mean?'
+                ),
+                hint=ambiguous_intro_card(
+                    question,
+                    [choice.node.pref_label for choice in choices],
+                    omitted=omitted,
+                ),
+                mode="intro",
+            )
+            picker = render_picker(
+                question,
+                choices,
+                omitted=omitted,
+                intro=intro,
+                include_source=False,
+            )
+            blocks.append(f"## {heading}\n\n{picker}")
+            pending_all.extend(choices)
+            continue
+        if not result.nodes or "not_found" in result.warnings:
+            blocks.append(f"## {heading}\n\n{LOCATE_MISS}")
+            continue
+        all_miss = False
+        any_hit = True
+        _set_bind(state, result.nodes[0])
+        if unique_bind is None:
+            unique_bind = result.nodes[0]
+        blocks.append(
+            _render_unique_block(result, question=question, llm_client=llm_client, heading=heading)
+        )
+
+    if pending_all:
+        state.pending = pending_all
+        if not state.bindings:
+            state.binding = None
+    elif unique_bind is not None:
+        if any(
+            item.capability == "locate" and "ambiguous" not in item.warnings and item.nodes
+            for item in results
+        ):
+            state.pending = []
+
+    if all_miss and not any_hit:
+        text = phrase_chat(
+            llm_client,
+            user_text=question,
+            fallback=LOCATE_MISS,
+            hint=(
+                "Search missed. One or two sentences. It is a miss, not a maybe. "
+                "Do not name occupations or skills as facts. Do not list related jobs."
+            ),
+            mode="miss",
+        )
+    else:
+        text = "\n\n---\n\n".join(blocks)
+        if unique_bind is not None and not pending_all and MAP_NEXT_STEP not in text:
+            text = f"{text}\n\n{MAP_NEXT_STEP}"
+
+    return _reply(state, text, source_note=_source_note_for(results))
 
 
 def _handle_expand(state: SessionState, text: str, *, runner: TurnRunner) -> ChatReply:
@@ -527,10 +709,17 @@ def _handle_map(
 ) -> ChatReply:
     _record(state, "user", text)
     bound = state.binding.node if state.binding is not None else None
-    if bound is not None and followup_connect_request(text, bound) is not None:
-        outcome = runner(text, bound_node=bound, force_capability=CAPABILITY_CONNECT)
+    sample = next(iter(state.bindings.values()), bound)
+    bound_nodes = dict(state.bindings) if state.bindings else None
+    if sample is not None and followup_connect_request(text, sample) is not None:
+        outcome = runner(
+            text,
+            bound_node=bound,
+            bound_nodes=bound_nodes,
+            force_capability=CAPABILITY_CONNECT,
+        )
     else:
-        outcome = runner(text, bound_node=bound)
+        outcome = runner(text, bound_node=bound, bound_nodes=bound_nodes)
     reply = _from_outcome(state, outcome, question=text, llm_client=llm_client)
     _record(state, "assistant", reply.text)
     return reply

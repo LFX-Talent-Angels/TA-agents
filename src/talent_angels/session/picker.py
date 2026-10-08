@@ -36,6 +36,7 @@ def render_picker(
     *,
     omitted: int,
     intro: str | None = None,
+    include_source: bool = True,
 ) -> str:
     """Markdown numbered list of pref_label; quiet source line; no auto-pick."""
     heading = intro or f'I found several matches for "{question}". Which one did you mean?'
@@ -65,5 +66,6 @@ def render_picker(
             f"({omitted} more). The full list is in query details."
         )
 
-    lines.append(f"source: {suite}")
+    if include_source:
+        lines.append(f"source: {suite}")
     return "\n".join(lines)

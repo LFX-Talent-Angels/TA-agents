@@ -27,13 +27,13 @@ def test_esco_context_manager_is_exported_without_loading_concrete_suite() -> No
     assert callable(open_esco_suite)
 
 
-def test_default_registry_describes_esco_without_opening_it() -> None:
+def test_default_registry_describes_suites_without_opening_them() -> None:
     from talent_angels.suites import default_suite_registry
 
     registry = default_suite_registry()
 
     assert registry.default == "esco"
-    assert registry.available == ("esco",)
+    assert registry.available == ("esco", "onet")
 
 
 def test_cli_and_api_import_without_concrete_taxonomy_package() -> None:
@@ -52,7 +52,7 @@ import talent_angels.api.app
 import talent_angels.cli
 import talent_angels.tui.app
 from talent_angels.suites import default_suite_registry
-assert default_suite_registry().available == ("esco",)
+assert default_suite_registry().available == ("esco", "onet")
 """
 
     subprocess.run([sys.executable, "-c", script], check=True)

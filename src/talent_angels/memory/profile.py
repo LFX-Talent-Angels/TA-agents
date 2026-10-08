@@ -1,7 +1,7 @@
 """Read and write structured user-profile facts to USER.md.
 
-Only ``write_standing`` is called on a confirmed bind (_set_bind gate).
-Never called on Locate alone. Node IDs + labels only — no prose descriptions.
+Only what the user says about themselves is written: a lookup or a pick is
+not a statement about the user. Node IDs + labels only — no prose descriptions.
 """
 
 from __future__ import annotations

@@ -58,18 +58,25 @@ Examples:
 {"target":"pathfind","subject":"data analyst","secondary_subject":"data scientist"}
 
 Same connect shape for: "what skills does a X need", "what skills I need to be
-a X", "skills I need to become a X", "I want to be a X".
+a X", "skills I need to become a X".
 Same locate shape for: "what is a X", "what does a X do", "where is X".
 Same pathfind shape for: "path from X to Y", "skill gap from X to Y",
 "how to become X from Y", "how do I move from X to Y".
 
 profile_intent rules:
 - Set "goal" when the user states a career destination:
-  "my goal is X", "I want to become X", "I am working toward X".
+  "my goal is X", "I want to become X", "I want to be a X", "I am working toward X",
+  "I want to move into X", "I'd like to switch to X", "I want to work as X",
+  "I'm aiming for X".
+  A stated destination is a goal even without the word "goal"; do not list skills.
   Set subject to ONLY the destination occupation name (e.g. "data scientist").
   target must be "locate". Example:
   "my goal is data scientist" →
     {"target":"locate","subject":"data scientist","kind":"occupation","profile_intent":"goal"}
+- Set "standing" when the user states their own current occupation:
+  "I am a X", "I'm a X", "I work as X", "my job is X", "I currently work as X".
+  Set subject to ONLY the occupation name. target must be "locate".
+  Looking a title up ("X", "what is a X") is NOT standing; leave it null.
 - Set "reject" when user denies an occupational identity:
   "I am not a X", "that's not my job", "I don't work as X".
   Set subject to the rejected occupation name only.
@@ -138,9 +145,31 @@ class InterpretedPlan:
 
 
 _GOAL_RE = re.compile(
-    r"^(?:my\s+goal\s+is|i\s+want\s+to\s+become|i\s+am\s+working\s+toward)"
+    r"^(?:my\s+goal\s+is|i\s+am\s+working\s+toward|i'?m\s+aiming\s+for|"
+    r"i(?:\s+want|\s+would\s+like|'d\s+like)\s+to\s+"
+    r"(?:become|be|work\s+as|move\s+into|switch\s+to|transition\s+into|get\s+into))"
     r"\s+(?:a\s+|an\s+)?(.+)$",
     re.IGNORECASE,
+)
+_STANDING_RE = re.compile(
+    r"^(?:i\s+am|i'm|i\s+work\s+as|i\s+currently\s+work\s+as|my\s+(?:current\s+)?job\s+is)"
+    r"\s+(?:a\s+|an\s+)?(.+)$",
+    re.IGNORECASE,
+)
+#: "I am looking for a job" is not an occupation; the first word after
+#: "I am" decides whether the rest can be one.
+_NOT_AN_OCCUPATION = frozenset(
+    {
+        "not",
+        "working",
+        "looking",
+        "interested",
+        "trying",
+        "thinking",
+        "going",
+        "planning",
+        "curious",
+    }
 )
 _REJECT_RE = re.compile(
     r"^(?:i\s+am\s+not\s+an?\s+|that(?:'s|'s|\s+is)\s+not\s+my\s+(?:job|occupation|role)\s*|i\s+don't\s+work\s+as\s+(?:an?\s+)?)(.+)$",
@@ -149,7 +178,7 @@ _REJECT_RE = re.compile(
 
 
 def _profile_intent_heuristic(question: str) -> PlanDraft | None:
-    """Return a PlanDraft for goal/reject patterns when the LLM planner fails."""
+    """Return a PlanDraft for goal/reject/standing patterns when the LLM planner fails."""
     m = _GOAL_RE.match(question.strip())
     if m:
         return PlanDraft(
@@ -165,6 +194,14 @@ def _profile_intent_heuristic(question: str) -> PlanDraft | None:
             subject=m.group(1).strip(),
             kind="occupation",
             profile_intent="reject",
+        )
+    m = _STANDING_RE.match(question.strip())
+    if m and m.group(1).split()[0].casefold() not in _NOT_AN_OCCUPATION:
+        return PlanDraft(
+            target=CAPABILITY_LOCATE,
+            subject=m.group(1).strip().rstrip(".!"),
+            kind="occupation",
+            profile_intent="standing",
         )
     return None
 

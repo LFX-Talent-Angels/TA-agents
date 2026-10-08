@@ -40,5 +40,7 @@ class SessionState(BaseModel):
     binding: LastBinding | None = None
     bindings: dict[str, NodeRef] = Field(default_factory=dict)
     pending: list[PendingChoice] = Field(default_factory=list)
+    #: A profile statement ("I am a X") waiting on the user's pick from ``pending``.
+    pending_profile_intent: str | None = None
     last_result: AgentResult | None = None
     last_results: list[AgentResult] = Field(default_factory=list)

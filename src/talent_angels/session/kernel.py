@@ -205,7 +205,16 @@ def _set_bind(state: SessionState, node: NodeRef) -> None:
         return
     state.bindings[node.suite] = node
     state.binding = LastBinding(node=node)
-    write_standing(node)
+
+
+def _apply_profile_intent(intent: str | None, node: NodeRef) -> None:
+    """Write what the user said about themselves; a plain lookup writes nothing."""
+    if intent == "goal":
+        write_goal(node)
+    elif intent == "reject":
+        write_rejected(node)
+    elif intent == "standing":
+        write_standing(node)
 
 
 def _bound_status(state: SessionState) -> str | None:
@@ -300,9 +309,19 @@ def _handle_command(state: SessionState, text: str) -> ChatReply:
         # session's own files go too — the transcript is the largest store of
         # the user's own words and previously survived every reset, since
         # erase_person() only covered the profile and the episode table.
+        # A session the user named with /save is something they asked to keep:
+        # step away from it instead of erasing it.
+        saved_name = state.name
         old_dir = _session_dir_for(state)
         fresh = new_session()
         _copy_into(state, clear_conversation(fresh))
+        if saved_name:
+            return _finish(
+                state,
+                text,
+                f"Starting a fresh conversation. Saved session {saved_name!r} is kept; "
+                f"/resume {saved_name} to go back.",
+            )
         erased = erase_session(old_dir)
         return _finish(state, text, f"{erase_summary(erased)} Starting a fresh conversation.")
     if command.name == "reset-all":
@@ -406,6 +425,8 @@ def _handle_pick(
             _record(state, "assistant", _BAD_PICK)
             return _reply(state, _BAD_PICK)
         _set_bind(state, node)
+        _apply_profile_intent(state.pending_profile_intent, node)
+        state.pending_profile_intent = None
         _write_picker_event(
             state,
             query=_last_map_query(state),
@@ -628,10 +649,13 @@ def _from_single_outcome(
 ) -> ChatReply:
     state.last_result = result
     text = outcome.answer
+    draft = getattr(outcome, "plan_draft", None)
+    state.pending_profile_intent = None
     if "ambiguous" in result.warnings:
         pending = choices_from_result(result)
         omitted = max(0, len(result.nodes) - len(pending))
         state.pending = pending
+        state.pending_profile_intent = draft.profile_intent if draft else None
         state.binding = None
         state.bindings.clear()
         intro = phrase_chat(
@@ -658,11 +682,7 @@ def _from_single_outcome(
     elif result.capability == "locate" and result.nodes:
         _set_bind(state, result.nodes[0])
         _draft = getattr(outcome, "plan_draft", None)
-        if _draft is not None:
-            if _draft.profile_intent == "goal":
-                write_goal(result.nodes[0])
-            elif _draft.profile_intent == "reject":
-                write_rejected(result.nodes[0])
+        _apply_profile_intent(_draft.profile_intent if _draft else None, result.nodes[0])
         state.pending = []
         record = f"{_map_answer(outcome.answer)}\n\n{MAP_NEXT_STEP}"
         phrased = phrase_map(
@@ -865,11 +885,16 @@ def _from_outcome(
             _render_unique_block(result, question=question, llm_client=llm_client, heading=heading)
         )
 
-    if _draft is not None and unique_bind is not None:
-        if _draft.profile_intent == "goal":
-            write_goal(unique_bind)
-        elif _draft.profile_intent == "reject":
-            write_rejected(unique_bind)
+    intent = _draft.profile_intent if _draft is not None else None
+    if intent == "standing":
+        # One current occupation per suite: every suite that resolved records it.
+        for item in results:
+            if item.nodes and "ambiguous" not in item.warnings and "not_found" not in item.warnings:
+                _apply_profile_intent(intent, item.nodes[0])
+    elif unique_bind is not None:
+        _apply_profile_intent(intent, unique_bind)
+        intent = None  # goal/reject are written once, not again on a later pick
+    state.pending_profile_intent = intent if pending_all else None
 
     if pending_all:
         state.pending = pending_all

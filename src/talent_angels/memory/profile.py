@@ -271,7 +271,9 @@ def _card_line(line: str, *, you: bool = False) -> str:
     with a contradiction attached; "Not their job (they said so)" is not.
     """
     head, _, rest = line.partition(":")
-    title = re.sub(r"\s+\[.*$", "", rest).strip()
+    # Every "label [id]" entry keeps its label ("a [x], b [y]" -> "a, b").
+    title = re.sub(r"\s*\[[^\]]*\]", "", rest)
+    title = re.sub(r"\s+since:.*$", "", title).strip()
     if head == "GOAL":
         return f"Goal: {title}"
     if head == "REJECTED":

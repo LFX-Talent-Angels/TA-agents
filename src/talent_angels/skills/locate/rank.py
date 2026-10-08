@@ -204,3 +204,30 @@ def group_and_sort_locate(
     if "ambiguous" not in warnings:
         warnings.append("ambiguous")
     return result.model_copy(update={"nodes": ordered, "edges": edges, "warnings": warnings})
+
+
+_ONET_CODE = re.compile(r"^onet:occupation:(\d{2}-\d{4}\.\d{2})$")
+
+
+def code_facts(result: AgentResult, node: NodeRef) -> list[str]:
+    """Codes and group of ``node`` that the graph result itself carries.
+
+    So a card can answer "what ISCO group is a chef in?" from data rather than
+    the model's memory: the ISCO group comes from the node's CLASSIFIED_UNDER
+    edge (ids are ``esco:isco:<code>``), the O*NET-SOC code from its id.
+    """
+    facts: list[str] = []
+    match = _ONET_CODE.match(node.id)
+    if match:
+        facts.append(f"O*NET-SOC code: {match.group(1)}")
+    for edge in result.edges:
+        label = edge.properties.get("group_label")
+        if edge.source_node_id != node.id or not label:
+            continue
+        code = edge.target_node_id.rsplit(":", 1)[-1]
+        if code.isdigit():
+            facts.append(f"ISCO-08 group: {code} {label}")
+        else:
+            facts.append(f"group: {label}")
+        break
+    return facts

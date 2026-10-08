@@ -900,7 +900,8 @@ def test_expand_and_skill_n_work_while_occupation_pending_remains() -> None:
     web = next(c for c in state.pending if c.node.pref_label == "web developer")
     handle_line(state, str(web.number), runner=runner)
     handle_line(state, "essential skills", runner=runner)
-    assert state.pending  # occupation list still on screen
+    # The skill list is what is on screen now; the occupation list is closed.
+    assert not state.pending
     searches_before = list(suite.searches)
     listed = handle_line(state, "yes list them all", runner=runner)
     assert suite.searches == searches_before

@@ -27,16 +27,32 @@ def _join(titles: Sequence[str]) -> str:
     return f"{', '.join(titles[:-1])} or {titles[-1]}"
 
 
-def understood(question: str, draft: PlanDraft | None) -> str:
-    """ "I read "SWE" as software engineer, software developer or web developer." """
+def _on_the_map(candidate: str, results: Sequence[AgentResult]) -> bool:
+    wanted = candidate.casefold().strip()
+    for result in results:
+        for node in result.nodes:
+            for name in (node.pref_label, *node.alt_labels):
+                name = name.casefold().strip()
+                if name in (wanted, f"{wanted}s") or f"{name}s" == wanted:
+                    return True
+    return False
+
+
+def understood(question: str, draft: PlanDraft | None, results: Sequence[AgentResult] = ()) -> str:
+    """ "I read "SWE" as software engineer, software developer or web developer."
+
+    Only planner titles the results confirm are named: a guess the map does
+    not have is never shown to the user.
+    """
     said = question.strip().rstrip("?.!")
     subject = (draft.subject or "").strip() if draft is not None else ""
     subject = subject or said
     if not subject:
         return ""
     quoted = f'"{subject}"' if subject.casefold() == said.casefold() else "your request"
-    if draft is not None and draft.candidates:
-        return f"I read {quoted} as {_join(list(draft.candidates[:3]))}."
+    confirmed = [c for c in (draft.candidates if draft else ()) if _on_the_map(c, results)]
+    if confirmed:
+        return f"I read {quoted} as {_join(confirmed[:3])}."
     if subject.casefold() in said.casefold():
         return f'I looked up "{subject}".'
     return f'I read {quoted} as "{subject}".'
@@ -47,6 +63,10 @@ def _found_one(result: AgentResult) -> str:
     if result.nodes and "ambiguous" in result.warnings:
         more = "+" if "truncated" in result.warnings else ""
         noun = "title" if len(result.nodes) == 1 and not more else "titles"
+        pointers = [pointer.pointer for pointer in result.evidence]
+        if pointers and all(":search:hybrid:" in pointer for pointer in pointers):
+            # Found by meaning, not by name: close, not matching.
+            return f"{heading} has no exact match; {len(result.nodes)}{more} close {noun}"
         return f"{heading} has {len(result.nodes)}{more} matching {noun}"
     if result.nodes and result.capability in ("locate", "connect"):
         return f"{heading} matched {result.nodes[0].pref_label}"
@@ -85,5 +105,5 @@ def lead(question: str, draft: PlanDraft | None, results: Sequence[AgentResult])
         intent or "", "Pick the one you mean, or tell me more and I'll narrow it."
     )
     return " ".join(
-        part for part in (understood(question, draft), found(results), next_step) if part
+        part for part in (understood(question, draft, results), found(results), next_step) if part
     )

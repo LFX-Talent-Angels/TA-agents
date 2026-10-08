@@ -115,6 +115,9 @@ def explore(
         evidence.extend(hit[1].evidence)
 
     if not confirmed:
+        if not subject_is_users and located.nodes and "ambiguous" not in located.warnings:
+            # The planner wrote this subject; its one hit is offered, not bound.
+            located = located.model_copy(update={"warnings": [*located.warnings, "ambiguous"]})
         return located, areas
     # Each confirmed title under its own group heading, not the one above it.
     grouped = {edge.source_node_id for edge in located.edges}

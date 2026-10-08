@@ -205,3 +205,18 @@ def test_without_confirmed_titles_the_subject_list_is_kept_whole() -> None:
     explored = explore(suite, "esco", "SWE", ["no such title"], kind="occupation")
     assert explored is not None
     assert [n.pref_label for n in explored[0].nodes] == ["chimney sweep", "street sweeper"]
+
+
+def test_a_planner_subject_with_no_confirmed_title_is_still_not_bound() -> None:
+    near = _occ("basket maker")
+    suite = _Suite({"basket weaver": _hits(near)})
+    explored = explore(
+        suite,
+        "esco",
+        "basket weaver",
+        ["quantum weaver"],
+        kind="occupation",
+        subject_is_users=False,
+    )
+    assert explored is not None
+    assert "ambiguous" in explored[0].warnings

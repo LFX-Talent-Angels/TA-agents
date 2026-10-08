@@ -83,6 +83,7 @@ def save_session(state: SessionState, *, name: str | None = None, update_last: b
         "recent": list(state.recent),
         "pending_profile_intent": state.pending_profile_intent,
         "areas": [area.model_dump() for area in state.areas],
+        "list_topic": state.list_topic,
     }
     (path / _BINDING).write_text(json.dumps(binding_payload, indent=2) + "\n", encoding="utf-8")
 
@@ -110,6 +111,7 @@ def load_session(name: str) -> SessionState:
     recent: list[str] = []
     pending_profile_intent: str | None = None
     areas: list[AreaChoice] = []
+    list_topic = ""
     binding_path = path / _BINDING
     if binding_path.is_file():
         payload = json.loads(binding_path.read_text(encoding="utf-8"))
@@ -127,6 +129,7 @@ def load_session(name: str) -> SessionState:
         recent = [str(title) for title in payload.get("recent") or []]
         pending_profile_intent = payload.get("pending_profile_intent")
         areas = [AreaChoice.model_validate(item) for item in payload.get("areas") or []]
+        list_topic = str(payload.get("list_topic") or "")
 
     return SessionState(
         session_id=meta["session_id"],
@@ -140,6 +143,7 @@ def load_session(name: str) -> SessionState:
         recent=recent,
         pending_profile_intent=pending_profile_intent,
         areas=areas,
+        list_topic=list_topic,
     )
 
 

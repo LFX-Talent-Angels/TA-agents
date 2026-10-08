@@ -24,7 +24,8 @@ _LEARN_TOWARD_GOAL = re.compile(
 _NOT_A_CHOICE = "I can't choose for you, but here is what the map lists for each."
 #: "which one should I choose?" right after two titles were compared.
 _WHICH_OF_PAIR = re.compile(
-    r"\b(?:which\s+(?:one|of\s+(?:them|the\s+two|these|those))|choose|pick|go\s+for)\b",
+    r"\bwhich\s+(?:one|of\s+(?:them|the\s+two|these|those))\b"
+    r"|\b(?:choose|pick)\s+(?:between\s+)?(?:them|the\s+two|one\s+of\s+them)\b",
     re.IGNORECASE,
 )
 

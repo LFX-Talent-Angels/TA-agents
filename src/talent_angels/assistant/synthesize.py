@@ -21,6 +21,7 @@ from talent_angels.memory.agent_notes import notes_prefix
 from talent_angels.memory.profile import profile_prefix
 from talent_angels.memory.retrieval import recall_prefix
 from talent_angels.skills.connect.compare import CAPABILITY_COMPARE, skill_overlap
+from talent_angels.skills.locate.rank import code_facts
 
 _NODE_ID_RE = re.compile(
     r"\b(?:esco|onet|sfia|bls):[a-z0-9][a-z0-9_.:-]*",
@@ -52,6 +53,11 @@ Rules:
 - Do not paste node ids (esco:…, onet:…). Titles only.
 - Do not suggest pathfinding, filtering by category, or any interactive capability.
 - Do not write LFX or Talent Angels.
+- A fact the card does not hold (a code, a group, pay, outlook) is not known:
+  say the card does not include it. Never state it from memory, and never
+  correct yourself mid-answer.
+- ESCO and O*NET are separate taxonomies with no official link here: never say
+  a record in one maps to, equals, or is the equivalent of one in the other.
 - 2-4 plain sentences: no tables, lists, headings, or code. Then stop; Sources
   used is printed in code."""
 
@@ -196,6 +202,7 @@ def _fact_card(results: Sequence[AgentResult]) -> str:
             lines.append(f"- {node.kind}: {node.pref_label} id={node.id}")
             if node.description:
                 lines.append(f"  description: {node.description[:280]}")
+            lines.extend(f"  {fact}" for fact in code_facts(result, node))
         if len(result.nodes) > 6:
             lines.append(f"  ({len(result.nodes) - 6} more in query details)")
         lines.append("")

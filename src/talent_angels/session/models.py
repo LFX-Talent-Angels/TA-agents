@@ -61,5 +61,7 @@ class SessionState(BaseModel):
     recent: list[str] = Field(default_factory=list)
     #: Occupation groups offered with the pick list ("which area?").
     areas: list[AreaChoice] = Field(default_factory=list)
+    #: What the open pick list was searched for ("engineer"); hints keep it.
+    list_topic: str = ""
     last_result: AgentResult | None = None
     last_results: list[AgentResult] = Field(default_factory=list)

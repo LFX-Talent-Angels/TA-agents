@@ -233,3 +233,17 @@ def test_planner_without_profile_gets_the_bare_question() -> None:
 
 def test_prompt_asks_for_candidates_on_vague_requests() -> None:
     assert "candidates" in PLAN_SYSTEM and "Vague requests" in PLAN_SYSTEM
+
+
+def test_trivial_subjects_are_not_searches() -> None:
+    from talent_angels.assistant.llm_plan import is_trivial_subject
+
+    for subject in ("a", "an", "the", "", "  ", "a.", "my"):
+        assert is_trivial_subject(subject), subject
+    for subject in ("IT", "nurse", "C++", "C#", "R", "QA tester", "15-1252.00"):
+        assert not is_trivial_subject(subject), subject
+
+
+def test_planner_keeps_codes_and_refuses_instructions() -> None:
+    assert "15-1252.00" in PLAN_SYSTEM
+    assert "previous instructions" in PLAN_SYSTEM.replace("\n", " ")

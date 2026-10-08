@@ -22,8 +22,12 @@ LineKind = Literal[
 _GREET_RE = re.compile(
     r"^\s*(hi|hello|hey|thanks|thank you|"
     r"good\s+(morning|afternoon|evening))\s*[!.?]?\s*$"
-    # "thanks, that was helpful", "thank you so much!": thanks with a short tail.
-    r"|^\s*(?:thanks|thank\s+you)\b[^?]{0,40}$",
+    # "thanks, that was helpful", "thank you so much!": thanks plus polite filler
+    # only. "thanks! my goal is nurse" or "thanks, 3" carry a request.
+    r"|^\s*(?:thanks|thank\s+you)(?:\s+(?:so|very)\s+much|\s+a\s+lot|\s+again)?"
+    r"[\s,!.]*(?:(?:that|this|it)(?:'s|\s+(?:was|is|helped))"
+    r"(?:\s+(?:very|really|so|super))?(?:\s+(?:helpful|great|useful|nice|perfect))?)?"
+    r"[\s!.]*$",
     re.IGNORECASE,
 )
 

@@ -28,16 +28,37 @@ def _draft(subject: str, *candidates: str, intent: str | None = None) -> PlanDra
 
 def test_an_abbreviation_says_how_it_was_read() -> None:
     draft = _draft("SWE", "software engineer", "software developer", "web developer", "x")
-    assert understood("SWE", draft) == (
+    results = [_result("esco", "software engineer", "software developer", "web developers")]
+    assert understood("SWE", draft, results) == (
         'I read "SWE" as software engineer, software developer or web developer.'
     )
 
 
 def test_a_description_is_read_as_the_request() -> None:
     draft = _draft("engineer", "civil engineer")
-    assert understood("I want to become an engineer who builds buildings", draft) == (
-        "I read your request as civil engineer."
+    assert understood(
+        "I want to become an engineer who builds buildings",
+        draft,
+        [_result("esco", "civil engineer")],
+    ) == ("I read your request as civil engineer.")
+
+
+def test_a_guess_the_map_does_not_have_is_never_named() -> None:
+    draft = _draft("engineer", "civil engineer", "bridge architect")
+    text = understood("an engineer who builds bridges", draft, [_result("esco", "civil engineer")])
+    assert text == "I read your request as civil engineer."
+    assert "bridge architect" not in text
+    nothing = understood("an engineer who builds bridges", draft, [])
+    assert nothing == 'I looked up "engineer".'
+
+
+def test_meaning_search_hits_are_called_close_not_matching() -> None:
+    from talent_angels.contracts import EvidencePointer
+
+    close = _result("esco", "basket maker").model_copy(
+        update={"evidence": [EvidencePointer(suite="esco", pointer="esco:search:hybrid:q")]}
     )
+    assert found([close]) == "ESCO has no exact match; 1 close title."
 
 
 def test_a_plain_lookup_names_its_search() -> None:

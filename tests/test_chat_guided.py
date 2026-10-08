@@ -259,3 +259,84 @@ def test_profile_question_is_answered_from_the_profile_in_code() -> None:
     assert "- Goal: data scientist" in reply.text
     assert "- Not your job (you said so): nurse assistant" in reply.text
     assert "esco:" not in reply.text
+
+
+def test_thanks_with_a_request_is_not_a_greeting() -> None:
+    from talent_angels.session.router import route_line
+
+    for line in (
+        "thanks! my goal is nurse",
+        "thank you, I am a teacher",
+        "thanks, 3",
+        "Thanks. Compare nurse and doctor",
+    ):
+        assert route_line(line).kind != "greet", line
+    for line in ("thanks a lot, that helped", "thank you so much!", "thanks, that's great"):
+        assert route_line(line).kind == "greet", line
+
+
+def test_a_compare_closes_the_old_list() -> None:
+    from talent_angels.assistant.planning import build_plan_for_capability
+    from talent_angels.skills.connect.compare import CAPABILITY_COMPARE
+
+    (state, _), runner = _broad_list()
+    compared = AgentResult(
+        capability=CAPABILITY_COMPARE, suite="esco", nodes=[_node("nurse"), _node("doctor")]
+    )
+
+    def compare_runner(question: str, **_kwargs: object) -> TurnOutcome:
+        return TurnOutcome(
+            capability="connect",
+            plan=build_plan_for_capability("connect", suites=("esco",)),
+            result=compared,
+            answer="ignored",
+            record=RunLogRecord(suite="esco", plan=["connect"], question=question),
+        )
+
+    handle_line(state, "compare nurse and doctor", runner=compare_runner)
+    assert state.pending == [] and state.areas == [] and state.list_topic == ""
+    handle_line(state, "the marine ones", runner=runner)
+    assert runner.calls[-1][0] == "the marine ones"  # a new request, not a narrowing
+
+
+def test_a_second_hint_keeps_the_list_topic_and_the_goal() -> None:
+    (state, _), runner = _broad_list()
+    state.pending_profile_intent = "goal"
+    handle_line(state, "the marine ones", runner=runner)  # narrows the list
+    assert state.list_topic == "engineer"
+    client = _Scripted({"action": "narrow", "options": [], "areas": []})
+    handle_line(state, "something outdoors", runner=runner, llm_client=client)  # type: ignore[arg-type]
+    assert runner.calls[-1][0] == "something outdoors, in engineer"
+    assert state.pending_profile_intent == "goal"
+
+
+def test_every_rejected_title_is_shown() -> None:
+    from talent_angels.memory.profile import profile_facts, write_rejected
+
+    write_rejected(_node("nurse assistant"))
+    write_rejected(_node("teacher"))
+    assert profile_facts() == ["Not your job (you said so): nurse assistant, teacher"]
+
+
+def test_should_i_go_for_a_masters_is_not_the_compare_again() -> None:
+    from talent_angels.session.advice import advice_plan
+
+    pair = ("accountant", "chef")
+    assert (
+        advice_plan("should I go for a master's?", current=None, goal=None, compared=pair) is None
+    )
+    assert advice_plan("which of the two is better?", current=None, goal=None, compared=pair)
+
+
+def test_i_am_a_with_nothing_after_it_searches_nothing() -> None:
+    from talent_angels.assistant.turn import run_turn
+    from tests.fakes.suite import fake_registry
+
+    outcome = run_turn(
+        registry=fake_registry(),
+        llm_client=None,  # type: ignore[arg-type]
+        question="I am a",
+        persist=False,
+    )
+    assert "no_subject" in outcome.result.warnings
+    assert outcome.result.nodes == []

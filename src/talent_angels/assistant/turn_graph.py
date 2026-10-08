@@ -37,7 +37,12 @@ from talent_angels.assistant.intent import (
     CAPABILITY_LOCATE,
     Capability,
 )
-from talent_angels.assistant.llm_plan import PlanDraft, interpret_question, is_compare
+from talent_angels.assistant.llm_plan import (
+    PlanDraft,
+    interpret_question,
+    is_compare,
+    is_trivial_subject,
+)
 from talent_angels.assistant.memo import TurnMemo, append_bounded, memo_for
 from talent_angels.assistant.merge import merge_answers
 from talent_angels.assistant.planning import ExecutionPlan
@@ -267,9 +272,14 @@ def _plan(state: TurnState, rt: TurnRuntime) -> dict[str, Any]:
     }
     capability = interpreted.plan.intent.target
     draft = interpreted.draft
+    trivial = draft is not None and bool(draft.subject) and is_trivial_subject(draft.subject)
+    if trivial:
+        assert draft is not None
+        draft = draft.model_copy(update={"subject": None, "profile_intent": None})
+        update["plan_draft"] = draft
     has_bound = state.get("bound_node") is not None or bool(state.get("bound_nodes"))
     if (
-        not interpreted.heuristic
+        (not interpreted.heuristic or trivial)
         and draft is not None
         and not draft.subject
         and capability in (CAPABILITY_LOCATE, CAPABILITY_CONNECT)

@@ -731,6 +731,11 @@ def _from_single_outcome(
     draft = getattr(outcome, "plan_draft", None)
     state.pending_profile_intent = None
     state.areas = []
+    if "ambiguous" not in result.warnings:
+        # A turn without a new list closes the old one: a later hint must not
+        # narrow a list from several turns back.
+        state.pending = []
+        state.list_topic = ""
     if "ambiguous" in result.warnings:
         pending = choices_from_result(result)
         omitted = max(0, len(result.nodes) - len(pending))
@@ -739,6 +744,7 @@ def _from_single_outcome(
         state.binding = None
         state.bindings.clear()
         searched = _searched_for(question, draft)
+        state.list_topic = searched
         # What was understood and what happens next, written in code (lead.py).
         intro = lead(question, draft, [result])
         text = render_picker(searched, pending, omitted=omitted, intro=intro)
@@ -890,12 +896,18 @@ def _handle_narrow(
         if not (decision.options or decision.areas):
             # About the list, but nothing on it fits: search again, keeping
             # the topic the list was for ("something with children, in healthcare").
-            topic = state.areas[0].query if state.areas else _last_map_query(state)
+            topic = state.list_topic
             if not topic:
                 return None
-            return _handle_map(
+            intent = state.pending_profile_intent
+            reply = _handle_map(
                 state, text, runner=runner, llm_client=llm_client, question=f"{text}, in {topic}"
             )
+            if state.pending and state.pending_profile_intent is None:
+                # "I want to become an engineer" … "something outdoors": a pick
+                # from the new list is still the goal.
+                state.pending_profile_intent = intent
+            return reply
         options = [c for c in state.pending if c.number in decision.options]
         chosen_areas = [a for a in state.areas if a.letter in decision.areas]
         named = [c for c in options if _names_title(text, c.node.pref_label)]
@@ -1092,14 +1104,17 @@ def _from_outcome(
             _render_unique_block(result, question=question, llm_client=llm_client, heading=heading)
         )
 
+    # A title the user named and the map resolved carries what they said about
+    # it; a pick from suggestions only carries what pick_intent allows.
+    said = _draft.profile_intent if _draft is not None else None
     intent = pick_intent(_draft)
-    if intent == "standing":
+    if said == "standing":
         # One current occupation per suite: every suite that resolved records it.
         for item in results:
             if item.nodes and "ambiguous" not in item.warnings and "not_found" not in item.warnings:
-                _apply_profile_intent(intent, item.nodes[0])
+                _apply_profile_intent(said, item.nodes[0])
     elif unique_bind is not None:
-        _apply_profile_intent(intent, unique_bind)
+        _apply_profile_intent(said, unique_bind)
         intent = None  # goal/reject are written once, not again on a later pick
     state.pending_profile_intent = intent if pending_all else None
     if unique_bind is not None:
@@ -1110,14 +1125,14 @@ def _from_outcome(
 
     if pending_all:
         state.pending = pending_all
+        state.list_topic = searched
         if not state.bindings:
             state.binding = None
-    elif unique_bind is not None:
-        if any(
-            item.capability == "locate" and "ambiguous" not in item.warnings and item.nodes
-            for item in results
-        ):
-            state.pending = []
+    else:
+        # No new list this turn (a compare, a miss, a unique hit): close the old
+        # one, so a later hint cannot narrow a list from several turns back.
+        state.pending = []
+        state.list_topic = ""
 
     not_implemented = any(
         w.startswith("capability_not_implemented") for result in results for w in result.warnings

@@ -1,0 +1,95 @@
+# Business rules as data for the "competency_standard" input profile (a
+# CONOCER-style EC export, English + Spanish aliases). Keeping these as data
+# instead of code means a new client with the same shape just needs its own
+# `<project>/tag.yaml`; any top-level key here (kinds, row_rules, cleaners,
+# include_kinds, report_kinds, routing, doc_context, depth) can be replaced
+# wholesale by a key of the same name in that file — `profile.load_profile`
+# merges built-in defaults with the project override.
+name: competency_standard
+version: 1
+
+# Which rows get tagged: leaf rows only (most standards), heading rows only,
+# or both.
+depth: leaves
+
+# Heading text (fullmatch, case-insensitive) -> kind. A row's kind is the
+# nearest ancestor (or itself) whose own text matches one of these — never
+# its Neo4j label.
+kinds:
+  performance:
+    - "performances?"
+    - "desempeños?"
+  product:
+    - "products?"
+    - "productos?"
+  knowledge:
+    - "knowledge"
+    - "conocimientos?"
+  attitude:
+    - "attitudes?\\b.*"
+    - "actitudes?\\b.*"
+  emergent:
+    - "responses? to emergent situations"
+    - "respuestas? (a|ante) situaciones emergentes"
+  definition:
+    - "glossary\\b.*"
+    - "glosario\\b.*"
+
+# A row's own text (checked at the start, case-insensitive) can assign a kind
+# directly, regardless of depth or ancestor heading — e.g. an "Associated
+# Occupations:" line is a row, not a heading, and always gets tagged.
+row_rules:
+  - pattern: "^(associated occupations|occupations recognized[^:]*):"
+    kind: occupation
+    split: ";"
+  - pattern: "^(purpose of the standard[^:]*|general description[^:]*):"
+    kind: summary
+
+# Kinds that are actually tagged; everything else is pure metadata (codes,
+# organisations, dates, NAICS, logistics) and comes out as `skipped`.
+include_kinds:
+  - performance
+  - product
+  - knowledge
+  - attitude
+  - emergent
+  - occupation
+  - definition
+  - summary
+
+# Kinds that count toward the gap list and precision stats. Definitions and
+# the standard's own summary are informational, not tagging targets.
+report_kinds:
+  - performance
+  - product
+  - knowledge
+  - attitude
+  - emergent
+  - occupation
+
+# Regexes stripped from a row's text (in order), then whitespace-collapsed and
+# stripped. The last one removes a trailing ", and" / "," / "." / " and"
+# without eating a real final word such as "hand" (word-boundary on "and").
+cleaners:
+  - "^subject area:\\s*"
+  - "\\s*\\|\\s*competency level:.*$"
+  - "^(emergent situation|expected response):\\s*"
+  - "[\\s,;.]*(\\band)?[\\s,;.]*$"
+
+# kind -> ordered suite kinds to try when searching the taxonomy (search.py,
+# PR2).
+routing:
+  performance: [skill, task]
+  product: [skill, task]
+  knowledge: [knowledge, skill]
+  attitude: [work_style, skill]
+  emergent: [skill, task]
+  occupation: [occupation]
+  definition: [skill]
+  summary: [skill]
+
+# Row-text prefixes (regex, case-insensitive) whose rows form the document
+# context handed to the rewrite/choose model calls (PR3).
+doc_context:
+  - "^title:"
+  - "^purpose of the standard"

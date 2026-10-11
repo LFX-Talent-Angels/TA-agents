@@ -55,6 +55,22 @@ def test_summarize_result_truncates_one_past_the_preview_cap() -> None:
     assert f"skill {CONNECT_PREVIEW_CAP}" not in summary
 
 
+def test_summarize_pathfind_result_names_both_ends_and_the_gap_count() -> None:
+    start = _node(1).model_copy(update={"pref_label": "nurse"})
+    target = _node(2).model_copy(update={"pref_label": "data analyst"})
+    missing = _node(3).model_copy(update={"kind": "Skill", "pref_label": "statistics"})
+    result = AgentResult(
+        capability="pathfind",
+        suite="esco",
+        nodes=[start, target, missing],
+        warnings=["gap_too_large"],
+    )
+
+    summary = summarize_result(result)
+
+    assert summary == "nurse -> data analyst: 1 skill(s) in the gap [warnings: gap_too_large]"
+
+
 def test_structured_answer_surfaces_ambiguous_choices() -> None:
     result = AgentResult(
         capability="locate",

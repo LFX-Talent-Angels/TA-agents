@@ -35,6 +35,7 @@ from talent_angels.runlog import usage_from_stage
 from talent_angels.skills.connect import connect
 from talent_angels.skills.locate import ESCO_SUITE_NAME, locate
 from talent_angels.skills.locate.rank import group_and_sort_locate
+from talent_angels.skills.pathfind import pathfind_one
 from talent_angels.suites.measured import MeasuredSuite
 from talent_angels.suites.protocol import SuiteTools
 
@@ -216,14 +217,19 @@ def _dispatch_heuristic(
         }
 
     if capability == CAPABILITY_PATHFIND:
-        return {
-            "result": AgentResult(
-                capability=capability,
-                suite=suite_name,
-                warnings=["capability_not_implemented:pathfind"],
-            ),
-            "tool_calls": [],
-        }
+        if draft is None or not draft.subject or not draft.secondary_subject:
+            # The planner found only one end, or none — Pathfind needs both
+            # (ADR-0008 decision 1/2); never guess the missing one.
+            return {
+                "result": AgentResult(
+                    capability=capability,
+                    suite=suite_name,
+                    warnings=["pathfind_missing_subject"],
+                ),
+                "tool_calls": [],
+            }
+        result, tool_calls = pathfind_one(suite, suite_name, draft.subject, draft.secondary_subject)
+        return {"result": result, "tool_calls": tool_calls}
 
     return {
         "result": AgentResult(
@@ -255,8 +261,10 @@ def dispatch_plan(
         assert llm_client is not None
         plan = state.get("plan")
         draft = state.get("plan_draft")
+        secondary_subject_hint: str | None = None
         if draft is not None:
             subject_hint = draft.subject
+            secondary_subject_hint = draft.secondary_subject
         elif state.get("heuristic_intent", True):
             # The LLM planner failed or was skipped: keyword extraction is the
             # only subject we have (empty question → empty subject → no search).
@@ -277,6 +285,7 @@ def dispatch_plan(
                 bound_node=bound_node,
                 intent=plan.intent.target if plan is not None else None,
                 subject_hint=subject_hint,
+                secondary_subject_hint=secondary_subject_hint,
                 need_answer=need_answer,
             )
         except Exception:

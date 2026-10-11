@@ -140,4 +140,35 @@ disqualifier itself is wrong.
 
 ## Amendments
 
-None yet.
+**2026-10-11 — `MAX_REALISTIC_GAP_SKILLS` moved from a guess to a measured,
+per-suite threshold.** PR 6's golden pairs set (`tests/evals/golden_pathfind.json`,
+10 real occupation pairs against live ESCO v1.2.1 / O\*NET 31.0) measured
+essential-missing counts of 10-36 for ESCO pairs and 51-412 for O\*NET pairs
+— confirming the provisional guess of 8 flagged *every* pair tested as
+`gap_too_large`, including near-duplicate titles ("web developer" →
+"software developer": 11 essential-missing). The two suites are not on the
+same scale: O\*NET's `HAS_SKILL`/`USES_SOFTWARE` edges include named
+software tools ESCO does not model as skills, so its counts run an order
+of magnitude higher.
+
+The threshold is now per-suite (`skills/pathfind/gap.py`,
+`_MAX_REALISTIC_GAP_SKILLS_BY_SUITE`), derived from the already-passed
+`AgentResult.suite` field rather than a new parameter: **ESCO 15** (rests
+on 6 pairs with a clean split between same-family title variants, 10-11,
+and genuine transitions, 19+) and **O\*NET 60** (rests on only 4 pairs,
+all of which happened to have no bridge route within `max_depth=4` — this
+number is the weaker of the two and should be revisited first if more
+O\*NET golden pairs land). `SuiteSchema` was deliberately not extended for
+this — it is canonically owned by the external `ta_taxonomies` package, so
+threading the threshold through it would require a change to that other
+repository; a small suite-keyed dict in this repo is the smaller, correct
+move for what decision 5 asked for ("move this number from measurement").
+
+A second finding, not acted on in this PR: all 4 O\*NET pairs tested came
+back `no_path` from `enumerate_paths`, including occupations that are
+obviously close in practice ("Software Quality Assurance Analysts and
+Testers" → "Software Developers", essential-missing 51, the lowest O\*NET
+count measured). Whether this is a genuine graph-structure difference
+between ESCO and O\*NET or an artifact of the suite's own default
+`max_depth=4` is unknown from 4 data points — flagged here as a finding
+for a wider O\*NET golden pairs set to confirm, not a conclusion.

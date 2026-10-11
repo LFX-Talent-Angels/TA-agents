@@ -118,3 +118,18 @@ def test_gap_at_exactly_the_threshold_is_not_flagged() -> None:
 
     assert gap.gap_too_large is False
     assert len(gap.essential_missing) == MAX_REALISTIC_GAP_SKILLS
+
+
+def test_onet_uses_its_own_higher_threshold_than_esco() -> None:
+    """O*NET counts software tools as skills, so its essential-missing counts
+    run far higher than ESCO's and are not on the same scale (measured
+    against live ESCO/O*NET in PR 6's golden pairs set)."""
+    skill_count = MAX_REALISTIC_GAP_SKILLS + 10
+    skills = [(f"skill-{i}", "essential") for i in range(skill_count)]
+    start = _connect("nurse", [], suite="onet")
+    target = _connect("data scientist", skills, suite="onet")
+
+    gap = compute_gap(start, target)
+
+    assert gap.gap_too_large is False
+    assert len(gap.essential_missing) == skill_count

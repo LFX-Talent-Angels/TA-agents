@@ -11,6 +11,7 @@ from pydantic import BaseModel, ConfigDict, Field, ValidationError, field_valida
 from talent_angels.assistant.intent import (
     CAPABILITY_CONNECT,
     CAPABILITY_LOCATE,
+    CAPABILITY_PATHFIND,
     Capability,
 )
 from talent_angels.assistant.llm_call import measure_complete
@@ -272,6 +273,55 @@ def _compare_heuristic(question: str) -> PlanDraft | None:
     return None
 
 
+#: "from X to Y": X is the start, Y is the destination (ADR-0008 decision 1/2).
+_PATHFIND_RES = (
+    re.compile(
+        rf"^(?:(?:skill\s+)?gap|path|route|career\s+path|learning\s+path)\s+"
+        rf"(?:from|between)\s+{_A}(.+?)\s+(?:to|and)\s+{_A}(.+)$",
+        re.IGNORECASE,
+    ),
+    re.compile(
+        rf"^how\s+(?:do|can|would)\s+i\s+(?:move|get|go|transition)\s+"
+        rf"from\s+{_A}(.+?)\s+to\s+{_A}(.+)$",
+        re.IGNORECASE,
+    ),
+    re.compile(rf"^from\s+{_A}(.+?)\s+to\s+{_A}(.+)$", re.IGNORECASE),
+)
+#: "how to become X from Y": the destination comes before "from", the start after.
+_PATHFIND_BECOME_RE = re.compile(
+    rf"^how\s+(?:to|do\s+i|can\s+i)\s+become\s+{_A}(.+?)\s+from\s+{_A}(.+)$",
+    re.IGNORECASE,
+)
+
+
+def _pathfind_heuristic(question: str) -> PlanDraft | None:
+    text = question.strip()
+    for pattern in _PATHFIND_RES:
+        m = pattern.match(text)
+        if m:
+            start = m.group(1).strip()
+            destination = _COMPARE_TAIL.sub("", m.group(2)).strip()
+            if start and destination:
+                return PlanDraft(
+                    target=CAPABILITY_PATHFIND,
+                    subject=start,
+                    secondary_subject=destination,
+                    kind="occupation",
+                )
+    m = _PATHFIND_BECOME_RE.match(text)
+    if m:
+        destination = m.group(1).strip()
+        start = _COMPARE_TAIL.sub("", m.group(2)).strip()
+        if start and destination:
+            return PlanDraft(
+                target=CAPABILITY_PATHFIND,
+                subject=start,
+                secondary_subject=destination,
+                kind="occupation",
+            )
+    return None
+
+
 def denied_subject(question: str) -> str | None:
     """The title in "I am not a X" / "I don't work as X", or None."""
     m = _REJECT_RE.match(question.strip())
@@ -279,7 +329,10 @@ def denied_subject(question: str) -> str | None:
 
 
 def _profile_intent_heuristic(question: str) -> PlanDraft | None:
-    """Return a PlanDraft for compare/goal/reject/standing patterns when the LLM planner fails."""
+    """A PlanDraft for pathfind/compare/goal/reject/standing patterns when the LLM planner fails."""
+    pathfind = _pathfind_heuristic(question)
+    if pathfind is not None:
+        return pathfind
     compare = _compare_heuristic(question)
     if compare is not None:
         return compare

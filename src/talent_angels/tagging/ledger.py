@@ -43,6 +43,18 @@ class Ledger:
         for key, rewrite in self._read_rewrites():
             self._rewrites[key] = rewrite
 
+        self._review_keys: set[str] = set()
+        self._reviews: list[dict[str, object]] = []
+        self._latest_review: dict[tuple[str, str], dict[str, object]] = {}
+        self.corrupt_review_lines = 0
+        for payload in self._read_reviews():
+            self._review_keys.add(str(payload.get("review_key", "")))
+            self._reviews.append(payload)
+            unit_key = payload.get("unit_key")
+            suite = payload.get("suite")
+            if isinstance(unit_key, str) and isinstance(suite, str):
+                self._latest_review[(unit_key, suite)] = payload
+
     def _read_ledger(self) -> list[TagRecord]:
         if not self.ledger_path.is_file():
             return []
@@ -107,3 +119,49 @@ class Ledger:
             handle.write("\n")
             handle.flush()
         self._rewrites[key] = rewrite
+
+    def _read_reviews(self) -> list[dict[str, object]]:
+        if not self.reviews_path.is_file():
+            return []
+        payloads: list[dict[str, object]] = []
+        for line in self.reviews_path.read_text(encoding="utf-8").splitlines():
+            line = line.strip()
+            if not line:
+                continue
+            try:
+                payload = json.loads(line)
+            except ValueError:
+                self.corrupt_review_lines += 1
+                continue
+            if isinstance(payload, dict):
+                payloads.append(payload)
+            else:
+                self.corrupt_review_lines += 1
+        return payloads
+
+    def review_applied(self, review_key: str) -> bool:
+        """`True` once this exact decision (same key, action, hint, base fp) has run."""
+        return review_key in self._review_keys
+
+    def review_append(self, record: dict[str, object]) -> None:
+        """Append one `reviews.jsonl` line; marks `record["review_key"]` as applied."""
+        self.root.mkdir(parents=True, exist_ok=True)
+        with self.reviews_path.open("a", encoding="utf-8") as handle:
+            handle.write(json.dumps(record))
+            handle.write("\n")
+            handle.flush()
+        review_key = str(record.get("review_key", ""))
+        self._review_keys.add(review_key)
+        self._reviews.append(record)
+        unit_key = record.get("unit_key")
+        suite = record.get("suite")
+        if isinstance(unit_key, str) and isinstance(suite, str):
+            self._latest_review[(unit_key, suite)] = record
+
+    def reviews(self) -> list[dict[str, object]]:
+        """Every review decision ever applied, in file order (oldest first)."""
+        return list(self._reviews)
+
+    def latest_review_for(self, unit_key: str, suite: str) -> dict[str, object] | None:
+        """The most recently applied review decision for this unit x suite, if any."""
+        return self._latest_review.get((unit_key, suite))

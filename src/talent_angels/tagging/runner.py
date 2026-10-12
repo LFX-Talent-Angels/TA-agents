@@ -17,6 +17,7 @@ from __future__ import annotations
 
 import contextvars
 import json
+import shutil
 import time
 import uuid
 from collections import defaultdict
@@ -38,6 +39,7 @@ from talent_angels.runlog import (
 )
 from talent_angels.suites import SuiteRegistry, UnknownSuiteError
 from talent_angels.suites.measured import MeasuredSuite
+from talent_angels.tagging import retry as retry_context
 from talent_angels.tagging.choose import Choice, ValidatedChoice, choose, validate
 from talent_angels.tagging.keys import REWRITE_VERSION, fingerprint, versions
 from talent_angels.tagging.ledger import Ledger
@@ -55,11 +57,19 @@ from talent_angels.tagging.models import (
 from talent_angels.tagging.profile import Profile, load_profile
 from talent_angels.tagging.readers import READERS, read_document
 from talent_angels.tagging.readers.base import ReaderError
+from talent_angels.tagging.review import (
+    RetryRequest,
+    ReviewOutcome,
+    apply_decisions,
+    read_decisions,
+    review_stats,
+)
 from talent_angels.tagging.rewrite import Rewrite, rewrite_cache_key, rewrite_group
 from talent_angels.tagging.search import Router, queries_for, search_unit
 from talent_angels.tagging.select import document_context, select_units
 from talent_angels.tagging.verdict import decide
-from talent_angels.tagging.writers.xlsx import display_name, write_workbook
+from talent_angels.tagging.writers.csv import write_gaps_csv
+from talent_angels.tagging.writers.xlsx import build_gap_rows, display_name, write_workbook
 
 #: Not cached — rules 1/3 of the verdict policy (verdict.py) — so a transient outage or a
 #: botched model call is retried next run instead of frozen into the ledger.
@@ -83,6 +93,11 @@ class _Pending:
     queries: list[str]
     attempt: int = 0
     choice: Choice | None = None
+    #: A reviewer's "Retry with hint"/"Reject" (review.py): the `choose` hint
+    #: for this attempt, and whether `verdict.decide` should treat it as
+    #: already-widened (a `none` fit becomes `gap`, not another widen round).
+    hint: str = ""
+    is_retry: bool = False
 
 
 def _scan(folder: Path) -> tuple[list[Path], list[str]]:
@@ -122,6 +137,34 @@ def _document_title(doc: Document, profile: Profile) -> str:
         if sep and label.strip().casefold() == "title" and value.strip():
             return value.strip()
     return doc.key
+
+
+def _history_copy(out_path: Path) -> None:
+    """Snapshot the previous workbook to `out/history/` before it is overwritten."""
+    if not out_path.is_file():
+        return
+    history_dir = out_path.parent / "history"
+    history_dir.mkdir(parents=True, exist_ok=True)
+    stamp = datetime.now(UTC).strftime("%Y%m%dT%H%M%S")
+    shutil.copy2(out_path, history_dir / f"{out_path.stem}-{stamp}{out_path.suffix}")
+
+
+def _search_by_suite(
+    suites: dict[str, MeasuredSuite | None],
+) -> Callable[[str], Callable[[str, str | None], object] | None]:
+    """`review.apply_decisions`'s `search_by_suite`: a bound `search_nodes` per suite name."""
+
+    def _get(suite_name: str) -> Callable[[str, str | None], object] | None:
+        measured = suites.get(suite_name)
+        if measured is None:
+            return None
+
+        def _search(text: str, kind: str | None, _measured: MeasuredSuite = measured) -> object:
+            return _measured.search_nodes(text, kind=kind)
+
+        return _search
+
+    return _get
 
 
 def discover(path: Path) -> tuple[Path, list[Path]]:
@@ -223,6 +266,8 @@ def run(
     total_units = 0
     total_reused = 0
     total_searched = 0
+    total_reviews_applied = 0
+    total_retried = 0
     all_stages: list[StageUsage] = []
 
     seen_docs: dict[str, str] = {}
@@ -242,6 +287,12 @@ def run(
         lock_path = out_dir / f"~${doc.key}-tagged.xlsx"
         if lock_path.exists():
             raise WorkbookOpenError(f"close {lock_path} in Excel and re-run")
+        out_path = out_dir / f"{doc.key}-tagged.xlsx"
+
+        # Read the expert's Decision/Hint off the *previous* workbook before any
+        # search or model spend happens for this doc (PILOT-PLAN.md "Review loop").
+        review_decisions, decision_warnings = read_decisions(out_path)
+        run_warnings.extend(decision_warnings)
 
         say(f"tagging {doc.key}…")
         units, skipped = select_units(doc, profile, rows=opts.rows, limit=opts.limit)
@@ -250,6 +301,7 @@ def run(
         results: dict[tuple[str, str], TagRecord] = {}
         reused = 0
         searched = 0
+        retried = 0
         doc_stages: list[StageUsage] = []
 
         with ExitStack() as stack:
@@ -263,6 +315,15 @@ def run(
                     suites[name] = None
 
             router = Router()
+
+            review_outcome: ReviewOutcome = apply_decisions(
+                review_decisions,
+                ledger,
+                search_by_suite=_search_by_suite(suites),
+                run_id=run_id,
+            )
+            run_warnings.extend(review_outcome.warnings)
+            review_retries: dict[tuple[str, str], RetryRequest] = review_outcome.retries
 
             rewrites: dict[str, Rewrite] = {}
             if llm_on and llm_client is not None:
@@ -279,21 +340,48 @@ def run(
                     say(f"{doc.key}: {index}/{len(units)} units")
 
                 rw = rewrites.get(unit.unit_key, Rewrite())
-                queries = queries_for(unit, rw.labels, rw.description)
+                base_queries = queries_for(unit, rw.labels, rw.description)
                 routing_kinds = profile.routing.get(unit.kind, [])
 
                 for suite_name in suite_names:
-                    existing = None if opts.fresh else ledger.latest_for(unit.unit_key, suite_name)
-                    reusable = (
-                        existing is not None
-                        and existing.versions == pinned_versions
-                        and existing.verdict not in _NOT_CACHED
-                        and not (opts.refresh and existing.verdict in _RETRY_ON_REFRESH)
-                    )
-                    if reusable and existing is not None:
-                        results[(unit.unit_key, suite_name)] = existing
+                    key_pair = (unit.unit_key, suite_name)
+                    retry_req = review_retries.get(key_pair)
+                    latest = ledger.latest_for(unit.unit_key, suite_name)
+
+                    if retry_req is not None:
+                        # A reviewer's retry/reject always re-does the row this
+                        # run, even if the ledger (or a human decision) would
+                        # otherwise reuse it.
+                        reusable = False
+                    elif latest is not None and latest.decided_by == "human":
+                        # Human decisions are never overwritten automatically —
+                        # not by `--refresh`, not by `--fresh`.
+                        reusable = True
+                    else:
+                        existing = None if opts.fresh else latest
+                        reusable = (
+                            existing is not None
+                            and existing.versions == pinned_versions
+                            and existing.verdict not in _NOT_CACHED
+                            and not (opts.refresh and existing.verdict in _RETRY_ON_REFRESH)
+                        )
+                    if reusable and latest is not None:
+                        results[key_pair] = latest
                         reused += 1
                         continue
+
+                    queries = base_queries
+                    hint = ""
+                    attempt = 0
+                    is_retry = False
+                    if retry_req is not None:
+                        attempt = retry_req.attempt
+                        is_retry = True
+                        retried += 1
+                        extra = retry_context.extra_queries_for(unit, rw, profile, attempt)
+                        queries = [*base_queries, *extra]
+                        siblings = retry_context.siblings_for(unit, units)
+                        hint = retry_context.choose_hint_for(retry_req.hint, attempt, siblings)
 
                     measured = suites.get(suite_name)
                     if measured is None:
@@ -329,12 +417,15 @@ def run(
                             )
 
                     searched += 1
-                    pending[(unit.unit_key, suite_name)] = _Pending(
+                    pending[key_pair] = _Pending(
                         unit=unit,
                         suite_name=suite_name,
                         outcome=outcome,
                         rewrite=rw,
                         queries=queries,
+                        attempt=attempt,
+                        hint=hint,
+                        is_retry=is_retry,
                     )
 
             verdicts, choose_stages = _decide_pending(
@@ -372,6 +463,7 @@ def run(
                     kind=p.unit.kind,
                     clean_text=p.unit.clean_text,
                     context_path=p.unit.context_path,
+                    hint=p.hint,
                     queries=p.outcome.queries,
                     candidates=p.outcome.candidates,
                     rewrite=p.rewrite.model_dump() if llm_on else None,
@@ -417,14 +509,26 @@ def run(
 
         total_reused += reused
         total_searched += searched
+        total_reviews_applied += review_outcome.applied
+        total_retried += retried
         all_stages.extend(doc_stages)
 
         for (_unit_key, suite_name), record in results.items():
             counts = overall_counts.setdefault(suite_name, {})
             counts[record.verdict.value] = counts.get(record.verdict.value, 0) + 1
 
+        previous_decisions = {
+            key: payload
+            for key in results
+            if (payload := ledger.latest_review_for(*key)) is not None
+        }
+        stats = review_stats(ledger, units)
+
         out_dir.mkdir(parents=True, exist_ok=True)
-        out_path = out_dir / f"{doc.key}-tagged.xlsx"
+        if review_outcome.applied:
+            # Only a workbook whose decisions were consumed is worth keeping:
+            # a plain re-run would otherwise pile up identical copies.
+            _history_copy(out_path)
         doc_cost = estimate_turn_cost_usd(doc_stages, model)
         write_workbook(
             out_path,
@@ -443,10 +547,22 @@ def run(
                 "searched": searched,
                 "model_calls": sum(stage.calls for stage in doc_stages),
                 "cost_usd": doc_cost.total if doc_cost.known else None,
+                "reviews_applied": review_outcome.applied,
+                "retried": retried,
             },
+            report_kinds=frozenset(profile.report_kinds),
+            previous_decisions=previous_decisions,
+            stats=stats,
         )
+        workbook_gap_rows = build_gap_rows(
+            units, results, suite_names, frozenset(profile.report_kinds)
+        )
+        write_gaps_csv(out_dir / f"{doc.key}-gaps.csv", workbook_gap_rows)
         outputs.append(str(out_path))
-        say(f"{doc.key}: done ({len(units)} units, {reused} reused, {searched} searched)")
+        say(
+            f"{doc.key}: done ({len(units)} units, {reused} reused, {searched} searched, "
+            f"{review_outcome.applied} reviews applied, {retried} retried)"
+        )
 
         # One record per document (not per run): a multi-document project
         # folder should show up as several turns, each about its own doc.
@@ -495,6 +611,8 @@ def run(
         warnings=run_warnings,
         model_calls=sum(stage.calls for stage in all_stages),
         cost_usd=total_cost.total if (all_stages and total_cost.known) else None,
+        reviews_applied=total_reviews_applied,
+        retried=total_retried,
     )
 
 
@@ -525,8 +643,8 @@ def _decide_pending(
             p.outcome,
             p.outcome.descriptions,
             suite_display=display_name(p.suite_name),
-            hint="",
-            widened=False,
+            hint=p.hint,
+            widened=p.is_retry,
         )
 
     def _choose_one_in_context(key: tuple[str, str]) -> tuple[Choice | None, list[StageUsage]]:
@@ -554,7 +672,9 @@ def _decide_pending(
         validated: ValidatedChoice | None = (
             validate(p.outcome.candidates, p.unit.kind, choice) if choice is not None else None
         )
-        verdicts[key] = decide(p.outcome, validated, llm_on=True, labels=p.rewrite.labels)
+        verdicts[key] = decide(
+            p.outcome, validated, llm_on=True, widened=p.is_retry, labels=p.rewrite.labels
+        )
 
     return verdicts, stages
 
@@ -587,13 +707,17 @@ def _widen_pending(
             and verdict_result.needs_widening
         )
         if not widen:
-            fps[key] = fingerprint(p.unit, p.suite_name, pinned_versions)
+            fps[key] = fingerprint(
+                p.unit, p.suite_name, pinned_versions, hint=p.hint, attempt=p.attempt
+            )
             continue
         assert llm_client is not None
 
         measured = suites.get(p.suite_name)
         if measured is None:
-            fps[key] = fingerprint(p.unit, p.suite_name, pinned_versions)
+            fps[key] = fingerprint(
+                p.unit, p.suite_name, pinned_versions, hint=p.hint, attempt=p.attempt
+            )
             continue
 
         def bound_search(
@@ -611,7 +735,9 @@ def _widen_pending(
                 p.suite_name, bound_search, p.unit.kind, routing_kinds, extra_query
             )
         except Exception:  # noqa: BLE001 - keep the original outcome on a flaky widen
-            fps[key] = fingerprint(p.unit, p.suite_name, pinned_versions)
+            fps[key] = fingerprint(
+                p.unit, p.suite_name, pinned_versions, hint=p.hint, attempt=p.attempt
+            )
             continue
 
         widened_outcome = search_unit(

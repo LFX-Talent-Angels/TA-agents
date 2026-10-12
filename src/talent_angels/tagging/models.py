@@ -233,3 +233,7 @@ class RunSummary(BaseModel):
     warnings: list[str] = Field(default_factory=list)
     model_calls: int = 0
     cost_usd: float | None = None
+    #: Review-loop counters (PR4): decisions consumed from the workbook, and
+    #: unit x suite pairs re-done because a decision asked for a retry.
+    reviews_applied: int = 0
+    retried: int = 0

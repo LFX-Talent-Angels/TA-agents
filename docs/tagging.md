@@ -1,0 +1,160 @@
+# Batch tagging (`ta-agent tag`)
+
+`ta-agent tag` reads a client's structured document (a competency standard,
+today), decides which rows are worth tagging, searches every attached
+taxonomy suite (ESCO, O*NET, …) for each row, asks a model which hits really
+match, and writes one Excel workbook back. It is a separate pipeline from the
+chat assistant: no plan cache, no user memory, no 45-second turn deadline.
+
+## What it does, in order
+
+1. **Read** the project's input file(s) (a Neo4j `IS_PART_OF` tree export).
+2. **Select** which rows get tagged, and what *kind* each one is (performance,
+   product, knowledge, …), from a profile file — business rules as data, not
+   code.
+3. **Rewrite** each row into short search phrases (one model call per group of
+   sibling rows).
+4. **Search** every attached taxonomy suite for each row.
+5. **Choose**: a model call asks which of the search hits actually match the
+   row — it can only pick from the numbered candidates, or say none fit.
+6. **Verdict**: code, not the model, turns that into `accepted` / `review` /
+   `adjacent` / `gap` (see below).
+7. **Write** `out/<doc>-tagged.xlsx` (Summary, Review, Standard, Gaps sheets)
+   and `out/<doc>-gaps.csv`.
+
+Re-running the same command is cheap: unchanged rows are reused from a
+project-local ledger, not re-searched or re-asked.
+
+## Folder layout
+
+```
+<project>/
+  inputs/            # the client's export file(s) — what gets tagged
+  inputs/context/     # background material only; never tagged itself
+  out/               # the workbook(s), out/<doc>-gaps.csv, out/history/
+  .ta-tag/           # project memory: ledger, rewrites, reviews, gaps, run-log
+  tag.yaml           # optional: overrides the built-in profile for this project
+```
+
+`<project>` can also just be a single input file, or a bare folder of input
+files (no `inputs/` subfolder) — `ta-agent tag` figures out which shape it's
+looking at.
+
+## Prerequisites
+
+- Docker Neo4j running, loaded with the taxonomy suite(s) you want (see the
+  main [README](../README.md) §§1–2).
+- `.env` with `LLM_PROVIDER` and the matching API key, unless you're running
+  `--no-llm`.
+
+## Commands
+
+```bash
+# Search-only, no model calls — fast, free, good for a first look.
+uv run ta-agent tag data/local/sprint7/pilot-run --no-llm
+
+# Full run with the model, 4 concurrent `choose` calls (search itself always
+# stays sequential — embedding search is not thread-safe).
+uv run ta-agent tag data/local/sprint7/pilot-run --workers 4
+
+# Just a few rows, to try changes cheaply.
+uv run ta-agent tag data/local/sprint7/pilot-run --limit 20
+uv run ta-agent tag data/local/sprint7/pilot-run --rows 66-91,100
+
+# Re-run only the rows whose verdict wasn't final (review/adjacent/gap);
+# human decisions are never touched.
+uv run ta-agent tag data/local/sprint7/pilot-run --refresh
+
+# Ignore the ledger entirely and re-tag everything from scratch.
+uv run ta-agent tag data/local/sprint7/pilot-run --fresh
+```
+
+| Flag | What it does |
+| --- | --- |
+| `--no-llm` | Search only; verdict is always `review` (top hit) or `gap` (no hits) — no model spend. |
+| `--limit N` | Tag at most N rows (after `--rows`, if both are given). |
+| `--rows "66-91,100"` | Tag only these row ids. |
+| `--suites esco,onet` | Only these suites (default: every suite the registry has attached). |
+| `--depth leaves\|headings\|all` | Which rows count as taggable (overrides the profile). |
+| `--workers N` | Concurrent `choose` model calls. |
+| `--refresh` | Re-run `review`/`adjacent`/`gap` rows; reuse `accepted` and every human decision. |
+| `--fresh` | Ignore the ledger completely (still never overwrites a human decision). |
+
+## The review loop
+
+1. Open `out/<doc>-tagged.xlsx`, sheet **Review**. Each row needing a look has
+   a **Decision ▼** dropdown and a **Hint** cell.
+2. Pick one:
+   - **Approve** — the suggested tag is correct.
+   - **Reject** — it's wrong; the next run retries with more context (same
+     as "No" on the Gaps sheet).
+   - **Use alternative 2/3/4** — one of the listed alternatives is the right
+     one instead.
+   - **Mark as gap** — no taxonomy entry fits; record it as a confirmed gap.
+   - **Retry with hint** — give the model a hint (e.g. "this is about
+     software testing") and ask again with more of the standard's own
+     context (parent heading, then grandparent + sibling lines on a second
+     retry). Up to 2 retries; a 3rd becomes a confirmed gap automatically.
+   - **Use my tag** — type the taxonomy's own label or id in Hint; accepted
+     only if it matches **exactly** one entry in that suite.
+3. On the **Gaps** sheet, one row per confirmed-or-likely gap: answer
+   **Yes** ("really is a gap") or **No** ("an existing skill fits" — same
+   effect as Retry).
+4. Save the file and run the exact same `ta-agent tag` command again. Only
+   the rows you decided on are touched; everything else is reused untouched.
+   When decisions were applied, the previous workbook is copied to
+   `out/history/` first, and a
+   **Previous decision** column on the Review sheet shows what was applied
+   and when.
+5. Decisions only ever apply once: re-saving without changing anything is a
+   0-model-call, sub-second no-op.
+
+### What each verdict means
+
+| Verdict | Meaning |
+| --- | --- |
+| `accepted` | The model found an exact match, and the graph itself agrees (lexical rank or search rank). |
+| `review` | Something worth a human look: an exact claim the graph doesn't yet corroborate, a `--no-llm` top hit, or a retry that's still inconclusive. |
+| `adjacent` | No exact match, but one or more taxonomy entries cover *part* of the line. |
+| `gap` | Nothing in the taxonomy covers this line — comes with a *proposed* skill name, clearly labelled as model inference, never taxonomy fact. |
+| `human_accepted` / `human_gap` | The reviewer's own decision; never overwritten automatically. |
+| `unavailable` | The suite was down this run (not cached — retried every run until it's back). |
+| `n/a` | This suite has no concept of this row's kind (e.g. no "occupation" node type) — not a gap. |
+
+### Known limitations
+
+- If the model call itself fails during a retry, that row shows `error`
+  (sorted to the top of the Review sheet) and the retry is not repeated on
+  its own: set the decision again and re-run.
+- Most rows of an emerging-field standard come back `adjacent`: the
+  taxonomies (ESCO v1.2.1, O*NET 31.0) have no prompt-engineering entries.
+  No precision figure exists until an expert has reviewed the tags.
+- The ledger keys on the `ta-taxonomies` code version, not the data loaded
+  in Neo4j: after reloading a taxonomy, re-run with `--refresh`.
+
+## Cost and time
+
+Measured on the CONOCER pilot standard (129 tagged units, ESCO + O*NET):
+
+- Full run (`--workers 4`): **~9 minutes, ~$1.40**.
+- Re-run with no changes: **< 1 second**, 0 model calls.
+- Re-run after a handful of review decisions: **~15 seconds**, a few cents.
+- `--no-llm`: **~36 seconds**, $0.
+
+## Customising for a new business or input
+
+- **New business, same input shape**: write `<project>/tag.yaml` overriding
+  whichever top-level keys of the built-in profile differ (kind headings,
+  cleaners, routing, depth, …) — see
+  `src/talent_angels/tagging/profiles/competency_standard.yaml` for every
+  key and what it does. `tag.yaml` keys replace the matching built-in key
+  wholesale; keys you don't mention keep the built-in default.
+- **New input format**: implement the `Reader` protocol
+  (`src/talent_angels/tagging/readers/base.py`: `can_read(path)`,
+  `read(path) -> Document`) and register it in
+  `src/talent_angels/tagging/readers/__init__.py`. The rest of the pipeline
+  is format-agnostic.
+- **New taxonomy suite**: register it in `suites/registry.py` the normal way
+  (see the main README) — it automatically gets searched, its own Review
+  rows, and its own Standard columns. A suite that doesn't support a given
+  row's kind just shows `n/a` for that row; it never produces a false gap.

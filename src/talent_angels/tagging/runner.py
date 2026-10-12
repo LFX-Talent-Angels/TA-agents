@@ -3,21 +3,43 @@
 Never calls `run_turn`/`interpret_question` (PILOT-PLAN.md "Architecture") —
 no plan cache, no episodes, no profile writes, and project memory lives under
 `<project>/.ta-tag/`, never `TA_AGENTS_HOME`.
+
+Model steps (PR3) add two phases between search and verdict: Phase R rewrites
+a client line into short search phrases (one call per parent group, cached in
+`.ta-tag/rewrites.jsonl`), Phase B asks the model which of the search hits
+actually match (`--workers` makes these calls concurrent; search itself
+always stays sequential — embedding search is not thread-safe). A `none`/
+no-valid-pick choice gets one widened search+choose attempt before becoming
+a gap.
 """
 
 from __future__ import annotations
 
+import contextvars
+import json
 import time
 import uuid
+from collections import defaultdict
 from collections.abc import Callable
+from concurrent.futures import ThreadPoolExecutor
 from contextlib import ExitStack
+from dataclasses import dataclass
 from datetime import UTC, datetime
 from pathlib import Path
 
-from talent_angels.runlog import RunLogRecord, ToolCall, append_record
+from talent_angels.llm.protocol import LLMClient
+from talent_angels.runlog import (
+    GenAIUsage,
+    RunLogRecord,
+    StageUsage,
+    ToolCall,
+    append_record,
+    estimate_turn_cost_usd,
+)
 from talent_angels.suites import SuiteRegistry, UnknownSuiteError
 from talent_angels.suites.measured import MeasuredSuite
-from talent_angels.tagging.keys import fingerprint, versions
+from talent_angels.tagging.choose import Choice, ValidatedChoice, choose, validate
+from talent_angels.tagging.keys import REWRITE_VERSION, fingerprint, versions
 from talent_angels.tagging.ledger import Ledger
 from talent_angels.tagging.models import (
     Document,
@@ -27,23 +49,40 @@ from talent_angels.tagging.models import (
     TagRecord,
     TagUnit,
     Verdict,
+    VerdictResult,
+    Versions,
 )
 from talent_angels.tagging.profile import Profile, load_profile
 from talent_angels.tagging.readers import READERS, read_document
 from talent_angels.tagging.readers.base import ReaderError
+from talent_angels.tagging.rewrite import Rewrite, rewrite_cache_key, rewrite_group
 from talent_angels.tagging.search import Router, queries_for, search_unit
 from talent_angels.tagging.select import document_context, select_units
 from talent_angels.tagging.verdict import decide
-from talent_angels.tagging.writers.xlsx import write_workbook
+from talent_angels.tagging.writers.xlsx import display_name, write_workbook
 
-#: Not cached — rules 1/3 of tag-v1 (verdict.py) — so a transient outage or a
+#: Not cached — rules 1/3 of the verdict policy (verdict.py) — so a transient outage or a
 #: botched model call is retried next run instead of frozen into the ledger.
 _NOT_CACHED = (Verdict.ERROR, Verdict.UNAVAILABLE)
 _RETRY_ON_REFRESH = (Verdict.REVIEW, Verdict.ADJACENT, Verdict.GAP)
+_REWRITE_CHUNK = 6
 
 
 class WorkbookOpenError(RuntimeError):
     """A previous `out/<doc>-tagged.xlsx` is still open (Excel's `~$` lock file)."""
+
+
+@dataclass
+class _Pending:
+    """One unit x suite not reused from the ledger: everything needed to decide."""
+
+    unit: TagUnit
+    suite_name: str
+    outcome: SearchOutcome
+    rewrite: Rewrite
+    queries: list[str]
+    attempt: int = 0
+    choice: Choice | None = None
 
 
 def _scan(folder: Path) -> tuple[list[Path], list[str]]:
@@ -105,17 +144,55 @@ def _input_warnings(path: Path) -> list[str]:
     return warnings
 
 
+def _needs_rewrite(unit: TagUnit) -> bool:
+    """Occupation rows with seed phrases use code-derived queries; no model call."""
+    return not (unit.role == "row_rule" and unit.seed_phrases)
+
+
+def _rewrite_phase(
+    client: LLMClient,
+    units: list[TagUnit],
+    doc_context: list[str],
+    ledger: Ledger,
+    model: str,
+) -> tuple[dict[str, Rewrite], list[StageUsage]]:
+    """Fill in a `Rewrite` for every unit that needs one, cache-first, grouped by parent."""
+    rewrites: dict[str, Rewrite] = {}
+    stages: list[StageUsage] = []
+    pending_by_group: dict[str, list[TagUnit]] = defaultdict(list)
+    for unit in units:
+        if not _needs_rewrite(unit):
+            continue
+        key = rewrite_cache_key(unit, model, REWRITE_VERSION)
+        cached = ledger.rewrite_lookup(key)
+        if cached is not None:
+            rewrites[unit.unit_key] = cached
+            continue
+        pending_by_group[unit.group_key].append(unit)
+
+    for group_units in pending_by_group.values():
+        for start in range(0, len(group_units), _REWRITE_CHUNK):
+            chunk = group_units[start : start + _REWRITE_CHUNK]
+            chunk_map, chunk_stages = rewrite_group(client, chunk, doc_context)
+            stages.extend(chunk_stages)
+            for unit in chunk:
+                rw = chunk_map.get(unit.unit_key, Rewrite())
+                rewrites[unit.unit_key] = rw
+                ledger.rewrite_append(rewrite_cache_key(unit, model, REWRITE_VERSION), rw)
+    return rewrites, stages
+
+
 def run(
     path: Path,
     *,
     registry: SuiteRegistry,
     opts: RunOptions,
-    llm_client: object | None = None,
+    llm_client: LLMClient | None = None,
     progress: Callable[[str], None] | None = None,
 ) -> RunSummary:
-    del llm_client  # PR3 parameter: model steps are not implemented yet
     start = time.perf_counter()
     run_id = str(uuid.uuid4())
+    llm_on = not opts.no_llm and llm_client is not None
 
     project, input_files = discover(path)
     if not input_files:
@@ -130,7 +207,7 @@ def run(
     if opts.depth is not None:
         profile = profile.model_copy(update={"depth": opts.depth})
 
-    model = "none"  # no-LLM mode only, in PR2
+    model = str(getattr(llm_client, "model", "") or "none") if llm_on else "none"
     pinned_versions = versions(model)
 
     suite_names = list(opts.suites) if opts.suites is not None else list(registry.available)
@@ -146,6 +223,7 @@ def run(
     total_units = 0
     total_reused = 0
     total_searched = 0
+    all_stages: list[StageUsage] = []
 
     seen_docs: dict[str, str] = {}
     for input_path in input_files:
@@ -172,6 +250,7 @@ def run(
         results: dict[tuple[str, str], TagRecord] = {}
         reused = 0
         searched = 0
+        doc_stages: list[StageUsage] = []
 
         with ExitStack() as stack:
             suites: dict[str, MeasuredSuite | None] = {}
@@ -185,18 +264,29 @@ def run(
 
             router = Router()
 
+            rewrites: dict[str, Rewrite] = {}
+            if llm_on and llm_client is not None:
+                rw_map, rw_stages = _rewrite_phase(
+                    llm_client, units, document_context(doc, profile), ledger, model
+                )
+                rewrites = rw_map
+                doc_stages.extend(rw_stages)
+
+            pending: dict[tuple[str, str], _Pending] = {}
+
             for index, unit in enumerate(units, start=1):
                 if progress is not None and index % 10 == 0:
                     say(f"{doc.key}: {index}/{len(units)} units")
 
-                queries = queries_for(unit)
+                rw = rewrites.get(unit.unit_key, Rewrite())
+                queries = queries_for(unit, rw.labels, rw.description)
                 routing_kinds = profile.routing.get(unit.kind, [])
 
                 for suite_name in suite_names:
-                    fp = fingerprint(unit, suite_name, pinned_versions)
-                    existing = None if opts.fresh else ledger.lookup(fp)
+                    existing = None if opts.fresh else ledger.latest_for(unit.unit_key, suite_name)
                     reusable = (
                         existing is not None
+                        and existing.versions == pinned_versions
                         and existing.verdict not in _NOT_CACHED
                         and not (opts.refresh and existing.verdict in _RETRY_ON_REFRESH)
                     )
@@ -238,29 +328,87 @@ def run(
                                 bound_search, suite_name, unit, queries, routed_kinds
                             )
 
-                    verdict_result = decide(outcome, llm_on=False)
                     searched += 1
-                    record = TagRecord(
-                        run_id=run_id,
-                        ts=datetime.now(UTC).isoformat(),
-                        doc_key=doc.key,
-                        unit_key=unit.unit_key,
-                        row_id=unit.row_id,
-                        suite=suite_name,
-                        fingerprint=fp,
-                        versions=pinned_versions,
-                        kind=unit.kind,
-                        clean_text=unit.clean_text,
-                        context_path=unit.context_path,
-                        queries=outcome.queries,
-                        candidates=outcome.candidates,
-                        verdict=verdict_result.verdict,
-                        reason_code=verdict_result.reason_code,
-                        tags=verdict_result.tags,
-                        alternatives=verdict_result.alternatives,
+                    pending[(unit.unit_key, suite_name)] = _Pending(
+                        unit=unit,
+                        suite_name=suite_name,
+                        outcome=outcome,
+                        rewrite=rw,
+                        queries=queries,
                     )
-                    ledger.append(record)
-                    results[(unit.unit_key, suite_name)] = record
+
+            verdicts, choose_stages = _decide_pending(
+                pending, llm_client=llm_client, llm_on=llm_on, workers=opts.workers
+            )
+            doc_stages.extend(choose_stages)
+
+            fps, widened_stages = _widen_pending(
+                pending,
+                verdicts,
+                llm_client=llm_client,
+                llm_on=llm_on,
+                router=router,
+                suites=suites,
+                profile=profile,
+                pinned_versions=pinned_versions,
+            )
+            doc_stages.extend(widened_stages)
+
+            gap_rows: list[dict[str, object]] = []
+            for key, p in pending.items():
+                verdict_result = verdicts[key]
+                attempt = p.attempt
+                record_fp = fps[key]
+                record = TagRecord(
+                    run_id=run_id,
+                    ts=datetime.now(UTC).isoformat(),
+                    doc_key=doc.key,
+                    unit_key=p.unit.unit_key,
+                    row_id=p.unit.row_id,
+                    suite=p.suite_name,
+                    fingerprint=record_fp,
+                    attempt=attempt,
+                    versions=pinned_versions,
+                    kind=p.unit.kind,
+                    clean_text=p.unit.clean_text,
+                    context_path=p.unit.context_path,
+                    queries=p.outcome.queries,
+                    candidates=p.outcome.candidates,
+                    rewrite=p.rewrite.model_dump() if llm_on else None,
+                    choice=p.choice.model_dump() if p.choice is not None else None,
+                    verdict=verdict_result.verdict,
+                    reason_code=verdict_result.reason_code,
+                    tags=verdict_result.tags,
+                    alternatives=verdict_result.alternatives,
+                    covers=verdict_result.covers,
+                    missing_skill=verdict_result.missing_skill,
+                    model_reason=verdict_result.model_reason,
+                )
+                ledger.append(record)
+                results[key] = record
+
+                if (
+                    llm_on
+                    and record.verdict == Verdict.GAP
+                    and record.reason_code == "model_none"
+                    and p.unit.kind in profile.report_kinds
+                ):
+                    gap_rows.append(
+                        {
+                            "doc_key": doc.key,
+                            "unit_key": p.unit.unit_key,
+                            "row_id": p.unit.row_id,
+                            "suite": p.suite_name,
+                            "kind": p.unit.kind,
+                            "clean_text": p.unit.clean_text,
+                            "context_path": p.unit.context_path,
+                            "missing_skill": record.missing_skill,
+                            "ts": record.ts,
+                        }
+                    )
+
+            if gap_rows:
+                _append_gaps(ledger, gap_rows)
 
             doc_tool_calls: list[ToolCall] = []
             for measured in suites.values():
@@ -269,6 +417,7 @@ def run(
 
         total_reused += reused
         total_searched += searched
+        all_stages.extend(doc_stages)
 
         for (_unit_key, suite_name), record in results.items():
             counts = overall_counts.setdefault(suite_name, {})
@@ -276,6 +425,7 @@ def run(
 
         out_dir.mkdir(parents=True, exist_ok=True)
         out_path = out_dir / f"{doc.key}-tagged.xlsx"
+        doc_cost = estimate_turn_cost_usd(doc_stages, model)
         write_workbook(
             out_path,
             doc,
@@ -291,6 +441,8 @@ def run(
                 "seconds": time.perf_counter() - start,
                 "reused": reused,
                 "searched": searched,
+                "model_calls": sum(stage.calls for stage in doc_stages),
+                "cost_usd": doc_cost.total if doc_cost.known else None,
             },
         )
         outputs.append(str(out_path))
@@ -298,12 +450,25 @@ def run(
 
         # One record per document (not per run): a multi-document project
         # folder should show up as several turns, each about its own doc.
+        gen_ai = GenAIUsage(
+            provider_name=getattr(llm_client, "provider", "none") if llm_on else "none",
+            request_model=model,
+            input_tokens=sum(s.input_tokens for s in doc_stages),
+            output_tokens=sum(s.output_tokens for s in doc_stages),
+            reasoning_tokens=sum(s.reasoning_tokens for s in doc_stages),
+            cache_read_input_tokens=sum(s.cache_read_input_tokens for s in doc_stages),
+            cache_creation_input_tokens=sum(s.cache_creation_input_tokens for s in doc_stages),
+            calls=sum(s.calls for s in doc_stages),
+            stages=doc_stages,
+        )
         append_record(
             RunLogRecord(
                 run_id=run_id,
                 suite=",".join(suite_names),
                 plan=["tag"],
                 question=f"tag:{doc.key}",
+                gen_ai=gen_ai,
+                cost_usd=doc_cost,
                 tools=doc_tool_calls,
             ),
             path=ledger.runlog_path,
@@ -317,6 +482,7 @@ def run(
             )
 
     elapsed = time.perf_counter() - start
+    total_cost = estimate_turn_cost_usd(all_stages, model)
     return RunSummary(
         project=str(project),
         documents=documents,
@@ -327,4 +493,159 @@ def run(
         outputs=outputs,
         seconds=elapsed,
         warnings=run_warnings,
+        model_calls=sum(stage.calls for stage in all_stages),
+        cost_usd=total_cost.total if (all_stages and total_cost.known) else None,
     )
+
+
+def _decide_pending(
+    pending: dict[tuple[str, str], _Pending],
+    *,
+    llm_client: LLMClient | None,
+    llm_on: bool,
+    workers: int,
+) -> tuple[dict[tuple[str, str], VerdictResult], list[StageUsage]]:
+    """First decide pass: immediate for non-`ok`/no-candidate outcomes, modelled for the rest."""
+    verdicts: dict[tuple[str, str], VerdictResult] = {}
+    stages: list[StageUsage] = []
+    needs_choose: list[tuple[str, str]] = []
+
+    for key, p in pending.items():
+        if llm_on and p.outcome.status == "ok" and p.outcome.candidates:
+            needs_choose.append(key)
+        else:
+            verdicts[key] = decide(p.outcome, None, llm_on=llm_on, labels=p.rewrite.labels)
+
+    def _choose_one(key: tuple[str, str]) -> tuple[Choice | None, list[StageUsage]]:
+        p = pending[key]
+        assert llm_client is not None
+        return choose(
+            llm_client,
+            p.unit,
+            p.outcome,
+            p.outcome.descriptions,
+            suite_display=display_name(p.suite_name),
+            hint="",
+            widened=False,
+        )
+
+    def _choose_one_in_context(key: tuple[str, str]) -> tuple[Choice | None, list[StageUsage]]:
+        ctx = contextvars.copy_context()
+        return ctx.run(_choose_one, key)
+
+    choose_results: dict[tuple[str, str], tuple[Choice | None, list[StageUsage]]] = {}
+    if needs_choose:
+        if workers > 1:
+            with ThreadPoolExecutor(max_workers=workers) as executor:
+                futures = {
+                    key: executor.submit(_choose_one_in_context, key) for key in needs_choose
+                }
+                for key in needs_choose:
+                    choose_results[key] = futures[key].result()
+        else:
+            for key in needs_choose:
+                choose_results[key] = _choose_one(key)
+
+    for key in needs_choose:
+        p = pending[key]
+        choice, call_stages = choose_results[key]
+        stages.extend(call_stages)
+        p.choice = choice
+        validated: ValidatedChoice | None = (
+            validate(p.outcome.candidates, p.unit.kind, choice) if choice is not None else None
+        )
+        verdicts[key] = decide(p.outcome, validated, llm_on=True, labels=p.rewrite.labels)
+
+    return verdicts, stages
+
+
+def _widen_pending(
+    pending: dict[tuple[str, str], _Pending],
+    verdicts: dict[tuple[str, str], VerdictResult],
+    *,
+    llm_client: LLMClient | None,
+    llm_on: bool,
+    router: Router,
+    suites: dict[str, MeasuredSuite | None],
+    profile: Profile,
+    pinned_versions: Versions,
+) -> tuple[dict[tuple[str, str], str], list[StageUsage]]:
+    """The widened re-attempt (rule 6) for every unit x suite that asked for one.
+
+    Returns every key's final ledger `fingerprint` (attempt 0, or 1 if widened)
+    alongside the stages the widened `choose` calls made.
+    """
+    stages: list[StageUsage] = []
+    fps: dict[tuple[str, str], str] = {}
+
+    for key, p in pending.items():
+        verdict_result = verdicts.get(key)
+        widen = (
+            llm_on
+            and llm_client is not None
+            and verdict_result is not None
+            and verdict_result.needs_widening
+        )
+        if not widen:
+            fps[key] = fingerprint(p.unit, p.suite_name, pinned_versions)
+            continue
+        assert llm_client is not None
+
+        measured = suites.get(p.suite_name)
+        if measured is None:
+            fps[key] = fingerprint(p.unit, p.suite_name, pinned_versions)
+            continue
+
+        def bound_search(
+            text: str, kind: str | None, _measured: MeasuredSuite = measured
+        ) -> object:
+            return _measured.search_nodes(text, kind=kind)
+
+        description = p.rewrite.description or p.unit.clean_text
+        parent_heading = profile.clean(p.unit.context_path[-1]) if p.unit.context_path else ""
+        extra_query = f"{description} {parent_heading}".strip() if parent_heading else description
+
+        routing_kinds = profile.routing.get(p.unit.kind, [])
+        try:
+            routed_kinds = router.route(
+                p.suite_name, bound_search, p.unit.kind, routing_kinds, extra_query
+            )
+        except Exception:  # noqa: BLE001 - keep the original outcome on a flaky widen
+            fps[key] = fingerprint(p.unit, p.suite_name, pinned_versions)
+            continue
+
+        widened_outcome = search_unit(
+            bound_search, p.suite_name, p.unit, [*p.queries, extra_query], routed_kinds
+        )
+        choice, call_stages = choose(
+            llm_client,
+            p.unit,
+            widened_outcome,
+            widened_outcome.descriptions,
+            suite_display=display_name(p.suite_name),
+            hint="",
+            widened=True,
+        )
+        stages.extend(call_stages)
+        p.outcome = widened_outcome
+        p.choice = choice
+        p.attempt = 1
+        validated: ValidatedChoice | None = (
+            validate(widened_outcome.candidates, p.unit.kind, choice)
+            if choice is not None
+            else None
+        )
+        verdicts[key] = decide(
+            widened_outcome, validated, llm_on=True, widened=True, labels=p.rewrite.labels
+        )
+        fps[key] = fingerprint(p.unit, p.suite_name, pinned_versions, attempt=1)
+
+    return fps, stages
+
+
+def _append_gaps(ledger: Ledger, rows: list[dict[str, object]]) -> None:
+    ledger.root.mkdir(parents=True, exist_ok=True)
+    with ledger.gaps_path.open("a", encoding="utf-8") as handle:
+        for row in rows:
+            handle.write(json.dumps(row))
+            handle.write("\n")

@@ -178,12 +178,21 @@ def search_unit(
         candidates_out.sort(
             key=lambda candidate: (candidate.best_rank, -candidate.hits, candidate.label)
         )
+        kept_ids = {candidate.id for candidate in candidates_out[:top]}
+        # Transient only (SearchOutcome.descriptions is `exclude=True`): the
+        # `choose` prompt needs these, the ledger/workbook must never store them.
+        descriptions = {
+            entry["ref"].id: entry["ref"].description
+            for entry in merged.values()
+            if entry["ref"].id in kept_ids and entry["ref"].description
+        }
         return SearchOutcome(
             suite=suite_name,
             status="ok",
             routed_kind="+".join(kinds),
             queries=query_logs,
             candidates=candidates_out[:top],
+            descriptions=descriptions,
         )
     except Exception as exc:  # noqa: BLE001 - a broken suite must not crash the run
         return SearchOutcome(

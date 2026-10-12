@@ -8,7 +8,14 @@ from pathlib import Path
 
 import pytest
 
-from talent_angels.tagging.keys import fingerprint, taxonomies_commit, unit_key, versions
+from talent_angels.tagging.keys import (
+    POLICY_VERSION,
+    PROMPTS_VERSION,
+    fingerprint,
+    taxonomies_commit,
+    unit_key,
+    versions,
+)
 from talent_angels.tagging.models import TagUnit, Versions
 from talent_angels.tagging.readers import read_document
 from talent_angels.tagging.select import select_units
@@ -150,7 +157,7 @@ def test_taxonomies_commit_falls_back_to_unknown_when_package_missing(
 def test_versions_fills_pipeline_policy_prompts() -> None:
     v = versions("claude-sonnet-5")
     assert v.pipeline == "tag-1"
-    assert v.policy == "tag-v1"
-    assert v.prompts == "rw-1/ch-1"
+    assert v.policy == POLICY_VERSION
+    assert v.prompts == PROMPTS_VERSION
     assert v.model == "claude-sonnet-5"
     assert isinstance(v.ta_taxonomies, str)

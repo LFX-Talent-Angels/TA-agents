@@ -71,6 +71,14 @@ _REASON_SENTENCES = {
     "search_only": "No-LLM mode: showing the top search result for manual review.",
     "suite_unavailable": "The taxonomy suite was unavailable during this run.",
     "kind_not_supported": "This suite does not support this unit's kind.",
+    "model_failed": "The model call failed after a retry; this line needs a human look.",
+    "model_exact_corroborated": "The model found an exact match, corroborated by the search.",
+    "model_exact_uncorroborated": (
+        "The model claims an exact match; not yet corroborated by search — please check."
+    ),
+    "model_partial": "No exact match; the model found skills that partially cover this line.",
+    "needs_widening": "No match nearby; retried with a wider context, still inconclusive.",
+    "model_none": "No taxonomy entry covers this line, even after widening the search.",
 }
 
 #: Rows re-run with a model (PR3) still land in one of these two buckets.
@@ -89,8 +97,12 @@ _DEFAULT_ATTRIBUTION = {
 }
 
 
-def _display_name(suite: str) -> str:
+def display_name(suite: str) -> str:
+    """The suite's human name on the sheets (and in the `choose` prompt)."""
     return _DISPLAY_NAMES.get(suite, suite.upper())
+
+
+_display_name = display_name
 
 
 def _clean(value: object) -> object:
@@ -210,12 +222,24 @@ def _review_rows(
             if record is None or record.verdict == Verdict.NOT_APPLICABLE:
                 continue
             where = " › ".join(unit.context_path[-2:])
-            tags_text = "\n".join(f"{tag.label}\n{tag.id}" for tag in record.tags)
+            if record.verdict == Verdict.GAP and record.missing_skill:
+                tags_text = (
+                    f"Proposed missing skill (by TA, not taxonomy fact): {record.missing_skill}"
+                )
+            else:
+                tags_text = "\n".join(
+                    f"{tag.label} → {record.covers[tag.id]}\n{tag.id}"
+                    if tag.id in record.covers
+                    else f"{tag.label}\n{tag.id}"
+                    for tag in record.tags
+                )
             alt_text = "\n".join(
                 f"{i}. {alt.label} ({alt.id})" for i, alt in enumerate(record.alternatives, start=2)
             )
             icon = _VERDICT_ICON.get(record.verdict, str(record.verdict.value))
             why = _REASON_SENTENCES.get(record.reason_code, record.reason_code)
+            if record.model_reason:
+                why = f"{why}\nModel: {record.model_reason}"
             alt_ids = json.dumps([alt.id for alt in record.alternatives])
             row: list[object] = [
                 unit.row_id,
@@ -258,7 +282,7 @@ def _write_review(
         "Taxonomy",
         "Suggested tag(s)",
         "Verdict",
-        "Why",
+        "Why (model reasoning is inference)",
         "Alternatives",
         "Decision ▼",
         "Hint",
@@ -407,6 +431,8 @@ def _write_summary(
 
     _counts_table("Per kind", kinds_seen, _kind_match)
 
+    cost_usd = summary.get("cost_usd")
+    cost_text = f"${cost_usd:.4f}" if isinstance(cost_usd, (int, float)) else "n/a"
     run_info = [
         ("Run date", summary.get("date") or datetime.now(UTC).isoformat()),
         ("Units", summary.get("units", len(units))),
@@ -415,6 +441,8 @@ def _write_summary(
         ("Versions", summary.get("versions", "")),
         ("Reused", summary.get("reused", 0)),
         ("Searched", summary.get("searched", 0)),
+        ("Model calls", summary.get("model_calls", 0)),
+        ("Estimated cost", cost_text),
     ]
     for label, value in run_info:
         _set(ws, row, 1, label).font = Font(bold=True)

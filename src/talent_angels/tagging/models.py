@@ -69,7 +69,7 @@ class TagUnit(BaseModel):
     doc_key: str
     row_id: str
     kind: str
-    role: Literal["leaf", "heading", "row_rule"]
+    role: Literal["leaf", "heading", "group", "row_rule"]
     text: str
     clean_text: str
     #: Ancestor texts from top (excluding the Document root) to the parent,
@@ -99,3 +99,114 @@ class Versions(BaseModel):
     prompts: str
     ta_taxonomies: str
     model: str
+
+
+class CandidateRef(BaseModel):
+    """A suite hit worth keeping: a pointer + label, never a description.
+
+    Licensing (ADR-0004's pointer-not-payload rule): the ledger and the
+    workbook cite ids/labels/URIs, never the suite's own descriptive text.
+    """
+
+    model_config = {"frozen": True}
+
+    suite: str
+    id: str
+    source_id: str
+    kind: str
+    label: str
+    method: str
+    best_rank: int
+    hits: int
+    queries: list[str] = Field(default_factory=list)
+    alias_unconfirmed: bool = False
+
+
+class QueryLog(BaseModel):
+    """One query sent to one suite, and what it came back with."""
+
+    q: str
+    kind: str | None
+    n: int
+    top_method: str | None
+    warnings: list[str] = Field(default_factory=list)
+
+
+class SearchOutcome(BaseModel):
+    """Everything `search.search_unit` learned about one unit x suite."""
+
+    suite: str
+    status: Literal["ok", "n/a", "unavailable"]
+    routed_kind: str | None
+    queries: list[QueryLog] = Field(default_factory=list)
+    candidates: list[CandidateRef] = Field(default_factory=list)
+    error: str | None = None
+
+
+class VerdictResult(BaseModel):
+    """`verdict.decide`'s output: the policy call plus the tags it kept."""
+
+    verdict: Verdict
+    reason_code: str
+    tags: list[CandidateRef] = Field(default_factory=list)
+    alternatives: list[CandidateRef] = Field(default_factory=list)
+
+
+class TagRecord(BaseModel):
+    """One ledger line: unit x suite x attempt, everything the run decided.
+
+    `rewrite`/`choice` stay untyped `dict`s in PR2 — PR3 defines `Rewrite` and
+    `Choice` and starts populating them; the ledger schema does not change.
+    """
+
+    schema_version: int = 1
+    run_id: str
+    ts: str
+    doc_key: str
+    unit_key: str
+    row_id: str
+    suite: str
+    fingerprint: str
+    attempt: int = 0
+    versions: Versions
+    kind: str
+    clean_text: str
+    context_path: list[str] = Field(default_factory=list)
+    hint: str = ""
+    queries: list[QueryLog] = Field(default_factory=list)
+    candidates: list[CandidateRef] = Field(default_factory=list)
+    rewrite: dict[str, object] | None = None
+    choice: dict[str, object] | None = None
+    verdict: Verdict
+    reason_code: str
+    tags: list[CandidateRef] = Field(default_factory=list)
+    alternatives: list[CandidateRef] = Field(default_factory=list)
+    usage: dict[str, float] = Field(default_factory=dict)
+    decided_by: Literal["policy", "human"] = "policy"
+
+
+class RunOptions(BaseModel):
+    """CLI/runner knobs for one `ta-agent tag` invocation."""
+
+    no_llm: bool = True
+    limit: int | None = None
+    rows: set[str] | None = None
+    suites: list[str] | None = None
+    depth: str | None = None
+    refresh: bool = False
+    fresh: bool = False
+    workers: int = 1
+
+
+class RunSummary(BaseModel):
+    """What `runner.run` reports back to the CLI, printable as-is."""
+
+    project: str
+    documents: list[str] = Field(default_factory=list)
+    units: int = 0
+    counts: dict[str, dict[str, int]] = Field(default_factory=dict)
+    reused: int = 0
+    searched: int = 0
+    outputs: list[str] = Field(default_factory=list)
+    seconds: float = 0.0
+    warnings: list[str] = Field(default_factory=list)

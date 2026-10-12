@@ -150,6 +150,14 @@ def _build_parser() -> argparse.ArgumentParser:
 
 
 def main(argv: Sequence[str] | None = None, *, registry: SuiteRegistry | None = None) -> int:
+    raw_args = list(sys.argv[1:] if argv is None else argv)
+    if raw_args[:1] == ["tag"]:
+        # Batch tagging has its own parser/options (ta-agent tag --no-llm ...)
+        # and never goes through run_turn; keep the main parser untouched.
+        from talent_angels.tagging.cli import main as tag_main
+
+        return tag_main(raw_args[1:], registry=registry)
+
     load_local_dotenv()
     args = _build_parser().parse_args(argv)
     if registry is not None:

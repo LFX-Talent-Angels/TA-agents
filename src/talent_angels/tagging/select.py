@@ -76,7 +76,7 @@ def select_units(
             continue
 
         seed_phrases: list[str] = []
-        role: Literal["leaf", "heading", "row_rule"]
+        role: Literal["leaf", "heading", "group", "row_rule"]
         rule = profile.rule_for(row.text)
         if rule is not None:
             kind = rule.kind
@@ -96,8 +96,12 @@ def select_units(
                 continue
             kind = ancestor
             role = "heading" if children.get(row.row_id) else "leaf"
-            tagged_at_this_depth = profile.depth == "all" or (
-                (profile.depth == "leaves" and role == "leaf")
+            if role == "heading" and profile.groups:
+                role = "group"
+            tagged_at_this_depth = (
+                role == "group"
+                or profile.depth == "all"
+                or (profile.depth == "leaves" and role == "leaf")
                 or (profile.depth == "headings" and role == "heading")
             )
             if not tagged_at_this_depth:
@@ -109,6 +113,11 @@ def select_units(
             continue
 
         clean_text = profile.clean(row.text)
+        if role == "group":
+            steps = [profile.clean(child.text) for child in children.get(row.row_id, [])]
+            steps = [step for step in steps if step]
+            if clean_text and steps:
+                clean_text = f"{clean_text}: {'; '.join(steps)}"
         if not clean_text:
             skipped.append(SkippedRow(row_id=row.row_id, reason="metadata", kind=kind))
             continue
@@ -117,10 +126,13 @@ def select_units(
         occ_key = (parent_id, row.text.strip())
         occurrence = occurrence_seen.get(occ_key, 0)
         occurrence_seen[occ_key] = occurrence + 1
+        # A group is a different question from the heading's own text, so it
+        # gets its own identity.
+        key_text = f"{row.text.strip()}#group" if role == "group" else row.text.strip()
 
         units.append(
             TagUnit(
-                unit_key=unit_key(doc.key, context_path, row.text.strip(), occurrence),
+                unit_key=unit_key(doc.key, context_path, key_text, occurrence),
                 doc_key=doc.key,
                 row_id=row.row_id,
                 kind=kind,

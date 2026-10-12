@@ -66,7 +66,7 @@ class SearchableSuite(Protocol):
     def search_nodes(self, text: str, kind: str | None = None) -> SearchResult: ...
 
 
-def _node_ref(node: TaxonomyNode, suite: str) -> NodeRef:
+def node_ref(node: TaxonomyNode, suite: str) -> NodeRef:
     alt_labels = cast(Sequence[str], node.properties.get("alt_labels") or ())
     raw_description = node.properties.get("description")
     description = raw_description.strip() if isinstance(raw_description, str) else None
@@ -80,6 +80,10 @@ def _node_ref(node: TaxonomyNode, suite: str) -> NodeRef:
         alt_labels=list(alt_labels),
         description=description or None,
     )
+
+
+#: Back-compat alias — `rank.py` and `connect/reveal.py` import this name.
+_node_ref = node_ref
 
 
 def locate(

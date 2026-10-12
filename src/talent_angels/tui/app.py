@@ -145,7 +145,15 @@ def _sync_runlog_path(state: SessionState, previous_key: str) -> str:
 
 
 def main(argv: Sequence[str] | None = None, *, registry: SuiteRegistry | None = None) -> int:
-    del argv
+    args = list(sys.argv[1:] if argv is None else argv)
+    if args[:1] == ["tag"]:
+        # Batch tagging is a one-shot command, not a chat turn: the chat's 45s
+        # turn deadline would kill it mid-run, so it never enters the loop
+        # below.
+        from talent_angels.tagging.cli import main as tag_main
+
+        return tag_main(args[1:], registry=registry)
+
     load_local_dotenv()
     selected = registry or default_suite_registry()
     console = Console()

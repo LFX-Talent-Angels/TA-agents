@@ -1,0 +1,475 @@
+"""Excel deliverable: Summary / Review / Standard sheets.
+
+Reuses the mock's (`/tmp/mock_xlsx.py`) colours, fills, and dropdown
+approach — not its banner text or sample data. The Gaps sheet and the
+review-decision read-back come in PR4; this module only *writes*.
+"""
+
+from __future__ import annotations
+
+import json
+import os
+import tempfile
+from collections.abc import Callable
+from datetime import UTC, datetime
+from importlib import resources
+from pathlib import Path
+
+from openpyxl import Workbook
+from openpyxl.cell.cell import ILLEGAL_CHARACTERS_RE, Cell
+from openpyxl.styles import Alignment, Border, Font, PatternFill, Side
+from openpyxl.utils import get_column_letter
+from openpyxl.worksheet.datavalidation import DataValidation
+from openpyxl.worksheet.worksheet import Worksheet
+
+from talent_angels.tagging.models import (
+    Document,
+    SkippedRow,
+    TagRecord,
+    TagUnit,
+    Verdict,
+)
+
+_MAX_CELL_LEN = 32_767
+_FORMULA_PREFIXES = ("=", "+", "-", "@")
+
+_HEADER_FILL = PatternFill("solid", fgColor="1F3864")
+_HEADER_FONT = Font(bold=True, color="FFFFFF")
+_EDIT_FILL = PatternFill("solid", fgColor="DDEBF7")
+_THIN = Side(style="thin", color="BBBBBB")
+_BOX = Border(left=_THIN, right=_THIN, top=_THIN, bottom=_THIN)
+
+#: Fill colour per verdict *value* (``Verdict.ACCEPTED.value == "accepted"``).
+_VERDICT_FILL = {
+    "accepted": "D9EAD3",
+    "human_accepted": "D9EAD3",
+    "review": "FFF2CC",
+    "adjacent": "FCE5CD",
+    "gap": "F4CCCC",
+    "human_gap": "F4CCCC",
+    "skipped": "EEEEEE",
+    "n/a": "EEEEEE",
+    "unavailable": "EAD1DC",
+    "error": "EAD1DC",
+}
+
+_VERDICT_ICON = {
+    Verdict.ACCEPTED: "✅ accepted",
+    Verdict.REVIEW: "🔍 review",
+    Verdict.ADJACENT: "🟡 adjacent",
+    Verdict.GAP: "🔴 gap",
+    Verdict.SKIPPED: "— skipped",
+    Verdict.NOT_APPLICABLE: "— n/a",
+    Verdict.UNAVAILABLE: "⚠️ unavailable",
+    Verdict.ERROR: "❌ error",
+    Verdict.HUMAN_ACCEPTED: "✔ human_accepted",
+    Verdict.HUMAN_GAP: "✔ human_gap",
+}
+
+_REASON_SENTENCES = {
+    "no_candidates": "No candidates were found in this taxonomy for this line.",
+    "search_only": "No-LLM mode: showing the top search result for manual review.",
+    "suite_unavailable": "The taxonomy suite was unavailable during this run.",
+    "kind_not_supported": "This suite does not support this unit's kind.",
+}
+
+#: Rows re-run with a model (PR3) still land in one of these two buckets.
+_NEEDS_REVIEW = {Verdict.REVIEW, Verdict.ADJACENT, Verdict.GAP, Verdict.ERROR}
+
+_DECISION_OPTIONS = (
+    "Approve,Reject,Use alternative 2,Use alternative 3,Use alternative 4,"
+    "Mark as gap,Retry with hint,Use my tag"
+)
+
+_DISPLAY_NAMES = {"esco": "ESCO", "onet": "O*NET"}
+
+_DEFAULT_ATTRIBUTION = {
+    "esco": "ESCO © European Union, CC BY 4.0",
+    "onet": "O*NET 31.0 Database, U.S. Department of Labor, CC BY 4.0",
+}
+
+
+def _display_name(suite: str) -> str:
+    return _DISPLAY_NAMES.get(suite, suite.upper())
+
+
+def _clean(value: object) -> object:
+    """Strip illegal XML chars and cap length; non-strings pass through untouched."""
+    if not isinstance(value, str):
+        return value
+    text = ILLEGAL_CHARACTERS_RE.sub("", value)
+    if len(text) > _MAX_CELL_LEN:
+        text = text[:_MAX_CELL_LEN]
+    return text
+
+
+def _write_cell(cell: Cell, value: object) -> None:
+    """Every string written to the workbook goes through here (formula-safety)."""
+    text = _clean(value)
+    cell.value = text
+    if isinstance(text, str) and text.startswith(_FORMULA_PREFIXES):
+        # openpyxl marks a leading "=" as a formula (data_type "f"); forcing
+        # "s" keeps a client's own text ("=5 kg flour") literal on reopen.
+        cell.data_type = "s"
+
+
+def _set(ws: Worksheet, row: int, col: int, value: object) -> Cell:
+    cell = ws.cell(row=row, column=col)
+    _write_cell(cell, value)
+    return cell
+
+
+def _package_attribution(suite: str) -> str | None:
+    """The suite's own NOTES.md attribution blockquote, if the package is installed."""
+    try:
+        text = (
+            resources.files("ta_taxonomies.suites")
+            .joinpath(f"{suite}/NOTES.md")
+            .read_text(encoding="utf-8")
+        )
+    except (ModuleNotFoundError, FileNotFoundError, OSError):
+        return None
+    collecting = False
+    quoted: list[str] = []
+    for line in text.splitlines():
+        if not collecting:
+            if "attribution" in line.lower():
+                collecting = True
+            continue
+        stripped = line.strip()
+        if stripped.startswith(">"):
+            quoted.append(stripped.lstrip(">").strip())
+        elif quoted:
+            break
+    return " ".join(quoted) if quoted else None
+
+
+def _attribution_lines(suites: list[str]) -> list[str]:
+    lines = []
+    for suite in suites:
+        text = _package_attribution(suite) if suite in _DEFAULT_ATTRIBUTION else None
+        lines.append(
+            text or _DEFAULT_ATTRIBUTION.get(suite, f"{suite.upper()}: see the suite's license.")
+        )
+    return lines
+
+
+def _write_table(
+    ws: Worksheet,
+    *,
+    title: str,
+    headers: list[str],
+    rows: list[list[object]],
+    widths: list[int],
+    row_fills: list[str | None] | None = None,
+    edit_cols: tuple[int, ...] = (),
+    hidden_cols: tuple[int, ...] = (),
+) -> None:
+    """One title row + a header-by-name row + data; frozen panes, autofilter."""
+    _set(ws, 1, 1, title).font = Font(bold=True, size=14)
+    header_row = 2
+    for col, header in enumerate(headers, start=1):
+        cell = _set(ws, header_row, col, header)
+        cell.fill = _HEADER_FILL
+        cell.font = _HEADER_FONT
+        cell.alignment = Alignment(wrap_text=True, vertical="center")
+        cell.border = _BOX
+
+    for offset, row in enumerate(rows):
+        row_idx = header_row + 1 + offset
+        fill_color = row_fills[offset] if row_fills else None
+        for col_idx, value in enumerate(row, start=1):
+            cell = _set(ws, row_idx, col_idx, value)
+            cell.alignment = Alignment(wrap_text=True, vertical="top")
+            cell.border = _BOX
+            if (col_idx - 1) in edit_cols:
+                cell.fill = _EDIT_FILL
+            elif fill_color:
+                cell.fill = PatternFill("solid", fgColor=fill_color)
+
+    for col_idx, width in enumerate(widths, start=1):
+        ws.column_dimensions[get_column_letter(col_idx)].width = width
+    for col_idx in hidden_cols:
+        ws.column_dimensions[get_column_letter(col_idx + 1)].hidden = True
+
+    last_row = header_row + len(rows)
+    last_col_letter = get_column_letter(len(headers))
+    ws.freeze_panes = f"A{header_row + 1}"
+    ws.auto_filter.ref = f"A{header_row}:{last_col_letter}{last_row}"
+
+
+def _review_rows(
+    units: list[TagUnit],
+    results: dict[tuple[str, str], TagRecord],
+    suites: list[str],
+) -> tuple[list[list[object]], list[str | None]]:
+    collected: list[tuple[int, list[object], str | None]] = []
+    for unit in units:
+        for suite in suites:
+            record = results.get((unit.unit_key, suite))
+            if record is None or record.verdict == Verdict.NOT_APPLICABLE:
+                continue
+            where = " › ".join(unit.context_path[-2:])
+            tags_text = "\n".join(f"{tag.label}\n{tag.id}" for tag in record.tags)
+            alt_text = "\n".join(
+                f"{i}. {alt.label} ({alt.id})" for i, alt in enumerate(record.alternatives, start=2)
+            )
+            icon = _VERDICT_ICON.get(record.verdict, str(record.verdict.value))
+            why = _REASON_SENTENCES.get(record.reason_code, record.reason_code)
+            alt_ids = json.dumps([alt.id for alt in record.alternatives])
+            row: list[object] = [
+                unit.row_id,
+                where,
+                unit.clean_text,
+                _kind_label(unit),
+                _display_name(suite),
+                tags_text,
+                icon,
+                why,
+                alt_text,
+                "",
+                "",
+                unit.unit_key,
+                suite,
+                alt_ids,
+                record.fingerprint,
+            ]
+            priority = 0 if record.verdict in _NEEDS_REVIEW else 1
+            collected.append((priority, row, _VERDICT_FILL.get(record.verdict.value)))
+    # Stable sort: ties (same priority) keep the document order they were
+    # appended in (unit, then suite within unit).
+    collected.sort(key=lambda item: item[0])
+    rows = [item[1] for item in collected]
+    fills = [item[2] for item in collected]
+    return rows, fills
+
+
+def _write_review(
+    ws: Worksheet,
+    units: list[TagUnit],
+    results: dict[tuple[str, str], TagRecord],
+    suites: list[str],
+) -> None:
+    headers = [
+        "Row ID",
+        "Where",
+        "Line",
+        "Kind",
+        "Taxonomy",
+        "Suggested tag(s)",
+        "Verdict",
+        "Why",
+        "Alternatives",
+        "Decision ▼",
+        "Hint",
+        "key",
+        "suite",
+        "alt_ids",
+        "fp",
+    ]
+    rows, fills = _review_rows(units, results, suites)
+    widths = [8, 24, 44, 12, 10, 36, 14, 38, 32, 20, 26, 10, 8, 12, 14]
+    _write_table(
+        ws,
+        title="Review — set a Decision on any row, save, and re-run the same command",
+        headers=headers,
+        rows=rows,
+        widths=widths,
+        row_fills=fills,
+        edit_cols=(9, 10),
+        hidden_cols=(11, 12, 13, 14),
+    )
+    header_row = 2
+    decision_col = get_column_letter(10)
+    last_row = max(ws.max_row, header_row + 1)
+    validation = DataValidation(type="list", formula1=f'"{_DECISION_OPTIONS}"', allow_blank=True)
+    ws.add_data_validation(validation)
+    validation.add(f"{decision_col}{header_row + 1}:{decision_col}{last_row}")
+
+
+def _standard_rows(
+    doc: Document,
+    units: list[TagUnit],
+    skipped: list[SkippedRow],
+    results: dict[tuple[str, str], TagRecord],
+    suites: list[str],
+) -> list[list[object]]:
+    units_by_row = {unit.row_id: unit for unit in units}
+    skipped_by_row = {item.row_id: item for item in skipped}
+    rows: list[list[object]] = []
+    for row in doc.rows:
+        unit = units_by_row.get(row.row_id)
+        skip = skipped_by_row.get(row.row_id)
+        if unit is not None:
+            kind, status = _kind_label(unit), "tagged"
+        elif skip is not None:
+            kind, status = skip.kind or "", skip.reason
+        else:  # pragma: no cover - select_units guarantees every row lands in one
+            kind, status = "", ""
+        out: list[object] = [row.row_id, row.label, row.text, row.parent_id or "", kind, status]
+        for suite in suites:
+            record = results.get((unit.unit_key, suite)) if unit is not None else None
+            if record is not None:
+                tags_text = "; ".join(f"{tag.label} [{tag.id}]" for tag in record.tags)
+                verdict_text = _VERDICT_ICON.get(record.verdict, str(record.verdict.value))
+            else:
+                tags_text, verdict_text = "", ""
+            out.extend([tags_text, verdict_text])
+        rows.append(out)
+    return rows
+
+
+def _write_standard(
+    ws: Worksheet,
+    doc: Document,
+    units: list[TagUnit],
+    skipped: list[SkippedRow],
+    results: dict[tuple[str, str], TagRecord],
+    suites: list[str],
+) -> None:
+    headers = ["Row ID", "Type", "Text", "Parent ID", "Kind", "Status"]
+    for suite in suites:
+        name = _display_name(suite)
+        headers.extend([f"{name} tags", f"{name} verdict"])
+    rows = _standard_rows(doc, units, skipped, results, suites)
+    widths = [8, 12, 50, 12, 14, 14] + [36, 14] * len(suites)
+    _write_table(
+        ws,
+        title=(
+            "The client's standard, row for row, with tag columns added "
+            "(deliverable — regenerated each run, not edited)"
+        ),
+        headers=headers,
+        rows=rows,
+        widths=widths,
+    )
+
+
+def _write_summary(
+    ws: Worksheet,
+    doc: Document,
+    units: list[TagUnit],
+    results: dict[tuple[str, str], TagRecord],
+    suites: list[str],
+    summary: dict[str, object],
+) -> None:
+    title = str(summary.get("title") or doc.key)
+    _set(ws, 1, 1, title).font = Font(bold=True, size=14)
+    row = 3
+
+    verdict_order = [member.value for member in Verdict]
+    present = sorted(
+        {record.verdict.value for record in results.values()},
+        key=lambda value: (
+            verdict_order.index(value) if value in verdict_order else len(verdict_order)
+        ),
+    )
+
+    def _counts_table(
+        heading: str, row_labels: list[str], match: Callable[[str, str, str], bool]
+    ) -> None:
+        nonlocal row
+        _set(ws, row, 1, heading).font = Font(bold=True)
+        row += 1
+        header_row = row
+        for col, header in enumerate(["", *present], start=1):
+            cell = _set(ws, header_row, col, header)
+            cell.fill = _HEADER_FILL
+            cell.font = _HEADER_FONT
+        row += 1
+        for label in row_labels:
+            counts = dict.fromkeys(present, 0)
+            for (unit_key, suite), record in results.items():
+                if match(label, unit_key, suite):
+                    counts[record.verdict.value] = counts.get(record.verdict.value, 0) + 1
+            _set(ws, row, 1, label)
+            for col, verdict in enumerate(present, start=2):
+                _set(ws, row, col, counts[verdict])
+            row += 1
+        row += 1
+
+    _counts_table(
+        "Per taxonomy",
+        [_display_name(suite) for suite in suites],
+        lambda label, unit_key, suite: _display_name(suite) == label,
+    )
+
+    units_by_key = {unit.unit_key: unit for unit in units}
+    kinds_seen: list[str] = []
+    for unit in units:
+        if unit.kind not in kinds_seen:
+            kinds_seen.append(unit.kind)
+
+    def _kind_match(label: str, unit_key: str, suite: str) -> bool:
+        del suite
+        unit = units_by_key.get(unit_key)
+        return unit is not None and unit.kind == label
+
+    _counts_table("Per kind", kinds_seen, _kind_match)
+
+    run_info = [
+        ("Run date", summary.get("date") or datetime.now(UTC).isoformat()),
+        ("Units", summary.get("units", len(units))),
+        ("Seconds", summary.get("seconds", 0.0)),
+        ("Model", summary.get("model", "none")),
+        ("Versions", summary.get("versions", "")),
+        ("Reused", summary.get("reused", 0)),
+        ("Searched", summary.get("searched", 0)),
+    ]
+    for label, value in run_info:
+        _set(ws, row, 1, label).font = Font(bold=True)
+        _set(ws, row, 2, value)
+        row += 1
+    row += 1
+
+    _set(
+        ws,
+        row,
+        1,
+        "How to review: open the Review sheet, set Decision (blue column) for "
+        "any row, save, and re-run the same command.",
+    )
+    row += 2
+
+    for line in _attribution_lines(suites):
+        _set(ws, row, 1, line)
+        row += 1
+
+    for col, width in enumerate((30, 14, 14, 14, 14, 14, 14, 14), start=1):
+        ws.column_dimensions[get_column_letter(col)].width = width
+
+
+def _kind_label(unit: TagUnit) -> str:
+    """ "performance (group)" for a heading tagged together with its steps."""
+    return f"{unit.kind} (group)" if unit.role == "group" else unit.kind
+
+
+def write_workbook(
+    path: Path,
+    doc: Document,
+    units: list[TagUnit],
+    skipped: list[SkippedRow],
+    results: dict[tuple[str, str], TagRecord],
+    suites: list[str],
+    summary: dict[str, object],
+) -> Path:
+    """Write the deliverable to `path`: temp file in the same dir, then atomic replace."""
+    workbook = Workbook()
+    summary_ws = workbook.active
+    assert summary_ws is not None
+    summary_ws.title = "Summary"
+    _write_summary(summary_ws, doc, units, results, suites, summary)
+    _write_review(workbook.create_sheet("Review"), units, results, suites)
+    _write_standard(workbook.create_sheet("Standard"), doc, units, skipped, results, suites)
+
+    path.parent.mkdir(parents=True, exist_ok=True)
+    fd, tmp_name = tempfile.mkstemp(dir=path.parent, prefix=f".{path.stem}-", suffix=".xlsx.tmp")
+    os.close(fd)
+    tmp_path = Path(tmp_name)
+    try:
+        workbook.save(tmp_path)
+        os.replace(tmp_path, path)
+    except Exception:
+        tmp_path.unlink(missing_ok=True)
+        raise
+    return path

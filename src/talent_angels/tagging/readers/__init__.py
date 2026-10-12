@@ -7,8 +7,9 @@ from pathlib import Path
 from talent_angels.tagging.models import Document
 from talent_angels.tagging.readers.base import Reader, ReaderError
 from talent_angels.tagging.readers.neo4j_tree import Neo4jTreeReader
+from talent_angels.tagging.readers.table import TableReader
 
-READERS: tuple[Reader, ...] = (Neo4jTreeReader(),)
+READERS: tuple[Reader, ...] = (Neo4jTreeReader(), TableReader())
 
 
 def read_document(path: Path) -> Document:

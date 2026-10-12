@@ -35,12 +35,22 @@ class Profile(BaseModel):
 
     name: str
     version: int
+    #: What this profile calls its input ("competency standard", "document", ...) —
+    #: fills the model prompts' "lines of a {document_type}" wording (prompts.py).
+    document_type: str
+    #: What this profile calls its input on the workbook: the `<context>` prefix in
+    #: the rewrite prompt, and the Standard/Document sheet's own name.
+    document_label: str
     depth: Literal["leaves", "headings", "all"] = "leaves"
     #: Also tag each heading *as a group*: its own text plus its direct
     #: children's, one request — the group-level answer next to the steps'.
     groups: bool = True
     kinds: dict[str, list[str]] = Field(default_factory=dict)
     row_rules: list[RowRule] = Field(default_factory=list)
+    #: A row with no kind heading above it (and no row rule) gets this kind
+    #: instead of being skipped as metadata — `select.py`. `None` keeps the
+    #: competency_standard behaviour: no ancestor kind means skip.
+    default_kind: str | None = None
     include_kinds: list[str] = Field(default_factory=list)
     report_kinds: list[str] = Field(default_factory=list)
     cleaners: list[str] = Field(default_factory=list)
@@ -91,6 +101,9 @@ class Profile(BaseModel):
         return any(pattern.match(text) for pattern in self._doc_context_patterns)
 
 
+_DEFAULT_PROFILE_NAME = "competency_standard"
+
+
 @lru_cache(maxsize=8)
 def _builtin_profile_data(name: str) -> dict[str, object]:
     package = resources.files("talent_angels.tagging.profiles")
@@ -101,26 +114,73 @@ def _builtin_profile_data(name: str) -> dict[str, object]:
     return data
 
 
-def load_profile(project_dir: Path | None = None, name: str = "competency_standard") -> Profile:
-    """Built-in `<name>.yaml` merged with an optional `<project_dir>/tag.yaml`.
+def builtin_profile_names() -> list[str]:
+    """Every `<name>.yaml` shipped under `tagging/profiles/` (no path, no extension)."""
+    package = resources.files("talent_angels.tagging.profiles")
+    return sorted(
+        entry.name[: -len(".yaml")]
+        for entry in package.iterdir()
+        if entry.is_file() and entry.name.endswith(".yaml")
+    )
+
+
+def _load_base(name: str) -> tuple[dict[str, object], Path | str]:
+    """Built-in `<name>.yaml`, or `name` itself when it is a path to a `.yaml` file."""
+    maybe_path = Path(name)
+    if maybe_path.suffix.lower() == ".yaml" and maybe_path.is_file():
+        try:
+            data = yaml.safe_load(maybe_path.read_text(encoding="utf-8"))
+        except yaml.YAMLError as exc:
+            raise ValueError(f"{maybe_path}: invalid YAML ({exc})") from exc
+        if not isinstance(data, dict):
+            raise ValueError(f"{maybe_path}: did not parse to a mapping")
+        return data, maybe_path
+    builtins = builtin_profile_names()
+    if name not in builtins:
+        available = ", ".join(builtins)
+        raise ValueError(f"unknown profile {name!r}; available built-in profiles: {available}")
+    return dict(_builtin_profile_data(name)), name
+
+
+def load_profile(project_dir: Path | None = None, name: str | None = None) -> Profile:
+    """A base profile merged with an optional `<project_dir>/tag.yaml`.
+
+    The base profile is, in order: the explicit `name` argument (CLI
+    `--profile`, a built-in name or a path to a `.yaml` file) if given; else
+    `tag.yaml`'s own `base_profile:` key; else `"competency_standard"`.
 
     Top-level keys in `tag.yaml` replace the matching built-in key wholesale
     (a project overriding `cleaners` doesn't need to repeat `kinds`).
     """
-    data = dict(_builtin_profile_data(name))
-    source: Path | str = name
+    override: dict[str, object] | None = None
+    override_path: Path | None = None
     if project_dir is not None:
         override_path = project_dir / "tag.yaml"
         if override_path.exists():
-            source = override_path
             try:
-                override = yaml.safe_load(override_path.read_text(encoding="utf-8"))
+                loaded = yaml.safe_load(override_path.read_text(encoding="utf-8"))
             except yaml.YAMLError as exc:
                 raise ValueError(f"{override_path}: invalid YAML ({exc})") from exc
-            if override is not None:
-                if not isinstance(override, dict):
+            if loaded is not None:
+                if not isinstance(loaded, dict):
                     raise ValueError(f"{override_path}: expected a mapping at the top level")
-                data.update(override)
+                override = loaded
+
+    base_name = name
+    if base_name is None and override is not None:
+        base_profile = override.get("base_profile")
+        if base_profile is not None:
+            if not isinstance(base_profile, str):
+                raise ValueError(f"{override_path}: 'base_profile' must be a string")
+            base_name = base_profile
+    if base_name is None:
+        base_name = _DEFAULT_PROFILE_NAME
+
+    data, source = _load_base(base_name)
+    data = dict(data)
+    if override is not None:
+        data.update({key: value for key, value in override.items() if key != "base_profile"})
+        source = override_path if override_path is not None else source
     try:
         return Profile.model_validate(data)
     except ValueError as exc:

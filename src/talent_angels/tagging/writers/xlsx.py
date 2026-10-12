@@ -390,6 +390,7 @@ def _write_standard(
     skipped: list[SkippedRow],
     results: dict[tuple[str, str], TagRecord],
     suites: list[str],
+    document_label: str,
 ) -> None:
     headers = ["Row ID", "Type", "Text", "Parent ID", "Kind", "Status"]
     for suite in suites:
@@ -400,7 +401,7 @@ def _write_standard(
     _write_table(
         ws,
         title=(
-            "The client's standard, row for row, with tag columns added "
+            f"The client's {document_label.lower()}, row for row, with tag columns added "
             "(deliverable — regenerated each run, not edited)"
         ),
         headers=headers,
@@ -587,6 +588,7 @@ def _write_summary(
     cost_text = f"${cost_usd:.4f}" if isinstance(cost_usd, (int, float)) else "n/a"
     run_info = [
         ("Run date", summary.get("date") or datetime.now(UTC).isoformat()),
+        ("Profile", summary.get("profile", "")),
         ("Units", summary.get("units", len(units))),
         ("Seconds", summary.get("seconds", 0.0)),
         ("Model", summary.get("model", "none")),
@@ -667,8 +669,13 @@ def write_workbook(
     report_kinds: frozenset[str] = frozenset(),
     previous_decisions: dict[tuple[str, str], dict[str, object]] | None = None,
     stats: ReviewStats | None = None,
+    document_label: str = "Standard",
 ) -> Path:
-    """Write the deliverable to `path`: temp file in the same dir, then atomic replace."""
+    """Write the deliverable to `path`: temp file in the same dir, then atomic replace.
+
+    `document_label` (profile.py) names the document sheet — "Standard" for CONOCER's
+    competency_standard profile (the only tab name this ever changes).
+    """
     previous_decisions = previous_decisions or {}
     stats = stats or ReviewStats(reviewed=0, total=len(units))
 
@@ -678,7 +685,9 @@ def write_workbook(
     summary_ws.title = "Summary"
     _write_summary(summary_ws, doc, units, results, suites, summary, stats)
     _write_review(workbook.create_sheet("Review"), units, results, suites, previous_decisions)
-    _write_standard(workbook.create_sheet("Standard"), doc, units, skipped, results, suites)
+    _write_standard(
+        workbook.create_sheet(document_label), doc, units, skipped, results, suites, document_label
+    )
     gap_rows = build_gap_rows(units, results, suites, report_kinds)
     _write_gaps(workbook.create_sheet("Gaps"), gap_rows)
 

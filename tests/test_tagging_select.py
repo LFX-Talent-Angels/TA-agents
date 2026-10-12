@@ -196,3 +196,15 @@ def test_a_group_has_its_own_key() -> None:
 def test_groups_off_leaves_headings_skipped() -> None:
     _, skipped = _select(groups=False)
     assert {s.row_id: s.reason for s in skipped}["16"] == "heading"
+
+
+def test_generic_profile_default_kind_tags_every_non_root_row() -> None:
+    """The `generic` profile has no kind headings at all; `default_kind` means
+    nothing falls through to "metadata" just because it has no kind ancestor."""
+    doc = read_document(FIXTURE)
+    profile = load_profile(name="generic")
+    units, skipped = select_units(doc, profile)
+
+    assert not any(s.reason == "metadata" for s in skipped)
+    assert units  # every non-root/non-heading row was tagged
+    assert all(unit.kind == "item" for unit in units)

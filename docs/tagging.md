@@ -1,14 +1,18 @@
 # Batch tagging (`ta-agent tag`)
 
-`ta-agent tag` reads a client's structured document (a competency standard,
-today), decides which rows are worth tagging, searches every attached
-taxonomy suite (ESCO, O*NET, …) for each row, asks a model which hits really
-match, and writes one Excel workbook back. It is a separate pipeline from the
-chat assistant: no plan cache, no user memory, no 45-second turn deadline.
+`ta-agent tag` reads a client's structured document — a competency standard
+(CONOCER's own shape), or a plain CSV/XLSX table for any other business —
+decides which rows are worth tagging, searches every attached taxonomy suite
+(ESCO, O*NET, …) for each row, asks a model which hits really match, and
+writes one Excel workbook back. It is a separate pipeline from the chat
+assistant: no plan cache, no user memory, no 45-second turn deadline. Business
+rules (what a row's *kind* is, what it's called, which suite kinds to search)
+live in a **profile** (`profile.py`), not in code — see "Profiles" below.
 
 ## What it does, in order
 
-1. **Read** the project's input file(s) (a Neo4j `IS_PART_OF` tree export).
+1. **Read** the project's input file(s) — a Neo4j `IS_PART_OF` tree export, or
+   a flat CSV/XLSX table (see "Inputs").
 2. **Select** which rows get tagged, and what *kind* each one is (performance,
    product, knowledge, …), from a profile file — business rules as data, not
    code.
@@ -19,8 +23,9 @@ chat assistant: no plan cache, no user memory, no 45-second turn deadline.
    row — it can only pick from the numbered candidates, or say none fit.
 6. **Verdict**: code, not the model, turns that into `accepted` / `review` /
    `adjacent` / `gap` (see below).
-7. **Write** `out/<doc>-tagged.xlsx` (Summary, Review, Standard, Gaps sheets)
-   and `out/<doc>-gaps.csv`.
+7. **Write** `out/<doc>-tagged.xlsx` (Summary, Review, a document sheet named
+   after the profile's `document_label` — "Standard" for CONOCER, "Document"
+   for the generic profile — and Gaps) and `out/<doc>-gaps.csv`.
 
 Re-running the same command is cheap: unchanged rows are reused from a
 project-local ledger, not re-searched or re-asked.
@@ -39,6 +44,100 @@ project-local ledger, not re-searched or re-asked.
 `<project>` can also just be a single input file, or a bare folder of input
 files (no `inputs/` subfolder) — `ta-agent tag` figures out which shape it's
 looking at.
+
+## Inputs
+
+Two readers ship today (`src/talent_angels/tagging/readers/`); the first one
+that recognises a file reads it — nothing downstream of `read()` cares which
+one did.
+
+- **Neo4j tree JSON** (`neo4j_tree.py`, CONOCER's export shape): a JSON array
+  of `{n, r, m}` Cypher rows (child, relationship, parent) forming one
+  `IS_PART_OF` tree per file.
+- **CSV / XLSX table** (`table.py`): a flat spreadsheet with one row per line
+  to tag. Columns are matched by header name, case-insensitively, in English
+  or Spanish:
+
+  | Role | Header aliases | Required? |
+  | --- | --- | --- |
+  | id | `id`, `row_id`, `row id`, `code`, `#`, `no`, `número`, `numero` | no — falls back to `1`, `2`, … in row order |
+  | parent | `parent`, `parent_id`, `parent id`, `padre` | no — a blank/missing parent means the row hangs off a synthetic root (the file's own name) |
+  | text | `text`, `description`, `descripción`/`descripcion`, `content`/`contenido`, `statement` | **yes** — a file with no text-like column isn't recognised as a table at all |
+  | type | `type`, `kind`, `tipo`, `label` | no — becomes the row's Neo4j-style `label`, for a profile to key on if it wants to |
+
+  CSV delimiter (`,`, `;`, or tab) is sniffed automatically. For an `.xlsx`,
+  the first sheet is used unless `tag.yaml` names another one. Column names
+  and sheet can always be overridden explicitly in `<project>/tag.yaml`:
+
+  ```yaml
+  table:
+    sheet: Data       # xlsx only; default is the first sheet
+    id: Code
+    parent: Parent ID
+    text: Description
+    type: Category
+  ```
+
+A parent id that doesn't exist among the file's rows is a hard error (naming
+the offending row); a blank text cell is silently skipped (it's formatting,
+not content).
+
+## Profiles
+
+A **profile** (`src/talent_angels/tagging/profile.py`, data in
+`tagging/profiles/*.yaml`) is a business's tagging rules: what counts as a
+kind heading, which kinds actually get tagged, how a row's text gets cleaned,
+which suite kinds each tagged kind routes to, and what the business calls its
+own document (`document_type`, `document_label` — this is the only thing that
+varies the model's own system prompts; CONOCER's wording hasn't changed).
+
+Two ship built-in:
+
+- **`competency_standard`** (the default) — CONOCER's shape: kind headings
+  (Performances, Products, Knowledge, …), row rules for "Associated
+  Occupations:" lines, Spanish aliases throughout.
+- **`generic`** — no business-specific structure at all: every row is tagged
+  as a plain `item`, routed to `skill`/`task`/`knowledge`. Good for a flat
+  table with no section headings of its own.
+
+Which one a run uses, in order:
+
+1. `--profile NAME` or `--profile path/to/your-profile.yaml` on the command line.
+2. `base_profile: <name-or-path>` in `<project>/tag.yaml`.
+3. `competency_standard`, otherwise.
+
+Either way, `<project>/tag.yaml` is then merged on top: any top-level key you
+set there (`kinds`, `cleaners`, `include_kinds`, `routing`, `depth`, …)
+replaces the matching key of the base profile wholesale — see
+`src/talent_angels/tagging/profiles/competency_standard.yaml` for every key
+and what it does, and `profiles/generic.yaml` for the minimal shape. Writing
+your own profile from scratch (a third business with its own structure) means
+copying one of those two files and pointing `--profile`/`base_profile` at it.
+
+### Use it for another business
+
+A university wants its course catalogue tagged against ESCO. Its export is a
+flat spreadsheet, not a CONOCER-style standard, so:
+
+1. Put the file at `data/local/<project>/inputs/courses.xlsx`, with columns
+   like `Code | Parent | Type | Description` (a course row, its units as
+   children, each unit's capacities as grandchildren — or just one flat list,
+   if that's all it has).
+2. Run it with the built-in generic profile, no `tag.yaml` needed:
+
+   ```bash
+   uv run ta-agent tag data/local/<project> --profile generic --workers 4
+   ```
+
+3. Open `out/courses-tagged.xlsx` — same Summary/Review/Gaps sheets as
+   CONOCER's, with the document sheet named **Document** (generic's
+   `document_label`) instead of **Standard**.
+
+If the university later wants its own kind headings (e.g. tag "Learning
+Outcome" rows differently from "Assessment Criteria" rows), write a
+`tag.yaml` next to `inputs/` with `base_profile: generic` plus whichever
+`kinds`/`include_kinds`/`routing` keys it needs — same mechanism CONOCER's own
+overrides use.
 
 ## Prerequisites
 
@@ -76,6 +175,7 @@ uv run ta-agent tag data/local/sprint7/pilot-run --fresh
 | `--rows "66-91,100"` | Tag only these row ids. |
 | `--suites esco,onet` | Only these suites (default: every suite the registry has attached). |
 | `--depth leaves\|headings\|all` | Which rows count as taggable (overrides the profile). |
+| `--profile NAME\|PATH` | Built-in profile name (e.g. `generic`) or a path to a `.yaml` profile file (see "Profiles"). |
 | `--workers N` | Concurrent `choose` model calls. |
 | `--refresh` | Re-run `review`/`adjacent`/`gap` rows; reuse `accepted` and every human decision. |
 | `--fresh` | Ignore the ledger completely (still never overwrites a human decision). |
@@ -141,20 +241,18 @@ Measured on the CONOCER pilot standard (129 tagged units, ESCO + O*NET):
 - Re-run after a handful of review decisions: **~15 seconds**, a few cents.
 - `--no-llm`: **~36 seconds**, $0.
 
-## Customising for a new business or input
+## Customising further
 
-- **New business, same input shape**: write `<project>/tag.yaml` overriding
-  whichever top-level keys of the built-in profile differ (kind headings,
-  cleaners, routing, depth, …) — see
-  `src/talent_angels/tagging/profiles/competency_standard.yaml` for every
-  key and what it does. `tag.yaml` keys replace the matching built-in key
-  wholesale; keys you don't mention keep the built-in default.
-- **New input format**: implement the `Reader` protocol
-  (`src/talent_angels/tagging/readers/base.py`: `can_read(path)`,
-  `read(path) -> Document`) and register it in
-  `src/talent_angels/tagging/readers/__init__.py`. The rest of the pipeline
-  is format-agnostic.
+- **A new business with its own input shape or kind rules**: see "Inputs" and
+  "Profiles" above — usually a `tag.yaml`, sometimes a new profile file; no
+  code change needed either way.
+- **A genuinely new input format** (neither a Neo4j tree nor a flat table):
+  implement the `Reader` protocol (`src/talent_angels/tagging/readers/base.py`:
+  `can_read(path)`, `read(path) -> Document`) and register it in
+  `src/talent_angels/tagging/readers/__init__.py`. The rest of the pipeline is
+  format-agnostic.
 - **New taxonomy suite**: register it in `suites/registry.py` the normal way
   (see the main README) — it automatically gets searched, its own Review
-  rows, and its own Standard columns. A suite that doesn't support a given
-  row's kind just shows `n/a` for that row; it never produces a false gap.
+  rows, and its own document-sheet columns. A suite that doesn't support a
+  given row's kind just shows `n/a` for that row; it never produces a false
+  gap.

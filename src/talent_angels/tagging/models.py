@@ -217,12 +217,16 @@ class RunOptions(BaseModel):
     refresh: bool = False
     fresh: bool = False
     workers: int = 1
+    #: `--profile NAME|PATH` (CLI); `None` falls through to `tag.yaml`'s own
+    #: `base_profile:` key, then `"competency_standard"` (`profile.load_profile`).
+    profile: str | None = None
 
 
 class RunSummary(BaseModel):
     """What `runner.run` reports back to the CLI, printable as-is."""
 
     project: str
+    profile: str = ""
     documents: list[str] = Field(default_factory=list)
     units: int = 0
     counts: dict[str, dict[str, int]] = Field(default_factory=dict)

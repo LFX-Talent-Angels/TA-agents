@@ -20,7 +20,7 @@ from talent_angels.llm import LLMClient, LLMError, Message
 from talent_angels.runlog import StageUsage
 from talent_angels.tagging import jsonio
 from talent_angels.tagging.models import CandidateRef, SearchOutcome, TagUnit
-from talent_angels.tagging.prompts import CHOOSE_SYSTEM, choose_message
+from talent_angels.tagging.prompts import choose_message
 from talent_angels.tagging.search import _keep_by_routed_kind
 
 _MAX_PICKS = 3
@@ -91,17 +91,17 @@ def _call(
     *,
     suite_display: str,
     hint: str,
+    system: str,
+    document_label: str,
 ) -> tuple[Choice, StageUsage]:
     candidates_with_desc = [
         (candidate.label, candidate.kind, descriptions.get(candidate.id, ""))
         for candidate in outcome.candidates
     ]
+    user_message = choose_message(unit, candidates_with_desc, suite_display, document_label, hint)
     messages = [
-        Message(role="system", content=CHOOSE_SYSTEM),
-        Message(
-            role="user",
-            content=choose_message(unit, candidates_with_desc, suite_display, hint),
-        ),
+        Message(role="system", content=system),
+        Message(role="user", content=user_message),
     ]
     result, stage = measure_complete(client, messages, stage="tag_choose")
     try:
@@ -129,14 +129,27 @@ def choose(
     suite_display: str,
     hint: str = "",
     widened: bool = False,
+    system: str,
+    document_label: str,
 ) -> tuple[Choice | None, list[StageUsage]]:
-    """One choose call, one retry on a bad reply, then `None` (caller treats as `error`)."""
+    """One choose call, one retry on a bad reply, then `None` (caller treats as `error`).
+
+    `system` is `prompts.choose_system(profile.document_type)`, computed once per run by
+    the caller; `document_label` is `profile.document_label`.
+    """
     del widened  # affects verdict.decide's policy branch, not the prompt itself
     stages: list[StageUsage] = []
     for _attempt in range(2):
         try:
             reply, stage = _call(
-                client, unit, outcome, descriptions, suite_display=suite_display, hint=hint
+                client,
+                unit,
+                outcome,
+                descriptions,
+                suite_display=suite_display,
+                hint=hint,
+                system=system,
+                document_label=document_label,
             )
         except _BadReply as exc:
             stages.append(exc.stage)

@@ -5,6 +5,7 @@ from __future__ import annotations
 from talent_angels.llm.protocol import LLMError, LLMResult, LLMUsage, Message
 from talent_angels.tagging.choose import Choice, Pick, choose, validate
 from talent_angels.tagging.models import CandidateRef, SearchOutcome, TagUnit
+from talent_angels.tagging.prompts import choose_system
 
 
 class ScriptedLLMClient:
@@ -65,13 +66,22 @@ def _outcome(candidates: list[CandidateRef]) -> SearchOutcome:
     return SearchOutcome(suite="esco", status="ok", routed_kind="skill", candidates=candidates)
 
 
+_SYSTEM = choose_system("competency standard")
+
+
 # --- choose() -----------------------------------------------------------
 
 
 def test_choose_returns_parsed_choice_on_first_try() -> None:
     client = ScriptedLLMClient(['{"fit": "exact", "picks": [{"n": 1}], "reason": "matches"}'])
     choice, stages = choose(
-        client, _unit(), _outcome([_candidate("esco:skill:1")]), {}, suite_display="ESCO"
+        client,
+        _unit(),
+        _outcome([_candidate("esco:skill:1")]),
+        {},
+        suite_display="ESCO",
+        system=_SYSTEM,
+        document_label="Standard",
     )
     assert choice is not None
     assert choice.fit == "exact"
@@ -81,7 +91,13 @@ def test_choose_returns_parsed_choice_on_first_try() -> None:
 def test_choose_retries_once_on_bad_json_then_succeeds() -> None:
     client = ScriptedLLMClient(["not json", '{"fit": "none", "picks": [], "reason": "no match"}'])
     choice, stages = choose(
-        client, _unit(), _outcome([_candidate("esco:skill:1")]), {}, suite_display="ESCO"
+        client,
+        _unit(),
+        _outcome([_candidate("esco:skill:1")]),
+        {},
+        suite_display="ESCO",
+        system=_SYSTEM,
+        document_label="Standard",
     )
     assert choice is not None
     assert choice.fit == "none"
@@ -93,7 +109,13 @@ def test_choose_retries_once_on_bad_json_then_succeeds() -> None:
 def test_choose_gives_up_after_two_bad_replies() -> None:
     client = ScriptedLLMClient(["garbage", "still garbage"])
     choice, stages = choose(
-        client, _unit(), _outcome([_candidate("esco:skill:1")]), {}, suite_display="ESCO"
+        client,
+        _unit(),
+        _outcome([_candidate("esco:skill:1")]),
+        {},
+        suite_display="ESCO",
+        system=_SYSTEM,
+        document_label="Standard",
     )
     assert choice is None
     assert len(stages) == 2  # no answer, but the cost still counts
@@ -103,7 +125,13 @@ def test_choose_gives_up_after_two_bad_replies() -> None:
 def test_choose_treats_llm_error_the_same_as_bad_json() -> None:
     client = ScriptedLLMClient([LLMError("boom"), LLMError("boom again")])
     choice, _stages = choose(
-        client, _unit(), _outcome([_candidate("esco:skill:1")]), {}, suite_display="ESCO"
+        client,
+        _unit(),
+        _outcome([_candidate("esco:skill:1")]),
+        {},
+        suite_display="ESCO",
+        system=_SYSTEM,
+        document_label="Standard",
     )
     assert choice is None
 

@@ -54,6 +54,10 @@ one did.
 - **Neo4j tree JSON** (`neo4j_tree.py`, CONOCER's export shape): a JSON array
   of `{n, r, m}` Cypher rows (child, relationship, parent) forming one
   `IS_PART_OF` tree per file.
+- **A CSV next to a JSON of the same name** (Neo4j exports both) is not tagged:
+  it has no node ids, so it cannot rebuild the tree. The run checks it anyway
+  and says either "same N rows as the JSON, nothing lost" or which rows or
+  columns it has that the JSON lacks ("NOT used yet").
 - **CSV / XLSX table** (`table.py`): a flat spreadsheet with one row per line
   to tag. Columns are matched by header name, case-insensitively, in English
   or Spanish:

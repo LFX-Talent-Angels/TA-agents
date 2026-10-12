@@ -69,6 +69,7 @@ from talent_angels.tagging.review import (
 from talent_angels.tagging.rewrite import Rewrite, rewrite_cache_key, rewrite_group
 from talent_angels.tagging.search import Router, queries_for, search_unit
 from talent_angels.tagging.select import document_context, select_units
+from talent_angels.tagging.twins import describe_csv_twin
 from talent_angels.tagging.verdict import decide
 from talent_angels.tagging.writers.csv import write_gaps_csv
 from talent_angels.tagging.writers.xlsx import build_gap_rows, display_name, write_workbook
@@ -110,7 +111,7 @@ def _scan(folder: Path) -> tuple[list[Path], list[str]]:
         return files, warnings
     for entry in sorted(p for p in folder.iterdir() if p.is_file()):
         if entry.suffix.lower() == ".csv" and entry.with_suffix(".json").exists():
-            warnings.append(f"{entry.name}: CSV twin has no node ids; using the JSON")
+            warnings.append(describe_csv_twin(entry, entry.with_suffix(".json")))
             continue
         if not any(reader.can_read(entry) for reader in READERS):
             warnings.append(f"{entry.name}: no reader recognizes this file")

@@ -64,6 +64,7 @@ from talent_angels.tagging.review import (
     apply_decisions,
     read_decisions,
     review_stats,
+    unrecognised_decisions,
 )
 from talent_angels.tagging.rewrite import Rewrite, rewrite_cache_key, rewrite_group
 from talent_angels.tagging.search import Router, queries_for, search_unit
@@ -305,6 +306,7 @@ def run(
         # Read the expert's Decision/Hint off the *previous* workbook before any
         # search or model spend happens for this doc (PILOT-PLAN.md "Review loop").
         review_decisions, decision_warnings = read_decisions(out_path)
+        kept_decisions = unrecognised_decisions(out_path)
         run_warnings.extend(decision_warnings)
 
         say(f"tagging {doc.key}…")
@@ -340,7 +342,7 @@ def run(
 
             rewrites: dict[str, Rewrite] = {}
             if llm_on and llm_client is not None:
-                say(f"{doc.key}: step 1/4 rewriting {len(units)} rows into skill phrases…")
+                say(f"{doc.key}: step 1/4 skill phrases for {len(units)} rows…")
                 rw_map, rw_stages = _rewrite_phase(
                     llm_client,
                     units,
@@ -352,14 +354,18 @@ def run(
                 )
                 rewrites = rw_map
                 doc_stages.extend(rw_stages)
-                say(f"{doc.key}: step 1/4 done ({len(rw_stages)} model calls, the rest cached)")
+                say(
+                    f"{doc.key}: step 1/4 done "
+                    + (
+                        f"({len(rw_stages)} model calls, the rest reused)"
+                        if rw_stages
+                        else "(all reused, no model calls)"
+                    )
+                )
 
             pending: dict[tuple[str, str], _Pending] = {}
 
             for index, unit in enumerate(units, start=1):
-                if progress is not None and (index % 10 == 0 or index == len(units)):
-                    say(f"{doc.key}: step 2/4 searching taxonomies {index}/{len(units)} rows")
-
                 rw = rewrites.get(unit.unit_key, Rewrite())
                 base_queries = queries_for(unit, rw.labels, rw.description)
                 routing_kinds = profile.routing.get(unit.kind, [])
@@ -447,6 +453,13 @@ def run(
                         attempt=attempt,
                         hint=hint,
                         is_retry=is_retry,
+                    )
+
+                # After the row, so the counts include it (the last line adds up).
+                if progress is not None and (index % 10 == 0 or index == len(units)):
+                    say(
+                        f"{doc.key}: step 2/4 rows {index}/{len(units)} "
+                        f"({searched} answers searched, {reused} reused)"
                     )
 
             verdicts, choose_stages = _decide_pending(
@@ -585,6 +598,7 @@ def run(
             },
             report_kinds=frozenset(profile.report_kinds),
             previous_decisions=previous_decisions,
+            kept_decisions=kept_decisions,
             stats=stats,
             document_label=profile.document_label,
         )

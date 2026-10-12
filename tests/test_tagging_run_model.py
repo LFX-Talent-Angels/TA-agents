@@ -394,6 +394,6 @@ def test_progress_names_every_phase_and_counts_the_model_step(project: Path) -> 
         progress=messages.append,
     )
     text = "\n".join(messages)
-    assert "step 1/4 rewriting" in text
-    assert "step 2/4 searching taxonomies" in text
+    assert "step 1/4 skill phrases" in text
+    assert "step 2/4 rows" in text
     assert "step 3/4 model choosing among candidates" in text

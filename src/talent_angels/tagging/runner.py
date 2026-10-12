@@ -22,7 +22,7 @@ import time
 import uuid
 from collections import defaultdict
 from collections.abc import Callable
-from concurrent.futures import ThreadPoolExecutor
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from contextlib import ExitStack
 from dataclasses import dataclass
 from datetime import UTC, datetime
@@ -340,6 +340,7 @@ def run(
 
             rewrites: dict[str, Rewrite] = {}
             if llm_on and llm_client is not None:
+                say(f"{doc.key}: step 1/4 rewriting {len(units)} rows into skill phrases…")
                 rw_map, rw_stages = _rewrite_phase(
                     llm_client,
                     units,
@@ -351,12 +352,13 @@ def run(
                 )
                 rewrites = rw_map
                 doc_stages.extend(rw_stages)
+                say(f"{doc.key}: step 1/4 done ({len(rw_stages)} model calls, the rest cached)")
 
             pending: dict[tuple[str, str], _Pending] = {}
 
             for index, unit in enumerate(units, start=1):
-                if progress is not None and index % 10 == 0:
-                    say(f"{doc.key}: {index}/{len(units)} units")
+                if progress is not None and (index % 10 == 0 or index == len(units)):
+                    say(f"{doc.key}: step 2/4 searching taxonomies {index}/{len(units)} rows")
 
                 rw = rewrites.get(unit.unit_key, Rewrite())
                 base_queries = queries_for(unit, rw.labels, rw.description)
@@ -451,12 +453,16 @@ def run(
                 pending,
                 llm_client=llm_client,
                 llm_on=llm_on,
+                progress=_step_counter(say, f"{doc.key}: step 3/4 model choosing among candidates"),
                 workers=opts.workers,
                 system=choose_sys,
                 document_label=profile.document_label,
             )
             doc_stages.extend(choose_stages)
 
+            to_widen = sum(1 for verdict in verdicts.values() if verdict.needs_widening)
+            if to_widen:
+                say(f"{doc.key}: step 4/4 second look with wider context for {to_widen} answers…")
             fps, widened_stages = _widen_pending(
                 pending,
                 verdicts,
@@ -645,6 +651,15 @@ def run(
     )
 
 
+def _step_counter(say: Callable[[str], None], label: str) -> Callable[[int, int], None]:
+    """A `done/total` reporter bound to one document's step label."""
+
+    def report(done: int, total: int) -> None:
+        say(f"{label} {done}/{total}")
+
+    return report
+
+
 def _decide_pending(
     pending: dict[tuple[str, str], _Pending],
     *,
@@ -653,6 +668,7 @@ def _decide_pending(
     workers: int,
     system: str,
     document_label: str,
+    progress: Callable[[int, int], None] | None = None,
 ) -> tuple[dict[tuple[str, str], VerdictResult], list[StageUsage]]:
     """First decide pass: immediate for non-`ok`/no-candidate outcomes, modelled for the rest."""
     verdicts: dict[tuple[str, str], VerdictResult] = {}
@@ -685,17 +701,28 @@ def _decide_pending(
         return ctx.run(_choose_one, key)
 
     choose_results: dict[tuple[str, str], tuple[Choice | None, list[StageUsage]]] = {}
+    total = len(needs_choose)
+
+    def _tick() -> None:
+        # The longest phase of a run: without a counter it looks frozen.
+        done = len(choose_results)
+        if progress is not None and (done % 10 == 0 or done == total):
+            progress(done, total)
+
     if needs_choose:
         if workers > 1:
             with ThreadPoolExecutor(max_workers=workers) as executor:
                 futures = {
-                    key: executor.submit(_choose_one_in_context, key) for key in needs_choose
+                    executor.submit(_choose_one_in_context, key): key for key in needs_choose
                 }
-                for key in needs_choose:
-                    choose_results[key] = futures[key].result()
+                # Results are keyed, so finishing order never changes the output.
+                for future in as_completed(futures):
+                    choose_results[futures[future]] = future.result()
+                    _tick()
         else:
             for key in needs_choose:
                 choose_results[key] = _choose_one(key)
+                _tick()
 
     for key in needs_choose:
         p = pending[key]

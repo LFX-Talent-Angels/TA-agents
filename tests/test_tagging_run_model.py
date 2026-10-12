@@ -380,3 +380,20 @@ def test_isolation_memory_home_and_runlog_untouched(project: Path) -> None:
     assert snapshot() == before
     assert not runlog_path.exists()
     assert (project / ".ta-tag" / "runlog.jsonl").is_file()
+
+
+def test_progress_names_every_phase_and_counts_the_model_step(project: Path) -> None:
+    """The model step is most of a real run; it must report progress, not go silent."""
+    registry, _ = _registry()
+    messages: list[str] = []
+    run(
+        project,
+        registry=registry,  # type: ignore[arg-type]
+        opts=RunOptions(no_llm=False),
+        llm_client=ContentScriptedClient(),
+        progress=messages.append,
+    )
+    text = "\n".join(messages)
+    assert "step 1/4 rewriting" in text
+    assert "step 2/4 searching taxonomies" in text
+    assert "step 3/4 model choosing among candidates" in text

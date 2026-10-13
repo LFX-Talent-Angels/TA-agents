@@ -14,6 +14,7 @@ from talent_angels.tagging.profile import Profile
 from talent_angels.tagging.rewrite import Rewrite
 
 _MAX_SIBLINGS = 4
+_MAX_HINT_QUERY = 200
 
 
 def siblings_for(unit: TagUnit, units: list[TagUnit]) -> list[str]:
@@ -44,6 +45,17 @@ def extra_queries_for(unit: TagUnit, rewrite: Rewrite, profile: Profile, attempt
         if grandparent:
             extra.append(f"{description} {grandparent}".strip())
     return extra
+
+
+def hint_query(review_hint: str) -> str | None:
+    """The reviewer's hint as a search query of its own.
+
+    The hint names what the line is really about ("this is about software
+    testing"), so it must reach the search, not only the `choose` prompt —
+    otherwise the retry re-reads the same candidates the reviewer rejected.
+    """
+    text = " ".join(review_hint.split())[:_MAX_HINT_QUERY]
+    return text or None
 
 
 def choose_hint_for(review_hint: str, attempt: int, siblings: list[str]) -> str:

@@ -224,3 +224,38 @@ def test_search_unit_merges_hits_across_routed_kinds() -> None:
     outcome = search_unit(suite.search_nodes, "onet", _unit(), ["q"], ["knowledge", "skill"])
     assert {c.id for c in outcome.candidates} == {"onet:k:1", "onet:s:1"}
     assert outcome.routed_kind == "knowledge+skill"
+
+
+def test_search_unit_keeps_priority_results_first_even_past_top() -> None:
+    """A retry hint's own results must survive the `top` cut and lead the list."""
+    table = {
+        ("q1", "skill"): Answer(
+            hits=[(f"esco:skill:old{i}", "Skill", f"old {i}", "hybrid_rrf") for i in range(5)]
+        ),
+        ("q2", "skill"): Answer(
+            hits=[(f"esco:skill:other{i}", "Skill", f"other {i}", "hybrid_rrf") for i in range(5)]
+        ),
+        ("about software testing", "skill"): Answer(
+            hits=[
+                ("esco:skill:filler", "Skill", "filler", "hybrid_rrf"),
+                ("esco:skill:plan", "Skill", "plan software testing", "hybrid_rrf"),
+            ]
+        ),
+    }
+    suite = TableSuite("esco", table)
+    queries = ["q1", "q2", "about software testing"]
+
+    plain = search_unit(suite.search_nodes, "esco", _unit(), queries, "skill", top=4)
+    assert "esco:skill:plan" not in [c.id for c in plain.candidates]
+
+    hinted = search_unit(
+        suite.search_nodes,
+        "esco",
+        _unit(),
+        queries,
+        "skill",
+        top=4,
+        priority=["about software testing"],
+    )
+    assert [c.id for c in hinted.candidates[:2]] == ["esco:skill:filler", "esco:skill:plan"]
+    assert len(hinted.candidates) == 4

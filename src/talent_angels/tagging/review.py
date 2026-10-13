@@ -397,14 +397,29 @@ def _apply_mark_gap(latest: TagRecord, *, run_id: str, reason_code: str = "human
     )
 
 
+def _reviewer_retries(ledger: Ledger, unit_key: str, suite: str) -> int:
+    """Retries/rejects already applied for this unit x suite, from `reviews.jsonl`.
+
+    Counted from the reviewer's own decisions, not from `TagRecord.attempt`:
+    the pilot's automatic second look also bumps `attempt`, and must not use
+    up one of the reviewer's retries.
+    """
+    return sum(
+        1
+        for review in ledger.reviews()
+        if review.get("unit_key") == unit_key
+        and review.get("suite") == suite
+        and review.get("result") == "retry"
+    )
+
+
 def _apply_retry_or_reject(
-    decision: ReviewDecision, latest: TagRecord, *, run_id: str
+    decision: ReviewDecision, latest: TagRecord, *, run_id: str, retries_so_far: int
 ) -> TagRecord | RetryRequest:
-    next_attempt = latest.attempt + 1
-    if next_attempt > _MAX_RETRY_ATTEMPTS:
+    if retries_so_far >= _MAX_RETRY_ATTEMPTS:
         return _apply_mark_gap(latest, run_id=run_id, reason_code="retries_exhausted")
     hint = decision.hint if decision.action == ReviewAction.RETRY else ""
-    return RetryRequest(hint=hint, attempt=next_attempt)
+    return RetryRequest(hint=hint, attempt=latest.attempt + 1)
 
 
 def _candidate_from_raw(raw: object, suite: str, query: str) -> CandidateRef:
@@ -550,7 +565,12 @@ def apply_decisions(
         elif decision.action == ReviewAction.MARK_GAP:
             result = _apply_mark_gap(latest, run_id=run_id)
         elif decision.action in (ReviewAction.RETRY, ReviewAction.REJECT):
-            result = _apply_retry_or_reject(decision, latest, run_id=run_id)
+            result = _apply_retry_or_reject(
+                decision,
+                latest,
+                run_id=run_id,
+                retries_so_far=_reviewer_retries(ledger, decision.unit_key, decision.suite),
+            )
         elif decision.action == ReviewAction.USE_MY_TAG:
             result = _apply_use_my_tag(
                 decision,

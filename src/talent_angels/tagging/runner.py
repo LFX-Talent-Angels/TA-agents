@@ -141,11 +141,13 @@ def _search_routed(
     unit: TagUnit,
     queries: list[str],
     routed_kinds: list[str],
+    *,
+    priority: list[str] | None = None,
 ) -> SearchOutcome:
     """No routable kind means the suite has no such concept (`n/a`), not a gap."""
     if not routed_kinds:
         return SearchOutcome(suite=suite_name, status="n/a", routed_kind=None)
-    return search_unit(search, suite_name, unit, queries, routed_kinds)
+    return search_unit(search, suite_name, unit, queries, routed_kinds, priority=priority or ())
 
 
 def _document_title(doc: Document, profile: Profile) -> str:
@@ -461,6 +463,7 @@ def run(
                         continue
 
                     queries = base_queries
+                    priority: list[str] = []
                     hint = ""
                     attempt = 0
                     is_retry = False
@@ -469,7 +472,9 @@ def run(
                         is_retry = True
                         retried += 1
                         extra = retry_context.extra_queries_for(unit, rw, profile, attempt)
-                        queries = [*base_queries, *extra]
+                        hint_q = retry_context.hint_query(retry_req.hint)
+                        priority = [hint_q] if hint_q else []
+                        queries = [*base_queries, *extra, *priority]
                         siblings = retry_context.siblings_for(unit, units)
                         hint = retry_context.choose_hint_for(retry_req.hint, attempt, siblings)
 
@@ -503,7 +508,12 @@ def run(
                             )
                         else:
                             outcome = _search_routed(
-                                bound_search, suite_name, unit, queries, routed_kinds
+                                bound_search,
+                                suite_name,
+                                unit,
+                                queries,
+                                routed_kinds,
+                                priority=priority,
                             )
 
                     searched += 1

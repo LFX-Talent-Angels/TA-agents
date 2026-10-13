@@ -23,6 +23,9 @@ _CODE_PREFIX_RE = re.compile(r"^\d[\d.\-]*\s*[-:]?\s*")
 #: number/code ("2143", "12.3-4") is not a query worth sending to a suite.
 _CODE_LIKE_RE = re.compile(r"^[\d.\-]*$")
 _MAX_QUERY_LEN = 200
+#: How many of a priority query's own top results are always kept (and listed
+#: first), however well the unit's other queries scored.
+_PRIORITY_KEEP = 5
 
 
 def queries_for(
@@ -108,9 +111,16 @@ def search_unit(
     routed_kind: str | Sequence[str],
     *,
     top: int = 12,
+    priority: Sequence[str] = (),
 ) -> SearchOutcome:
-    """Run every query x routed kind against one suite, merge by node id, keep `top`."""
+    """Run every query x routed kind against one suite, merge by node id, keep `top`.
+
+    `priority` queries (a reviewer's retry hint) keep their own top
+    `_PRIORITY_KEEP` results at the head of the list; without that, a hint's
+    results compete with the unit's original queries and can be cut by `top`.
+    """
     kinds = [routed_kind] if isinstance(routed_kind, str) else list(routed_kind)
+    priority_set = set(priority)
     try:
         query_logs: list[QueryLog] = []
         merged: dict[str, dict[str, Any]] = {}
@@ -148,6 +158,7 @@ def search_unit(
                         "hits": set(),
                         "queries": [],
                         "alias_unconfirmed": False,
+                        "priority": False,
                     }
                     merged[ref.id] = entry
                 elif rank < entry["best_rank"]:
@@ -155,11 +166,22 @@ def search_unit(
                     entry["method"] = method
                 if rank <= 5:
                     entry["hits"].add(query)
+                if query in priority_set and rank <= _PRIORITY_KEEP:
+                    entry["priority"] = True
                 if query not in entry["queries"]:
                     entry["queries"].append(query)
                 if alias_warned:
                     entry["alias_unconfirmed"] = True
 
+        ordered = sorted(
+            merged.values(),
+            key=lambda entry: (
+                not entry["priority"],
+                entry["best_rank"],
+                -len(entry["hits"]),
+                entry["ref"].pref_label,
+            ),
+        )
         candidates_out = [
             CandidateRef(
                 suite=suite_name,
@@ -173,11 +195,8 @@ def search_unit(
                 queries=list(entry["queries"]),
                 alias_unconfirmed=bool(entry["alias_unconfirmed"]),
             )
-            for entry in merged.values()
+            for entry in ordered
         ]
-        candidates_out.sort(
-            key=lambda candidate: (candidate.best_rank, -candidate.hits, candidate.label)
-        )
         kept_ids = {candidate.id for candidate in candidates_out[:top]}
         # Transient only (SearchOutcome.descriptions is `exclude=True`): the
         # `choose` prompt needs these, the ledger/workbook must never store them.

@@ -195,10 +195,12 @@ uv run ta-agent tag data/local/sprint7/pilot-run --fresh
    - **Use alternative 2/3/4** — one of the listed alternatives is the right
      one instead.
    - **Mark as gap** — no taxonomy entry fits; record it as a confirmed gap.
-   - **Retry with hint** — give the model a hint (e.g. "this is about
-     software testing") and ask again with more of the standard's own
-     context (parent heading, then grandparent + sibling lines on a second
-     retry). Up to 2 retries; a 3rd becomes a confirmed gap automatically.
+   - **Retry with hint** — give a hint (e.g. "this is about software
+     testing"). The hint is searched as well, and its best matches head the
+     candidate list; the model is asked again with the hint and more of the
+     standard's own context (parent heading, then grandparent + sibling lines
+     on a second retry). Up to 2 retries per row; a 3rd becomes a confirmed
+     gap automatically. The pilot's own second look doesn't count as one.
    - **Use my tag** — type the taxonomy's own label or id in Hint; accepted
      only if it matches **exactly** one entry in that suite.
 3. On the **Gaps** sheet, one row per confirmed-or-likely gap: answer

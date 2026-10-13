@@ -297,6 +297,8 @@ def test_review_loop_applies_each_decision_once_and_retries_only_those_units(
     choose_calls = [c for c in client2.calls if "<row id=" not in c[1].content]
     assert len(choose_calls) == 3
     assert any("this is about software testing" in c[1].content for c in choose_calls)
+    # The hint is searched too, not only shown to the model.
+    assert any(text == "this is about software testing" for text, _kind in suite2.calls)
 
     reviews = _ledger_lines(project, "reviews.jsonl")
     assert len(reviews) == 7

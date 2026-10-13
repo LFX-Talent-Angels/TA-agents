@@ -341,9 +341,17 @@ def test_reject_retries_with_an_empty_hint(tmp_path: Path) -> None:
     assert outcome.retries == {("u1", "esco"): RetryRequest(hint="", attempt=1)}
 
 
+def _log_reviewer_retry(ledger: Ledger, n: int) -> None:
+    ledger.review_append(
+        {"review_key": f"earlier-{n}", "unit_key": "u1", "suite": "esco", "result": "retry"}
+    )
+
+
 def test_reject_after_two_retries_becomes_human_gap_exhausted(tmp_path: Path) -> None:
     ledger = Ledger(tmp_path / ".ta-tag")
     ledger.append(_record(attempt=2))
+    _log_reviewer_retry(ledger, 1)
+    _log_reviewer_retry(ledger, 2)
 
     outcome = apply_decisions(
         [_decision(action=ReviewAction.REJECT)], ledger, search_by_suite=_no_search, run_id="r1"
@@ -353,6 +361,23 @@ def test_reject_after_two_retries_becomes_human_gap_exhausted(tmp_path: Path) ->
     [record] = outcome.human_records
     assert record.verdict == Verdict.HUMAN_GAP
     assert record.reason_code == "retries_exhausted"
+
+
+def test_automatic_second_look_does_not_use_up_a_reviewer_retry(tmp_path: Path) -> None:
+    """Second look (attempt 1) + one reviewer retry (attempt 2): one reviewer retry is left."""
+    ledger = Ledger(tmp_path / ".ta-tag")
+    ledger.append(_record(attempt=2))
+    _log_reviewer_retry(ledger, 1)
+
+    outcome = apply_decisions(
+        [_decision(action=ReviewAction.RETRY, hint="second try")],
+        ledger,
+        search_by_suite=_no_search,
+        run_id="r1",
+    )
+
+    assert outcome.retries == {("u1", "esco"): RetryRequest(hint="second try", attempt=3)}
+    assert outcome.human_records == []
 
 
 def test_stale_fingerprint_is_ignored_with_a_warning(tmp_path: Path) -> None:

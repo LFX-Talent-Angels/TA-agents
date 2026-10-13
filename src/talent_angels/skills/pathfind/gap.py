@@ -5,7 +5,8 @@ implementation — its own docstring already names the reuse: "Pathfinder's
 skill gap from A to B is ``only_b``". This module adds the one thing
 ``compare.py`` does not do: splitting that gap into essential-missing and
 optional-missing (ADR-0008 decision 3), and flagging a gap too large to call
-a realistic route (decision 5).
+a realistic route (decision 5) against a per-suite threshold measured from
+real occupation pairs (PR 6's golden pairs set).
 """
 
 from __future__ import annotations
@@ -15,9 +16,20 @@ from dataclasses import dataclass
 from talent_angels.contracts import AgentResult, NodeRef
 from talent_angels.skills.connect.compare import compare_result, skill_overlap
 
-#: Provisional (ADR-0008 decision 5) — not yet tuned against the golden
-#: pairs set. Move this number from measurement, not from a second guess.
-MAX_REALISTIC_GAP_SKILLS = 8
+#: Measured against live ESCO v1.2.1 and O*NET 31.0 (ADR-0008 decision 5
+#: amendment, PR 6's golden pairs set — see
+#: docs/decisions/0008-pathfind-contract.md). ESCO's number rests on 6 real
+#: pairs with a clean split between same-family title variants (10-11
+#: essential-missing) and genuine transitions (19+); O*NET's rests on only
+#: 4, noisier pairs and should be revisited first if more O*NET golden
+#: pairs land. The two are not on the same scale: O*NET's HAS_SKILL and
+#: USES_SOFTWARE edges include specific software tools ESCO does not model
+#: as skills, so its essential-missing counts run far higher.
+MAX_REALISTIC_GAP_SKILLS = 15
+_MAX_REALISTIC_GAP_SKILLS_BY_SUITE: dict[str, int] = {
+    "esco": MAX_REALISTIC_GAP_SKILLS,
+    "onet": 60,
+}
 
 GAP_TOO_LARGE_WARNING = "gap_too_large"
 
@@ -80,8 +92,9 @@ def compute_gap(
         else:
             essential.append(node)
 
+    threshold = _MAX_REALISTIC_GAP_SKILLS_BY_SUITE.get(target.suite, MAX_REALISTIC_GAP_SKILLS)
     return SkillGap(
         essential_missing=tuple(essential),
         optional_missing=tuple(optional),
-        gap_too_large=len(essential) > MAX_REALISTIC_GAP_SKILLS,
+        gap_too_large=len(essential) > threshold,
     )

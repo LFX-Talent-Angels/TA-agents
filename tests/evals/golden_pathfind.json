@@ -1,0 +1,135 @@
+{
+  "note": "Expected values captured from a live run against ESCO v1.2.1 and O*NET 31.0 (2026-10-11), via skills/pathfind/dispatch.py's own locate+connect+compute_gap+find_routes calls (not pathfind_one's merged AgentResult, to keep essential/optional/route counts separable). gap_too_large uses the per-suite threshold in skills/pathfind/gap.py (ESCO 15, O*NET 60), measured from this same set. O*NET's essential-missing counts run far higher than ESCO's because its skill edges include named software tools ESCO does not model as skills; see gap.py's module comment.",
+  "cases": [
+    {
+      "suite": "esco",
+      "start": "web developer",
+      "target": "software developer",
+      "start_id": "esco:occupation:c40a2919-48a9-40ea-b506-1f34f693496d",
+      "target_id": "esco:occupation:f2b15a0e-e65a-438a-affb-29b9d50b77d1",
+      "expected_essential_missing": 11,
+      "expected_optional_missing": 19,
+      "expected_gap_too_large": false,
+      "expected_has_route": true,
+      "expected_route_warnings": []
+    },
+    {
+      "suite": "esco",
+      "start": "data analyst",
+      "target": "data scientist",
+      "start_id": "esco:occupation:d3edb8f8-3a06-47a0-8fb9-9b212c006aa2",
+      "target_id": "esco:occupation:258e46f9-0075-4a2e-adae-1ff0477e0f30",
+      "expected_essential_missing": 36,
+      "expected_optional_missing": 10,
+      "expected_gap_too_large": true,
+      "expected_has_route": true,
+      "expected_route_warnings": []
+    },
+    {
+      "suite": "esco",
+      "start": "civil engineer",
+      "target": "construction engineer",
+      "start_id": "esco:occupation:d7d986e1-7333-431b-9719-0c5c6939e360",
+      "target_id": "esco:occupation:2a914d26-42aa-46b5-acf3-097d51ba4617",
+      "expected_essential_missing": 10,
+      "expected_optional_missing": 22,
+      "expected_gap_too_large": false,
+      "expected_has_route": true,
+      "expected_route_warnings": []
+    },
+    {
+      "suite": "esco",
+      "start": "ICT security administrator",
+      "target": "software analyst",
+      "start_id": "esco:occupation:0464b062-cea6-4164-b10d-956c61956ae7",
+      "target_id": "esco:occupation:04ba4d6c-957d-417f-bf63-5b9e015a9f86",
+      "expected_essential_missing": 19,
+      "expected_optional_missing": 80,
+      "expected_gap_too_large": true,
+      "expected_has_route": true,
+      "expected_route_warnings": []
+    },
+    {
+      "suite": "esco",
+      "start": "chef",
+      "target": "data analyst",
+      "start_id": "esco:occupation:1009be17-7efd-45f1-a033-566bf179c588",
+      "target_id": "esco:occupation:d3edb8f8-3a06-47a0-8fb9-9b212c006aa2",
+      "expected_essential_missing": 36,
+      "expected_optional_missing": 31,
+      "expected_gap_too_large": true,
+      "expected_has_route": true,
+      "expected_route_warnings": []
+    },
+    {
+      "suite": "esco",
+      "start": "firefighter",
+      "target": "software developer",
+      "start_id": "esco:occupation:88721b6c-d2ce-41c6-8878-73c0d3aacf39",
+      "target_id": "esco:occupation:f2b15a0e-e65a-438a-affb-29b9d50b77d1",
+      "expected_essential_missing": 24,
+      "expected_optional_missing": 84,
+      "expected_gap_too_large": true,
+      "expected_has_route": false,
+      "expected_route_warnings": [
+        "no_path"
+      ]
+    },
+    {
+      "suite": "onet",
+      "start": "Computer Programmers",
+      "target": "Software Developers",
+      "start_id": "onet:occupation:15-1251.00",
+      "target_id": "onet:occupation:15-1252.00",
+      "expected_essential_missing": 194,
+      "expected_optional_missing": 0,
+      "expected_gap_too_large": true,
+      "expected_has_route": false,
+      "expected_route_warnings": [
+        "no_path"
+      ]
+    },
+    {
+      "suite": "onet",
+      "start": "Registered Nurses",
+      "target": "Software Developers",
+      "start_id": "onet:occupation:29-1141.00",
+      "target_id": "onet:occupation:15-1252.00",
+      "expected_essential_missing": 412,
+      "expected_optional_missing": 0,
+      "expected_gap_too_large": true,
+      "expected_has_route": false,
+      "expected_route_warnings": [
+        "no_path"
+      ]
+    },
+    {
+      "suite": "onet",
+      "start": "Software Quality Assurance Analysts and Testers",
+      "target": "Software Developers",
+      "start_id": "onet:occupation:15-1253.00",
+      "target_id": "onet:occupation:15-1252.00",
+      "expected_essential_missing": 51,
+      "expected_optional_missing": 0,
+      "expected_gap_too_large": false,
+      "expected_has_route": false,
+      "expected_route_warnings": [
+        "no_path"
+      ]
+    },
+    {
+      "suite": "onet",
+      "start": "Registered Nurses",
+      "target": "Computer Programmers",
+      "start_id": "onet:occupation:29-1141.00",
+      "target_id": "onet:occupation:15-1251.00",
+      "expected_essential_missing": 279,
+      "expected_optional_missing": 0,
+      "expected_gap_too_large": true,
+      "expected_has_route": false,
+      "expected_route_warnings": [
+        "no_path"
+      ]
+    }
+  ]
+}

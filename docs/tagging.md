@@ -181,15 +181,17 @@ uv run ta-agent tag data/local/sprint7/pilot-run --fresh
 | `--depth leaves\|headings\|all` | Which rows count as taggable (overrides the profile). |
 | `--profile NAME\|PATH` | Built-in profile name (e.g. `generic`) or a path to a `.yaml` profile file (see "Profiles"). |
 | `--workers N` | Concurrent `choose` model calls. |
-| `--refresh` | Re-run `review`/`adjacent`/`gap` rows; reuse `accepted` and every human decision. |
-| `--fresh` | Ignore the ledger completely (still never overwrites a human decision). |
+| `--refresh` | Re-run `review`/`adjacent`/`gap` rows; reuse `accepted`, every human decision, and every row the reviewer already retried. |
+| `--fresh` | Ignore the ledger (still never overwrites a human decision or redoes a reviewer's retry). |
 
 ## The review loop
 
 1. Open `out/<doc>-tagged.xlsx`, sheet **Review**. Each row needing a look has
    a **Decision ▼** dropdown and a **Hint** cell.
 2. Pick one:
-   - **Approve** — the suggested tag is correct.
+   - **Approve** — the suggested tag is correct. On a `gap` row it confirms
+     the gap (same as Mark as gap); on an `error`/`unavailable` row there is
+     nothing to approve, so it is refused with a warning.
    - **Reject** — it's wrong; the next run retries with more context (same
      as "No" on the Gaps sheet).
    - **Use alternative 2/3/4** — one of the listed alternatives is the right
@@ -201,11 +203,18 @@ uv run ta-agent tag data/local/sprint7/pilot-run --fresh
      standard's own context (parent heading, then grandparent + sibling lines
      on a second retry). Up to 2 retries per row; a 3rd becomes a confirmed
      gap automatically. The pilot's own second look doesn't count as one.
-   - **Use my tag** — type the taxonomy's own label or id in Hint; accepted
-     only if it matches **exactly** one entry in that suite.
+     A retry is only done once it has produced an answer: if the run is
+     stopped, the model call fails, or the row isn't part of this run
+     (`--rows`, `--limit`, `--suites`), the next run does it, hint included.
+   - **Use my tag** — type the taxonomy's own label or id (e.g.
+     `esco:skill:…`, `onet:task:3967`) in Hint; accepted only if it matches
+     **exactly** one entry in that suite.
 3. On the **Gaps** sheet, one row per confirmed-or-likely gap: answer
-   **Yes** ("really is a gap") or **No** ("an existing skill fits" — same
-   effect as Retry).
+   **Yes** ("really is a gap"; `Sí`/`si`/`y` work too) or **No** ("an existing
+   skill fits" — same effect as Retry). Yes on an `adjacent` row keeps its
+   partial tags and confirms only the missing part. A different decision for
+   the same row on the Review sheet is a conflict: neither is applied, and the
+   run says so.
 4. Save the file and run the exact same `ta-agent tag` command again. Only
    the rows you decided on are touched; everything else is reused untouched.
    When decisions were applied, the previous workbook is copied to
@@ -214,6 +223,9 @@ uv run ta-agent tag data/local/sprint7/pilot-run --fresh
    and when.
 5. Decisions only ever apply once: re-saving without changing anything is a
    0-model-call, sub-second no-op.
+6. Anything that could not be applied — a misspelt decision, a Hint with no
+   Decision, an alternative number that doesn't exist, a tag not found — is
+   reported as a warning and stays in its cell in the new workbook to fix.
 
 ### What each verdict means
 
@@ -240,8 +252,8 @@ decision works the same.
 ### Known limitations
 
 - If the model call itself fails during a retry, that row shows `error`
-  (sorted to the top of the Review sheet) and the retry is not repeated on
-  its own: set the decision again and re-run.
+  (sorted to the top of the Review sheet) until the next run repeats the
+  retry with the same hint.
 - Most rows of an emerging-field standard come back `adjacent`: the
   taxonomies (ESCO v1.2.1, O*NET 31.0) have no prompt-engineering entries.
   No precision figure exists until an expert has reviewed the tags.

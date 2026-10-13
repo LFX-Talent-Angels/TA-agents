@@ -75,6 +75,7 @@ _SORT_TIER = {
     Verdict.ADJACENT: 0,
     Verdict.GAP: 0,
     Verdict.ERROR: 0,
+    Verdict.UNAVAILABLE: 0,
     Verdict.ACCEPTED: 1,
     Verdict.HUMAN_ACCEPTED: 2,
     Verdict.HUMAN_GAP: 2,
@@ -102,7 +103,15 @@ _REASON_SENTENCES = {
     "model_partial": "No exact match; the model found skills that partially cover this line.",
     "needs_widening": "No match nearby; retried with a wider context, still inconclusive.",
     "model_none": "No taxonomy entry covers this line, even after widening the search.",
+    "human_approved": "Approved by the reviewer.",
+    "human_alternative": "The reviewer chose this alternative.",
+    "human_tag": "The reviewer chose this tag.",
+    "human_gap": "The reviewer confirmed that no taxonomy entry fits.",
+    "retries_exhausted": "Still no fit after two reviewer retries; recorded as a confirmed gap.",
 }
+
+#: The model's reasoning was about tags the reviewer has since replaced.
+_DROP_MODEL_REASON = frozenset({"human_alternative", "human_tag"})
 
 #: Rows re-run with a model (PR3) still land in one of these two buckets.
 _NEEDS_REVIEW = {Verdict.REVIEW, Verdict.ADJACENT, Verdict.GAP, Verdict.ERROR}
@@ -237,10 +246,17 @@ def _format_previous_decision(payload: dict[str, object] | None) -> str:
     """ "Retry with hint 'x' (applied 2026-10-12)" from one `reviews.jsonl` line."""
     if payload is None:
         return ""
-    template = _PREVIOUS_DECISION_LABELS.get(str(payload.get("action", "")))
-    if template is None:
-        return ""
-    text = template.format(hint=str(payload.get("hint") or ""), alt_index=payload.get("alt_index"))
+    action = str(payload.get("action", ""))
+    hint = str(payload.get("hint") or "")
+    if payload.get("result") == "retries_exhausted":
+        text = "Retries used up; marked as gap"
+    elif action in ("retry", "reject") and payload.get("result") == "retry" and not hint:
+        text = "Rejected; retried" if action == "reject" else "Retried (no hint)"
+    else:
+        template = _PREVIOUS_DECISION_LABELS.get(action)
+        if template is None:
+            return ""
+        text = template.format(hint=hint, alt_index=payload.get("alt_index"))
     date = str(payload.get("ts") or "")[:10]
     return f"{text} (applied {date})" if date else text
 
@@ -275,7 +291,7 @@ def _review_rows(
             )
             icon = _VERDICT_ICON.get(record.verdict, str(record.verdict.value))
             why = _REASON_SENTENCES.get(record.reason_code, record.reason_code)
-            if record.model_reason:
+            if record.model_reason and record.reason_code not in _DROP_MODEL_REASON:
                 why = f"{why}\nModel: {record.model_reason}"
             alt_ids = json.dumps([alt.id for alt in record.alternatives])
             previous = _format_previous_decision(previous_decisions.get((unit.unit_key, suite)))

@@ -386,3 +386,158 @@ def test_an_unrecognised_decision_stays_in_its_cell(project: Path) -> None:
     assert ws.cell(row=typo_row, column=decision_col).value == "maybe later"  # type: ignore[attr-defined]
     assert ws.cell(row=typo_row, column=hint_col).value == "ask Alejandro"  # type: ignore[attr-defined]
     assert not ws.cell(row=approved_row, column=decision_col).value  # type: ignore[attr-defined]
+
+
+# --- a retry is never silently lost ---------------------------------------------------
+
+
+class _InterruptOnHint(ReviewScriptedClient):
+    """The run is stopped (Ctrl-C) as soon as the retried row reaches the model."""
+
+    def complete(
+        self, messages: list[Message], *, tools: list[dict[str, object]] | None = None
+    ) -> LLMResult:
+        if "this is about software testing" in messages[1].content:
+            raise KeyboardInterrupt
+        return super().complete(messages, tools=tools)
+
+
+class _BrokenOnHint(ReviewScriptedClient):
+    """The model returns unusable text for the retried row (verdict `error`)."""
+
+    def complete(
+        self, messages: list[Message], *, tools: list[dict[str, object]] | None = None
+    ) -> LLMResult:
+        if "this is about software testing" in messages[1].content:
+            self.calls.append(messages)
+            return LLMResult(
+                text="not json", provider=self.provider, model=self.model,
+                usage=LLMUsage(input_tokens=5, output_tokens=5),
+            )  # fmt: skip
+        return super().complete(messages, tools=tools)
+
+
+def _first_run_with_retry_on_13(project: Path) -> Path:
+    first = run(
+        project,
+        registry=_registry()[0],
+        opts=RunOptions(no_llm=False, fresh=True),
+        llm_client=ReviewScriptedClient(),
+    )
+    out_path = Path(first.outputs[0])
+    workbook, ws = _open_review(out_path)
+    _set_decision(ws, "13", "Retry with hint", "this is about software testing")
+    workbook.save(out_path)
+    return out_path
+
+
+def _hint_searched(suite: KeywordSuite) -> bool:
+    return any(text == "this is about software testing" for text, _kind in suite.calls)
+
+
+def test_a_retry_interrupted_mid_run_runs_on_the_next_run(project: Path) -> None:
+    _first_run_with_retry_on_13(project)
+    with pytest.raises(KeyboardInterrupt):
+        run(
+            project,
+            registry=_registry()[0],
+            opts=RunOptions(no_llm=False),
+            llm_client=_InterruptOnHint(),
+        )
+
+    registry, suite = _registry()
+    client = ReviewScriptedClient()
+    again = run(project, registry=registry, opts=RunOptions(no_llm=False), llm_client=client)
+
+    assert again.retried == 1
+    assert _hint_searched(suite)
+    assert any("this is about software testing" in c[1].content for c in client.calls)
+
+
+def test_a_retry_that_errors_is_retried_with_its_hint(project: Path) -> None:
+    _first_run_with_retry_on_13(project)
+    broken = run(
+        project, registry=_registry()[0], opts=RunOptions(no_llm=False), llm_client=_BrokenOnHint()
+    )
+    assert broken.counts["esco"].get("error") == 1
+
+    registry, suite = _registry()
+    again = run(
+        project, registry=registry, opts=RunOptions(no_llm=False), llm_client=ReviewScriptedClient()
+    )
+
+    assert again.retried == 1
+    assert _hint_searched(suite)
+    assert again.counts["esco"].get("error", 0) == 0
+
+
+def test_a_retry_outside_the_selected_rows_waits_for_them(project: Path) -> None:
+    _first_run_with_retry_on_13(project)
+    partial = run(
+        project,
+        registry=_registry()[0],
+        opts=RunOptions(no_llm=False, rows={"11"}),
+        llm_client=ReviewScriptedClient(),
+    )
+    assert partial.retried == 0
+    assert any("outside this run's selection" in w for w in partial.warnings)
+
+    registry, suite = _registry()
+    full = run(
+        project, registry=registry, opts=RunOptions(no_llm=False), llm_client=ReviewScriptedClient()
+    )
+    assert full.retried == 1
+    assert _hint_searched(suite)
+
+
+class _BetaStaysAGap(ReviewScriptedClient):
+    """Row 13 finds nothing even after the retry, so `--refresh` would pick it up."""
+
+    @staticmethod
+    def _choose_reply(user: str) -> str:
+        if "betaretry" in user.casefold():
+            return json.dumps({**_NONE_FIT, "missing_skill": "a missing skill"})
+        return ReviewScriptedClient._choose_reply(user)
+
+
+def test_refresh_keeps_a_row_the_reviewer_retried(project: Path) -> None:
+    _first_run_with_retry_on_13(project)
+    run(
+        project,
+        registry=_registry()[0],
+        opts=RunOptions(no_llm=False),
+        llm_client=_BetaStaysAGap(),
+    )
+    before = [r for r in _ledger_lines(project, "ledger.jsonl") if r["row_id"] == "13"][-1]
+    assert before["verdict"] == "gap"
+
+    run(
+        project,
+        registry=_registry()[0],
+        opts=RunOptions(no_llm=False, refresh=True),
+        llm_client=_BetaStaysAGap(),
+    )
+    after = [r for r in _ledger_lines(project, "ledger.jsonl") if r["row_id"] == "13"][-1]
+
+    assert after["fingerprint"] == before["fingerprint"]
+    assert "this is about software testing" in str(after["hint"])
+
+
+def test_a_changed_profile_is_not_answered_from_the_old_answers(project: Path) -> None:
+    """Reuse must notice that the cleaned text a unit is searched with has changed."""
+    run(
+        project,
+        registry=_registry()[0],
+        opts=RunOptions(no_llm=False, fresh=True),
+        llm_client=ReviewScriptedClient(),
+    )
+    (project / "tag.yaml").write_text("groups: false\ncleaners:\n  - ' procedure$'\n")
+
+    again = run(
+        project,
+        registry=_registry()[0],
+        opts=RunOptions(no_llm=False),
+        llm_client=ReviewScriptedClient(),
+    )
+
+    assert again.searched > 0

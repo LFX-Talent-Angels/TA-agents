@@ -376,7 +376,7 @@ def test_automatic_second_look_does_not_use_up_a_reviewer_retry(tmp_path: Path) 
         run_id="r1",
     )
 
-    assert outcome.retries == {("u1", "esco"): RetryRequest(hint="second try", attempt=3)}
+    assert outcome.retries == {("u1", "esco"): RetryRequest(hint="second try", attempt=3, level=2)}
     assert outcome.human_records == []
 
 
@@ -527,3 +527,284 @@ def test_approving_a_policy_accepted_answer_counts_toward_precision(tmp_path: Pa
     stats = review_stats(Ledger(tmp_path / ".ta-tag"), units, ["esco", "onet"])
     assert (stats.approved_total, stats.rejected_total) == (1, 1)  # adjacent approve excluded
     assert (stats.reviewed, stats.total) == (3, 4)  # per answer: 2 lines x 2 taxonomies
+
+
+# --- no silent wrong outcome ---------------------------------------------------
+
+
+def _gap_record(**overrides: object) -> TagRecord:
+    base = _record(verdict=Verdict.GAP, missing_skill="assign role to language model")
+    return base.model_copy(update={"tags": [], "reason_code": "model_none", **overrides})
+
+
+def test_approve_on_a_gap_confirms_the_gap(tmp_path: Path) -> None:
+    """ "Yes, this is right" on a gap row means the gap is right, not an empty approval."""
+    ledger = Ledger(tmp_path / ".ta-tag")
+    ledger.append(_gap_record())
+
+    outcome = apply_decisions(
+        [_decision(action=ReviewAction.APPROVE)], ledger, search_by_suite=_no_search, run_id="r1"
+    )
+
+    [record] = outcome.human_records
+    assert record.verdict == Verdict.HUMAN_GAP
+    assert record.missing_skill == "assign role to language model"
+
+
+def test_approve_on_an_error_row_is_refused_and_kept(tmp_path: Path) -> None:
+    ledger = Ledger(tmp_path / ".ta-tag")
+    ledger.append(_gap_record(verdict=Verdict.ERROR, missing_skill=None))
+
+    outcome = apply_decisions(
+        [_decision(action=ReviewAction.APPROVE)], ledger, search_by_suite=_no_search, run_id="r1"
+    )
+
+    assert outcome.human_records == []
+    assert outcome.applied == 0
+    assert outcome.unapplied == {("u1", "esco")}
+    assert any("nothing to approve" in w for w in outcome.warnings)
+
+
+def test_two_different_decisions_for_one_answer_apply_neither(tmp_path: Path) -> None:
+    ledger = Ledger(tmp_path / ".ta-tag")
+    ledger.append(_gap_record())
+    on_review = _decision(action=ReviewAction.RETRY, hint="software testing")
+    on_gaps = on_review.model_copy(
+        update={"hint": "reviewer says an existing skill fits", "from_gaps": True}
+    )
+
+    outcome = apply_decisions([on_review, on_gaps], ledger, search_by_suite=_no_search, run_id="r")
+
+    assert outcome.applied == 0
+    assert outcome.retries == {}
+    assert outcome.unapplied == {("u1", "esco")}
+    assert any("two different decisions" in w for w in outcome.warnings)
+    assert ledger.reviews() == []
+
+
+def test_the_same_decision_on_both_sheets_applies_once(tmp_path: Path) -> None:
+    ledger = Ledger(tmp_path / ".ta-tag")
+    ledger.append(_gap_record())
+    on_review = _decision(action=ReviewAction.MARK_GAP)
+    on_gaps = on_review.model_copy(update={"from_gaps": True})
+
+    outcome = apply_decisions([on_review, on_gaps], ledger, search_by_suite=_no_search, run_id="r")
+
+    assert outcome.applied == 1
+    assert outcome.warnings == []
+
+
+def test_gaps_sheet_yes_on_an_adjacent_row_keeps_its_partial_tags(tmp_path: Path) -> None:
+    ledger = Ledger(tmp_path / ".ta-tag")
+    ledger.append(_record(verdict=Verdict.ADJACENT, missing_skill="the missing part"))
+    yes = _decision(action=ReviewAction.MARK_GAP).model_copy(update={"from_gaps": True})
+
+    outcome = apply_decisions([yes], ledger, search_by_suite=_no_search, run_id="r1")
+
+    [record] = outcome.human_records
+    assert record.verdict == Verdict.HUMAN_GAP
+    assert [tag.id for tag in record.tags] == ["esco:skill:a"]
+
+
+def test_gaps_sheet_understands_spanish_and_short_answers(tmp_path: Path) -> None:
+    path = tmp_path / "out.xlsx"
+    workbook = openpyxl.Workbook()
+    workbook.active.title = "Review"
+    gaps = workbook.create_sheet("Gaps")
+    gaps.append(["Row ID", "Reviewer confirms gap? ▼", "key", "suite", "fp"])
+    for index, answer in enumerate(["Sí", "si", "S", "y", "N", " NO "]):
+        gaps.append([str(index), answer, f"u{index}", "esco", "fp"])
+    workbook.save(path)
+
+    decisions, warnings = read_decisions(path)
+
+    assert warnings == []
+    actions = [d.action for d in sorted(decisions, key=lambda d: d.unit_key)]
+    assert actions == [ReviewAction.MARK_GAP] * 4 + [ReviewAction.RETRY] * 2
+
+
+def test_a_hint_without_a_decision_warns_and_is_kept(tmp_path: Path) -> None:
+    from talent_angels.tagging.review import decision_cells, kept_cells
+
+    path = tmp_path / "out.xlsx"
+    _review_sheet(
+        path,
+        [
+            _row("3", "u1", "esco", "", hint="this is about testing"),
+            _row("4", "u2", "esco", "Approve"),
+            _row("5", "u3", "esco", "Use alternative 4"),
+            _row("6", "u4", "esco", "Aprove"),
+        ],
+    )
+
+    _decisions, warnings = read_decisions(path)
+    assert any("Hint without a Decision" in w for w in warnings)
+
+    kept = kept_cells(decision_cells(path), unapplied={("u3", "esco")})
+    assert kept == {
+        ("u1", "esco"): ("", "this is about testing"),
+        ("u3", "esco"): ("Use alternative 4", ""),
+        ("u4", "esco"): ("Aprove", ""),
+    }
+
+
+def test_use_my_tag_accepts_a_node_id(tmp_path: Path) -> None:
+    ledger = Ledger(tmp_path / ".ta-tag")
+    ledger.append(_record())
+    node = _FakeNode("esco:skill:987a", "maintain test equipment")
+
+    def search_by_suite(_suite: str) -> Callable[[str, str | None], object] | None:
+        return lambda text, kind: _FakeResult([])
+
+    def lookup_by_suite(_suite: str) -> Callable[[str], object | None] | None:
+        return lambda node_id: node if node_id == node.id else None
+
+    outcome = apply_decisions(
+        [_decision(action=ReviewAction.USE_MY_TAG, hint="esco:skill:987a")],
+        ledger,
+        search_by_suite=search_by_suite,
+        lookup_by_suite=lookup_by_suite,
+        run_id="r1",
+    )
+
+    [record] = outcome.human_records
+    assert record.tags[0].id == "esco:skill:987a"
+    assert record.tags[0].label == "maintain test equipment"
+
+
+def test_retries_used_up_warns_and_says_so(tmp_path: Path) -> None:
+    ledger = Ledger(tmp_path / ".ta-tag")
+    ledger.append(_record(verdict=Verdict.ADJACENT))
+    _log_reviewer_retry(ledger, 1)
+    _log_reviewer_retry(ledger, 2)
+
+    outcome = apply_decisions(
+        [_decision(action=ReviewAction.RETRY, hint="third")],
+        ledger,
+        search_by_suite=_no_search,
+        run_id="r1",
+    )
+
+    assert any("already retried 2 times" in w for w in outcome.warnings)
+    assert ledger.reviews()[-1]["result"] == "retries_exhausted"
+
+
+# --- precision -------------------------------------------------------------------
+
+
+def _units(*keys: str) -> list[object]:
+    from talent_angels.tagging.models import TagUnit
+
+    return [
+        TagUnit(
+            unit_key=key,
+            doc_key="doc",
+            row_id=key,
+            kind="performance",
+            role="leaf",
+            text="t",
+            clean_text="t",
+            context_path=[],
+            group_key="0",
+        )
+        for key in keys
+    ]
+
+
+def test_precision_counts_corrections_as_wrong(tmp_path: Path) -> None:
+    from talent_angels.tagging.review import review_stats
+
+    ledger = Ledger(tmp_path / ".ta-tag")
+    alt = _candidate("esco:skill:b")
+    ledger.append(_record("u1", fingerprint="fp1"))
+    ledger.append(_record("u2", fingerprint="fp2", alternatives=[alt]))
+    ledger.append(_record("u3", fingerprint="fp3"))
+    apply_decisions(
+        [
+            _decision(unit_key="u1", base_fp="fp1", action=ReviewAction.APPROVE),
+            _decision(
+                unit_key="u2",
+                base_fp="fp2",
+                action=ReviewAction.USE_ALT,
+                alt_index=2,
+                alt_ids=["esco:skill:b"],
+            ),
+            _decision(unit_key="u3", base_fp="fp3", action=ReviewAction.MARK_GAP),
+        ],
+        ledger,
+        search_by_suite=_no_search,
+        run_id="r1",
+    )
+
+    stats = review_stats(ledger, _units("u1", "u2", "u3"), ["esco"])  # type: ignore[arg-type]
+    assert (stats.approved_total, stats.rejected_total) == (1, 2)
+
+
+def test_precision_counts_only_the_latest_decision_per_answer(tmp_path: Path) -> None:
+    from talent_angels.tagging.review import review_stats
+
+    ledger = Ledger(tmp_path / ".ta-tag")
+    ledger.append(_record("u1", fingerprint="fp1"))
+    apply_decisions(
+        [_decision(base_fp="fp1", action=ReviewAction.APPROVE)],
+        ledger,
+        search_by_suite=_no_search,
+        run_id="r1",
+    )
+    apply_decisions(  # the reviewer changes their mind on the same answer
+        [_decision(base_fp="fp1", action=ReviewAction.REJECT)],
+        ledger,
+        search_by_suite=_no_search,
+        run_id="r2",
+    )
+
+    stats = review_stats(ledger, _units("u1"), ["esco"])  # type: ignore[arg-type]
+    assert (stats.approved_total, stats.rejected_total) == (0, 1)
+
+
+# --- pending retries ---------------------------------------------------------------
+
+
+def test_a_retry_stays_pending_until_it_has_an_answer(tmp_path: Path) -> None:
+    from talent_angels.tagging.review import pending_retries
+
+    ledger = Ledger(tmp_path / ".ta-tag")
+    ledger.append(_record(verdict=Verdict.ADJACENT))
+    apply_decisions(
+        [_decision(action=ReviewAction.RETRY, hint="software testing")],
+        ledger,
+        search_by_suite=_no_search,
+        run_id="r1",
+    )
+
+    # The run stopped before the retry ran: still pending, hint intact.
+    expected = RetryRequest(hint="software testing", attempt=1, level=1)
+    assert pending_retries(Ledger(tmp_path / ".ta-tag")) == {("u1", "esco"): expected}
+
+    # The retry ran but the model call failed: still pending.
+    failed = _record(verdict=Verdict.ERROR, fingerprint="fp-err", attempt=1)
+    ledger.append(failed.model_copy(update={"ts": "2999-01-01T00:00:00+00:00"}))
+    assert pending_retries(Ledger(tmp_path / ".ta-tag")) == {("u1", "esco"): expected}
+
+    # It produced an answer: done.
+    answered = _record(verdict=Verdict.ADJACENT, fingerprint="fp-new", attempt=1)
+    ledger.append(answered.model_copy(update={"ts": "2999-01-02T00:00:00+00:00"}))
+    assert pending_retries(Ledger(tmp_path / ".ta-tag")) == {}
+
+
+def test_a_later_decision_cancels_a_pending_retry(tmp_path: Path) -> None:
+    from talent_angels.tagging.review import pending_retries
+
+    ledger = Ledger(tmp_path / ".ta-tag")
+    ledger.append(_record(verdict=Verdict.ADJACENT))
+    apply_decisions(
+        [_decision(action=ReviewAction.RETRY, hint="x")],
+        ledger,
+        search_by_suite=_no_search,
+        run_id="r1",
+    )
+    apply_decisions(
+        [_decision(action=ReviewAction.APPROVE)], ledger, search_by_suite=_no_search, run_id="r2"
+    )
+
+    assert pending_retries(Ledger(tmp_path / ".ta-tag")) == {}

@@ -62,9 +62,11 @@ from talent_angels.tagging.review import (
     RetryRequest,
     ReviewOutcome,
     apply_decisions,
+    decision_cells,
+    kept_cells,
+    pending_retries,
     read_decisions,
     review_stats,
-    unrecognised_decisions,
 )
 from talent_angels.tagging.rewrite import Rewrite, rewrite_cache_key, rewrite_group
 from talent_angels.tagging.search import Router, queries_for, search_unit
@@ -183,6 +185,29 @@ def _search_by_suite(
             return _measured.search_nodes(text, kind=kind)
 
         return _search
+
+    return _get
+
+
+def _lookup_by_suite(
+    suites: dict[str, MeasuredSuite | None],
+) -> Callable[[str], Callable[[str], object | None] | None]:
+    """`review.apply_decisions`'s `lookup_by_suite`: one node by its id, or `None`."""
+
+    def _get(suite_name: str) -> Callable[[str], object | None] | None:
+        measured = suites.get(suite_name)
+        if measured is None:
+            return None
+
+        def _lookup(node_id: str, _measured: MeasuredSuite = measured) -> object | None:
+            try:
+                result = _measured.get_neighbors(node_id)
+            except Exception:  # noqa: BLE001 - an unknown id is "not found", not a crash
+                return None
+            nodes = getattr(result, "nodes", None) or []
+            return next((node for node in nodes if getattr(node, "id", None) == node_id), None)
+
+        return _lookup
 
     return _get
 
@@ -329,6 +354,12 @@ def run(
     choose_sys = choose_system(profile.document_type)
 
     ledger = Ledger(project / ".ta-tag")
+    corrupt = ledger.corrupt_lines + ledger.corrupt_rewrite_lines + ledger.corrupt_review_lines
+    if corrupt:
+        run_warnings.append(
+            f".ta-tag: {corrupt} unreadable line(s) skipped (an earlier run was probably cut off "
+            "while writing)"
+        )
     documents: list[str] = []
     outputs: list[str] = []
     overall_counts: dict[str, dict[str, int]] = {}
@@ -369,12 +400,17 @@ def run(
         # Read the expert's Decision/Hint off the *previous* workbook before any
         # search or model spend happens for this doc (PILOT-PLAN.md "Review loop").
         review_decisions, decision_warnings = read_decisions(out_path)
-        kept_decisions = unrecognised_decisions(out_path)
+        review_cells = decision_cells(out_path)
         run_warnings.extend(decision_warnings)
 
         say(f"tagging {doc.key}…")
         units, skipped = select_units(doc, profile, rows=opts.rows, limit=opts.limit)
         total_units += len(units)
+        doc_unit_keys = (
+            {unit.unit_key for unit in select_units(doc, profile)[0]}
+            if opts.rows is not None or opts.limit is not None
+            else {unit.unit_key for unit in units}
+        )
 
         results: dict[tuple[str, str], TagRecord] = {}
         reused = 0
@@ -398,10 +434,23 @@ def run(
                 review_decisions,
                 ledger,
                 search_by_suite=_search_by_suite(suites),
+                lookup_by_suite=_lookup_by_suite(suites),
                 run_id=run_id,
             )
             run_warnings.extend(review_outcome.warnings)
-            review_retries: dict[tuple[str, str], RetryRequest] = review_outcome.retries
+            kept_decisions = kept_cells(review_cells, review_outcome.unapplied)
+            # This run's retries plus any earlier one that never produced an
+            # answer (stopped run, model error, row outside --rows/--limit).
+            review_retries: dict[tuple[str, str], RetryRequest] = pending_retries(ledger)
+            selected = {(unit.unit_key, name) for unit in units for name in suite_names}
+            waiting = sorted(
+                key for key in review_retries if key not in selected and key[0] in doc_unit_keys
+            )
+            if waiting:
+                run_warnings.append(
+                    f"{len(waiting)} retried row(s) are outside this run's selection; "
+                    "they run when those rows are included"
+                )
 
             rewrites: dict[str, Rewrite] = {}
             if llm_on and llm_client is not None:
@@ -450,12 +499,27 @@ def run(
                         # not by `--refresh`, not by `--fresh`.
                         reusable = True
                     else:
-                        existing = None if opts.fresh else latest
+                        # Neither does a row the reviewer already retried: a
+                        # blanket --refresh/--fresh would redo it without the hint.
+                        reviewed = ledger.latest_review_for(*key_pair) is not None
+                        existing = None if (opts.fresh and not reviewed) else latest
                         reusable = (
                             existing is not None
                             and existing.versions == pinned_versions
+                            and existing.fingerprint
+                            == fingerprint(
+                                unit,
+                                suite_name,
+                                pinned_versions,
+                                hint=existing.hint,
+                                attempt=existing.attempt,
+                            )
                             and existing.verdict not in _NOT_CACHED
-                            and not (opts.refresh and existing.verdict in _RETRY_ON_REFRESH)
+                            and not (
+                                opts.refresh
+                                and not reviewed
+                                and existing.verdict in _RETRY_ON_REFRESH
+                            )
                         )
                     if reusable and latest is not None:
                         results[key_pair] = latest
@@ -471,12 +535,14 @@ def run(
                         attempt = retry_req.attempt
                         is_retry = True
                         retried += 1
-                        extra = retry_context.extra_queries_for(unit, rw, profile, attempt)
+                        extra = retry_context.extra_queries_for(unit, rw, profile, retry_req.level)
                         hint_q = retry_context.hint_query(retry_req.hint)
                         priority = [hint_q] if hint_q else []
                         queries = [*base_queries, *extra, *priority]
                         siblings = retry_context.siblings_for(unit, units)
-                        hint = retry_context.choose_hint_for(retry_req.hint, attempt, siblings)
+                        hint = retry_context.choose_hint_for(
+                            retry_req.hint, retry_req.level, siblings
+                        )
 
                     measured = suites.get(suite_name)
                     if measured is None:

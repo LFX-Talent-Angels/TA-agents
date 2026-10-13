@@ -18,6 +18,8 @@ from __future__ import annotations
 
 import hashlib
 import json
+import re
+import unicodedata
 from collections.abc import Callable, Sequence
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
@@ -38,6 +40,17 @@ _HEADER_SCAN_ROWS = 10
 _MAX_RETRY_ATTEMPTS = 2
 _EXACT_METHODS = frozenset({"exact_code", "exact_pref", "exact_alt", "casefold_pref"})
 _REVIEWER_GAP_HINT = "reviewer says an existing skill fits"
+#: Gaps-sheet answers, after casefolding and stripping accents ("Sí" -> "si").
+_GAP_YES = frozenset({"yes", "y", "si", "s"})
+_GAP_NO = frozenset({"no", "n"})
+#: A suite-scoped node id typed into "Use my tag" ("esco:skill:<uuid>", "onet:task:3967").
+_NODE_ID_RE = re.compile(r"^[a-z][a-z0-9_]*:[A-Za-z_]+:\S+$")
+#: Verdicts with no tag to approve; Approve on these is refused (gap ones are confirmed).
+_NOTHING_TO_APPROVE = frozenset(
+    {Verdict.ERROR, Verdict.UNAVAILABLE, Verdict.NOT_APPLICABLE, Verdict.SKIPPED}
+)
+#: A reviewer action on a policy-`accepted` answer that says the answer was wrong.
+_CORRECTIONS = frozenset({"reject", "retry", "use_alt", "use_my_tag", "mark_gap"})
 
 
 class ReviewAction(StrEnum):
@@ -95,14 +108,22 @@ class ReviewDecision(BaseModel):
     #: not part of `review_key` or the applied effect.
     row_id: str = ""
     alt_ids: list[str] = []
+    #: Came from the Gaps sheet's Yes/No column rather than the Review sheet.
+    from_gaps: bool = False
 
 
 @dataclass
 class RetryRequest:
-    """One (unit, suite) the runner must re-search and re-choose this run."""
+    """One (unit, suite) the runner must re-search and re-choose this run.
+
+    `attempt` keeps the ledger fingerprint unique (the pilot's own second look
+    also counts there); `level` is the reviewer's own retry number (1 or 2),
+    which picks how much of the standard's context the retry adds.
+    """
 
     hint: str
     attempt: int
+    level: int = 1
 
 
 @dataclass
@@ -113,6 +134,8 @@ class ReviewOutcome:
     retries: dict[tuple[str, str], RetryRequest] = field(default_factory=dict)
     warnings: list[str] = field(default_factory=list)
     applied: int = 0
+    #: Decisions read but not applied (warned about); their cells are kept.
+    unapplied: set[tuple[str, str]] = field(default_factory=set)
 
 
 def review_key(decision: ReviewDecision) -> str:
@@ -196,13 +219,18 @@ def _read_review_sheet(ws: Any, source_sha: str, warnings: list[str]) -> list[Re
     decisions: list[ReviewDecision] = []
     for row_idx in range(header_row + 1, ws.max_row + 1):
         decision_text = _cell_text(ws, row_idx, col_decision)
-        if not decision_text:
-            continue
         unit_key = _cell_text(ws, row_idx, col_key)
         suite = _cell_text(ws, row_idx, col_suite)
         if not unit_key or not suite:
             continue
         row_id = _cell_text(ws, row_idx, col_row_id)
+        if not decision_text:
+            if _cell_text(ws, row_idx, col_hint):
+                warnings.append(
+                    f"row {row_id or unit_key}/{suite}: a Hint without a Decision does nothing; "
+                    "choose Retry with hint or Use my tag"
+                )
+            continue
         parsed = _parse_action(decision_text)
         if parsed is None:
             warnings.append(f"row {row_id or unit_key}: unknown decision {decision_text!r}")
@@ -251,8 +279,8 @@ def _read_gaps_sheet(ws: Any, source_sha: str, warnings: list[str]) -> list[Revi
             continue
         row_id = _cell_text(ws, row_idx, col_row_id)
         base_fp = _cell_text(ws, row_idx, col_fp)
-        normalized = answer.strip().casefold()
-        if normalized == "yes":
+        normalized = _strip_accents(answer.strip().casefold())
+        if normalized in _GAP_YES:
             decisions.append(
                 ReviewDecision(
                     unit_key=unit_key,
@@ -261,9 +289,10 @@ def _read_gaps_sheet(ws: Any, source_sha: str, warnings: list[str]) -> list[Revi
                     base_fp=base_fp,
                     source_sha=source_sha,
                     row_id=row_id,
+                    from_gaps=True,
                 )
             )
-        elif normalized == "no":
+        elif normalized in _GAP_NO:
             decisions.append(
                 ReviewDecision(
                     unit_key=unit_key,
@@ -273,6 +302,7 @@ def _read_gaps_sheet(ws: Any, source_sha: str, warnings: list[str]) -> list[Revi
                     base_fp=base_fp,
                     source_sha=source_sha,
                     row_id=row_id,
+                    from_gaps=True,
                 )
             )
         else:
@@ -280,12 +310,14 @@ def _read_gaps_sheet(ws: Any, source_sha: str, warnings: list[str]) -> list[Revi
     return decisions
 
 
-def unrecognised_decisions(path: Path) -> dict[tuple[str, str], tuple[str, str]]:
-    """(unit_key, suite) -> (decision text, hint) for Review rows whose word wasn't understood.
+def _strip_accents(text: str) -> str:
+    return "".join(
+        ch for ch in unicodedata.normalize("NFKD", text) if not unicodedata.combining(ch)
+    )
 
-    The rewritten workbook puts these back in their cells, so a typo stays
-    visible to fix instead of silently disappearing with the consumed ones.
-    """
+
+def decision_cells(path: Path) -> dict[tuple[str, str], tuple[str, str]]:
+    """(unit_key, suite) -> (decision text, hint) for every Review row with either filled in."""
     if not path.is_file():
         return {}
     workbook = load_workbook(path, data_only=True)
@@ -298,13 +330,29 @@ def unrecognised_decisions(path: Path) -> dict[tuple[str, str], tuple[str, str]]
     header_row, columns = header
     col_key, col_suite = _col(columns, "key"), _col(columns, "suite")
     col_decision, col_hint = _col(columns, "decision"), _col(columns, "hint")
-    kept: dict[tuple[str, str], tuple[str, str]] = {}
+    cells: dict[tuple[str, str], tuple[str, str]] = {}
     for row_idx in range(header_row + 1, ws.max_row + 1):
-        text = _cell_text(ws, row_idx, col_decision)
+        text, hint = _cell_text(ws, row_idx, col_decision), _cell_text(ws, row_idx, col_hint)
         unit_key, suite = _cell_text(ws, row_idx, col_key), _cell_text(ws, row_idx, col_suite)
-        if text and unit_key and suite and _parse_action(text) is None:
-            kept[(unit_key, suite)] = (text, _cell_text(ws, row_idx, col_hint))
-    return kept
+        if (text or hint) and unit_key and suite:
+            cells[(unit_key, suite)] = (text, hint)
+    return cells
+
+
+def kept_cells(
+    cells: dict[tuple[str, str], tuple[str, str]], unapplied: set[tuple[str, str]]
+) -> dict[tuple[str, str], tuple[str, str]]:
+    """The Review cells to put back in the next workbook: whatever wasn't applied.
+
+    A typo, a hint with no decision, or a decision that couldn't be carried
+    out (warned about) stays visible to fix, instead of silently vanishing
+    along with the decisions that were consumed.
+    """
+    return {
+        key: (text, hint)
+        for key, (text, hint) in cells.items()
+        if not text or _parse_action(text) is None or key in unapplied
+    }
 
 
 def read_decisions(path: Path) -> tuple[list[ReviewDecision], list[str]]:
@@ -352,7 +400,19 @@ def _human_copy(
     return latest.model_copy(update=update)
 
 
-def _apply_approve(latest: TagRecord, *, run_id: str) -> TagRecord:
+def _apply_approve(
+    decision: ReviewDecision, latest: TagRecord, *, run_id: str, warnings: list[str]
+) -> TagRecord | None:
+    """Approve what the row shows: its tags, or — on a gap row — the gap itself."""
+    if not latest.tags:
+        if latest.verdict in (Verdict.GAP, Verdict.HUMAN_GAP):
+            return _apply_mark_gap(latest, run_id=run_id)
+        if latest.verdict in _NOTHING_TO_APPROVE:
+            warnings.append(
+                f"row {decision.row_id or decision.unit_key}/{decision.suite}: nothing to approve "
+                f"(the answer is '{latest.verdict.value}'); choose Retry with hint or Mark as gap"
+            )
+            return None
     return _human_copy(
         latest, run_id=run_id, verdict=Verdict.HUMAN_ACCEPTED, reason_code="human_approved"
     )
@@ -387,13 +447,17 @@ def _apply_use_alt(
     )
 
 
-def _apply_mark_gap(latest: TagRecord, *, run_id: str, reason_code: str = "human_gap") -> TagRecord:
+def _apply_mark_gap(
+    latest: TagRecord, *, run_id: str, reason_code: str = "human_gap", keep_tags: bool = False
+) -> TagRecord:
+    """A confirmed gap. `keep_tags`: a Gaps-sheet "Yes" on an adjacent row confirms only
+    the missing part, so its partial tags stay."""
     return _human_copy(
         latest,
         run_id=run_id,
         verdict=Verdict.HUMAN_GAP,
         reason_code=reason_code,
-        tags=[],
+        tags=None if keep_tags else [],
     )
 
 
@@ -414,12 +478,21 @@ def _reviewer_retries(ledger: Ledger, unit_key: str, suite: str) -> int:
 
 
 def _apply_retry_or_reject(
-    decision: ReviewDecision, latest: TagRecord, *, run_id: str, retries_so_far: int
+    decision: ReviewDecision,
+    latest: TagRecord,
+    *,
+    run_id: str,
+    retries_so_far: int,
+    warnings: list[str],
 ) -> TagRecord | RetryRequest:
     if retries_so_far >= _MAX_RETRY_ATTEMPTS:
+        warnings.append(
+            f"row {decision.row_id or decision.unit_key}/{decision.suite}: already retried "
+            f"{_MAX_RETRY_ATTEMPTS} times; marked as a confirmed gap"
+        )
         return _apply_mark_gap(latest, run_id=run_id, reason_code="retries_exhausted")
     hint = decision.hint if decision.action == ReviewAction.RETRY else ""
-    return RetryRequest(hint=hint, attempt=latest.attempt + 1)
+    return RetryRequest(hint=hint, attempt=latest.attempt + 1, level=retries_so_far + 1)
 
 
 def _candidate_from_raw(raw: object, suite: str, query: str) -> CandidateRef:
@@ -443,14 +516,43 @@ def _apply_use_my_tag(
     *,
     run_id: str,
     search_by_suite: Callable[[str], Callable[[str, str | None], object] | None],
+    lookup_by_suite: Callable[[str], Callable[[str], object | None] | None] | None,
     warnings: list[str],
 ) -> TagRecord | None:
+    where = f"row {decision.row_id or decision.unit_key}/{decision.suite}"
+    if not decision.hint:
+        warnings.append(f"{where}: Use my tag needs the label or id in the Hint cell")
+        return None
     search = search_by_suite(decision.suite)
     if search is None:
         warnings.append(
-            f"'{decision.hint}' not found exactly in {decision.suite.upper()}; suite unavailable"
+            f"{where}: '{decision.hint}' not checked; {decision.suite.upper()} is unavailable"
         )
         return None
+    lookup = lookup_by_suite(decision.suite) if lookup_by_suite is not None else None
+    if lookup is not None and _NODE_ID_RE.match(decision.hint):
+        node = lookup(decision.hint)
+        if node is not None:
+            ref = node_ref(node, decision.suite)  # type: ignore[arg-type]
+            tag = CandidateRef(
+                suite=decision.suite,
+                id=ref.id,
+                source_id=ref.source_id,
+                kind=ref.kind,
+                label=ref.pref_label,
+                method="id",
+                best_rank=1,
+                hits=1,
+                queries=[decision.hint],
+            )
+            return _human_copy(
+                latest,
+                run_id=run_id,
+                verdict=Verdict.HUMAN_ACCEPTED,
+                reason_code="human_tag",
+                tags=[tag],
+                alternatives=[],
+            )
     result = search(decision.hint, None)
     candidates = list(getattr(result, "candidates", None) or [])
     exact = [
@@ -472,7 +574,8 @@ def _apply_use_my_tag(
         )
     names = ", ".join(c.node.label for c in candidates[:5]) or "none"
     warnings.append(
-        f"'{decision.hint}' not found exactly in {decision.suite.upper()}; candidates: {names}"
+        f"{where}: '{decision.hint}' not found exactly in {decision.suite.upper()}; "
+        f"candidates: {names}"
     )
     return None
 
@@ -492,10 +595,11 @@ class ReviewStats:
 def review_stats(ledger: Ledger, units: list[TagUnit], suites: Sequence[str] = ()) -> ReviewStats:
     """ "Reviewed: X of Y" plus "approved / (approved + rejected) of rows the policy had accepted".
 
-    Precision only counts an approve/reject whose decision's own `base_fp`
-    still resolves (via `ledger.lookup`) to a record the *policy* had marked
-    `accepted` — a reviewer approving/rejecting a `review`/`adjacent` row
-    doesn't move this number, by design (that is not what it measures).
+    Precision only counts decisions on an answer the *policy* had marked
+    `accepted` (its `base_fp`'s policy record) — a reviewer approving a
+    `review`/`adjacent` row doesn't move this number, by design. Approve counts
+    as right; any correction (reject, retry, another alternative, own tag, gap)
+    as wrong; only the latest decision per answer counts.
     """
     unit_keys = {unit.unit_key for unit in units}
     # Decisions are made per answer (one line x one taxonomy), so count those.
@@ -504,17 +608,22 @@ def review_stats(ledger: Ledger, units: list[TagUnit], suites: Sequence[str] = (
     rejected: dict[str, int] = {}
     approved_total = 0
     rejected_total = 0
+    latest_per_answer: dict[tuple[str, str, str], str] = {}
 
     for payload in ledger.reviews():
         unit_key = payload.get("unit_key")
         if not isinstance(unit_key, str) or unit_key not in unit_keys:
             continue
-        reviewed_answers.add((unit_key, str(payload.get("suite", ""))))
-        action = payload.get("action")
-        if action not in (ReviewAction.APPROVE.value, ReviewAction.REJECT.value):
-            continue
+        suite = str(payload.get("suite", ""))
+        reviewed_answers.add((unit_key, suite))
         base_fp = payload.get("base_fp")
-        original = ledger.policy_record(str(base_fp)) if isinstance(base_fp, str) else None
+        if isinstance(base_fp, str):
+            latest_per_answer[(unit_key, suite, base_fp)] = str(payload.get("action", ""))
+
+    for (_unit_key, _suite, base_fp), action in latest_per_answer.items():
+        if action != ReviewAction.APPROVE.value and action not in _CORRECTIONS:
+            continue
+        original = ledger.policy_record(base_fp)
         if original is None or original.verdict != Verdict.ACCEPTED:
             continue
         if action == ReviewAction.APPROVE.value:
@@ -540,13 +649,44 @@ def apply_decisions(
     *,
     search_by_suite: Callable[[str], Callable[[str, str | None], object] | None],
     run_id: str,
+    lookup_by_suite: Callable[[str], Callable[[str], object | None] | None] | None = None,
 ) -> ReviewOutcome:
-    """Apply every unseen decision; skip (silently) any already in `reviews.jsonl`."""
+    """Apply every unseen decision; skip (silently) any already in `reviews.jsonl`.
+
+    Two different decisions for the same answer in one workbook (say Approve on
+    the Review sheet and "No" on the Gaps sheet) are both held back with a
+    warning rather than applied one over the other.
+    """
     outcome = ReviewOutcome()
 
+    fresh: list[tuple[str, ReviewDecision]] = []
+    seen_keys: set[str] = set()
     for decision in decisions:
         key = review_key(decision)
-        if ledger.review_applied(key):
+        if ledger.review_applied(key) or key in seen_keys:
+            continue
+        seen_keys.add(key)
+        fresh.append((key, decision))
+
+    by_answer: dict[tuple[str, str], list[ReviewDecision]] = {}
+    for _key, decision in fresh:
+        by_answer.setdefault((decision.unit_key, decision.suite), []).append(decision)
+    conflicted = {answer for answer, items in by_answer.items() if len(items) > 1}
+    for answer in sorted(conflicted):
+        items = by_answer[answer]
+        row = items[0].row_id or answer[0]
+        words = " and ".join(
+            f"{'Gaps' if item.from_gaps else 'Review'} sheet: {item.action.value}" for item in items
+        )
+        outcome.warnings.append(
+            f"row {row}/{answer[1]}: two different decisions ({words}); neither applied. "
+            "The Review sheet's decision stays in its cell: re-run to apply it, or change it"
+        )
+        outcome.unapplied.add(answer)
+
+    for key, decision in fresh:
+        answer = (decision.unit_key, decision.suite)
+        if answer in conflicted:
             continue
 
         latest = ledger.latest_for(decision.unit_key, decision.suite)
@@ -557,19 +697,22 @@ def apply_decisions(
             )
             continue
 
+        retries_so_far = _reviewer_retries(ledger, decision.unit_key, decision.suite)
         result: TagRecord | RetryRequest | None
         if decision.action == ReviewAction.APPROVE:
-            result = _apply_approve(latest, run_id=run_id)
+            result = _apply_approve(decision, latest, run_id=run_id, warnings=outcome.warnings)
         elif decision.action == ReviewAction.USE_ALT:
             result = _apply_use_alt(decision, latest, run_id=run_id, warnings=outcome.warnings)
         elif decision.action == ReviewAction.MARK_GAP:
-            result = _apply_mark_gap(latest, run_id=run_id)
+            keep_tags = decision.from_gaps and latest.verdict == Verdict.ADJACENT
+            result = _apply_mark_gap(latest, run_id=run_id, keep_tags=keep_tags)
         elif decision.action in (ReviewAction.RETRY, ReviewAction.REJECT):
             result = _apply_retry_or_reject(
                 decision,
                 latest,
                 run_id=run_id,
-                retries_so_far=_reviewer_retries(ledger, decision.unit_key, decision.suite),
+                retries_so_far=retries_so_far,
+                warnings=outcome.warnings,
             )
         elif decision.action == ReviewAction.USE_MY_TAG:
             result = _apply_use_my_tag(
@@ -577,37 +720,90 @@ def apply_decisions(
                 latest,
                 run_id=run_id,
                 search_by_suite=search_by_suite,
+                lookup_by_suite=lookup_by_suite,
                 warnings=outcome.warnings,
             )
         else:  # pragma: no cover - _parse_action never returns an unknown action
             result = None
 
         if result is None:
+            outcome.unapplied.add(answer)
             continue
 
+        payload: dict[str, object] = {
+            "ts": datetime.now(UTC).isoformat(),
+            "review_key": key,
+            "unit_key": decision.unit_key,
+            "suite": decision.suite,
+            "action": decision.action.value,
+            "alt_index": decision.alt_index,
+            "hint": decision.hint,
+            "base_fp": decision.base_fp,
+            "source_sha": decision.source_sha,
+            "run_id": run_id,
+        }
         if isinstance(result, RetryRequest):
-            outcome.retries[(decision.unit_key, decision.suite)] = result
-            effect = "retry"
+            outcome.retries[answer] = result
+            payload.update(
+                result="retry",
+                retry_hint=result.hint,
+                attempt=result.attempt,
+                level=result.level,
+            )
         else:
             ledger.append(result)
             outcome.human_records.append(result)
-            effect = result.verdict.value
+            payload["result"] = (
+                "retries_exhausted"
+                if result.reason_code == "retries_exhausted"
+                else result.verdict.value
+            )
 
         outcome.applied += 1
-        ledger.review_append(
-            {
-                "ts": datetime.now(UTC).isoformat(),
-                "review_key": key,
-                "unit_key": decision.unit_key,
-                "suite": decision.suite,
-                "action": decision.action.value,
-                "alt_index": decision.alt_index,
-                "hint": decision.hint,
-                "base_fp": decision.base_fp,
-                "source_sha": decision.source_sha,
-                "run_id": run_id,
-                "result": effect,
-            }
-        )
+        ledger.review_append(payload)
 
     return outcome
+
+
+def pending_retries(ledger: Ledger) -> dict[tuple[str, str], RetryRequest]:
+    """Every reviewer retry that hasn't produced an answer yet, ready to run again.
+
+    A retry is written to `reviews.jsonl` when it is read, but only *done* once
+    a later answer for that row is in the ledger. Until then — the run was
+    stopped, the model call failed (`error`), the suite was down, or the row
+    wasn't part of this run's `--rows`/`--limit`/`--suites` — it stays pending
+    and keeps its hint, instead of being silently lost.
+    """
+    latest_retry: dict[tuple[str, str], dict[str, object]] = {}
+    for payload in ledger.reviews():
+        if payload.get("result") != "retry":
+            continue
+        unit_key, suite = payload.get("unit_key"), payload.get("suite")
+        if isinstance(unit_key, str) and isinstance(suite, str):
+            latest_retry[(unit_key, suite)] = payload
+
+    pending: dict[tuple[str, str], RetryRequest] = {}
+    for answer, payload in latest_retry.items():
+        if ledger.latest_review_for(*answer) is not payload:
+            continue  # the reviewer decided something else since
+        latest = ledger.latest_for(*answer)
+        if latest is None:
+            continue
+        done = latest.ts > str(payload.get("ts", "")) and (
+            latest.decided_by == "human"
+            or latest.verdict not in (Verdict.ERROR, Verdict.UNAVAILABLE)
+        )
+        if done:
+            continue
+        if "retry_hint" in payload:
+            hint = str(payload.get("retry_hint") or "")
+        else:  # written before retries were resumable
+            hint = str(payload.get("hint") or "") if payload.get("action") == "retry" else ""
+        attempt = payload.get("attempt")
+        level = payload.get("level")
+        pending[answer] = RetryRequest(
+            hint=hint,
+            attempt=attempt if isinstance(attempt, int) else latest.attempt + 1,
+            level=level if isinstance(level, int) else 1,
+        )
+    return pending

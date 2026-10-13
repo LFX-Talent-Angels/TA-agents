@@ -199,6 +199,36 @@ def test_pathfind_with_two_ends_is_not_a_compare() -> None:
     assert not is_compare(draft)
 
 
+@pytest.mark.parametrize(
+    ("question", "start", "destination"),
+    [
+        ("path from nurse to data analyst", "nurse", "data analyst"),
+        ("skill gap from nurse to data analyst", "nurse", "data analyst"),
+        ("gap between a nurse and a data analyst", "nurse", "data analyst"),
+        ("route from teacher to data analyst?", "teacher", "data analyst"),
+        ("career path from chef to restaurant manager", "chef", "restaurant manager"),
+        ("how do I move from nurse to data analyst?", "nurse", "data analyst"),
+        ("from nurse to data analyst", "nurse", "data analyst"),
+        ("how to become a data analyst from a nurse", "nurse", "data analyst"),
+        ("how do I become a data scientist from an accountant", "accountant", "data scientist"),
+    ],
+)
+def test_pathfind_heuristic_reads_both_ends(question: str, start: str, destination: str) -> None:
+    draft = _profile_intent_heuristic(question)
+    assert draft is not None
+    assert draft.target == "pathfind"
+    assert (draft.subject, draft.secondary_subject) == (start, destination)
+    assert draft.kind == "occupation"
+
+
+@pytest.mark.parametrize(
+    "question", ["what skills does a chef need?", "I want to become a web developer"]
+)
+def test_one_ended_questions_are_not_pathfind(question: str) -> None:
+    draft = _profile_intent_heuristic(question)
+    assert draft is None or draft.target != "pathfind"
+
+
 def test_planner_prompt_teaches_the_compare_shape() -> None:
     assert '"secondary_subject":"software developer"' in PLAN_SYSTEM
     assert '"X vs Y" or "X and Y" as two titles is locate' not in PLAN_SYSTEM

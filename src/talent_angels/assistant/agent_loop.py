@@ -29,6 +29,7 @@ from talent_angels.skills.connect import connect
 from talent_angels.skills.connect.models import ConnectRequest
 from talent_angels.skills.locate import locate
 from talent_angels.skills.locate.rank import group_and_sort_locate
+from talent_angels.skills.pathfind import pathfind_one
 from talent_angels.suites.measured import MeasuredSuite
 from talent_angels.suites.protocol import SuiteTools
 
@@ -306,6 +307,7 @@ def run_tool_loop(
     bound_node: NodeRef | None = None,
     intent: Capability | None = None,
     subject_hint: str | None = None,
+    secondary_subject_hint: str | None = None,
     need_answer: bool = True,
 ) -> AgentLoopOutcome:
     """Let the model drive search_nodes/get_neighbors for one suite.
@@ -320,20 +322,27 @@ def run_tool_loop(
         intent = classify_capability(question)
     if intent == CAPABILITY_PATHFIND:
         # Mirror _dispatch_heuristic's guard exactly (assistant/graph.py): a
-        # pathfind-intent question must never reach the model or the suite.
-        # Without this, LOOP_SYSTEM only knows search_nodes/get_neighbors, so
-        # the model would search one of the two named occupations and return
-        # a plain skills list instead of an honest "not implemented" — the
-        # gate the heuristic path had was silently absent on this path.
-        result = AgentResult(
-            capability=CAPABILITY_PATHFIND,
-            suite=suite_name,
-            warnings=["capability_not_implemented:pathfind"],
-        )
+        # pathfind-intent question must never reach the model or the suite —
+        # LOOP_SYSTEM only knows search_nodes/get_neighbors, so the model
+        # would search one of the two named occupations and return a plain
+        # skills list instead of the real gap/routes. Pathfind runs the same
+        # locate+connect+gap+routes code as the no-LLM path, never the loop.
+        if subject_hint and secondary_subject_hint:
+            result, tool_calls = pathfind_one(
+                suite, suite_name, subject_hint, secondary_subject_hint
+            )
+        else:
+            result = AgentResult(
+                capability=CAPABILITY_PATHFIND,
+                suite=suite_name,
+                warnings=["pathfind_missing_subject"],
+            )
+            tool_calls = []
         return AgentLoopOutcome(
             answer=summarize_result(result),
             result=result,
             plan=build_plan_for_capability(CAPABILITY_PATHFIND, suites=(suite_name,)),
+            tool_calls=tool_calls,
         )
 
     measured = MeasuredSuite(suite)

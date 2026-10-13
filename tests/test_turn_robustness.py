@@ -173,14 +173,17 @@ def test_tool_loop_does_not_invent_a_search_without_a_subject() -> None:
     assert outcome.result.warnings == ["no_subject"]
 
 
-def test_pathfind_is_reported_as_unavailable_not_as_a_miss() -> None:
+def test_pathfind_reports_an_honest_miss_when_neither_end_is_in_the_graph() -> None:
+    """Pathfind is real now (ADR-0008) — an occupation absent from every
+    suite's graph is an honest miss, the same rule every other capability
+    already follows, not a blanket "not available yet" message."""
     outcome = run_turn(
         registry=fake_registry(),
         llm_client=StubLLMClient(),
         question="What is the skill path from data analyst to data scientist?",
     )
-    assert "not available yet" in outcome.answer
-    assert "miss" not in outcome.answer
+    assert "not available yet" not in outcome.answer
+    assert "miss" in outcome.answer
 
 
 def test_phrasing_calls_are_metered_and_added_to_the_turn_record() -> None:

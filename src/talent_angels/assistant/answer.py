@@ -62,6 +62,14 @@ def summarize_result(result: AgentResult) -> str:
             f"Ambiguous locate result — confidence {confidence_pct}. "
             f"Candidates: {rendered}{remainder}. Please clarify which candidate you mean."
         )
+    if result.capability == "pathfind" and len(result.nodes) >= 2:
+        start, target = result.nodes[0], result.nodes[1]
+        gap_count = len(result.nodes) - 2
+        summary = f"{start.pref_label} -> {target.pref_label}: {gap_count} skill(s) in the gap"
+        if result.warnings:
+            summary += f" [warnings: {', '.join(result.warnings)}]"
+        return summary
+
     if result.capability == "connect":
         center = result.nodes[0]
         neighbors = result.nodes[1:]

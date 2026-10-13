@@ -11,7 +11,14 @@ from talent_angels.assistant.graph import build_graph
 from talent_angels.contracts import AgentResult, EdgeRef, NodeRef
 from talent_angels.llm.protocol import LLMResult, LLMUsage, Message
 from talent_angels.suites.schema import SuiteSchema
-from tests.fakes.taxonomy import FakeCandidate, FakeEdge, FakeNode, FakeToolResult
+from tests.fakes.taxonomy import (
+    FakeCandidate,
+    FakeEdge,
+    FakeNode,
+    FakePath,
+    FakePruning,
+    FakeToolResult,
+)
 
 _DEFAULT_SCHEMA = SuiteSchema(
     skill_rel_types=("HAS_SKILL", "USES_SOFTWARE"),
@@ -119,7 +126,12 @@ class _BoomSuite:
 def test_tool_loop_gates_pathfind_intent_before_touching_model_or_suite() -> None:
     """Regression: the tool loop used to fall through to get_neighbors on a
     pathfind-intent question and return a plain skills list. _dispatch_heuristic
-    (assistant/graph.py) already guarded this; run_tool_loop did not."""
+    (assistant/graph.py) already guarded this; run_tool_loop did not.
+
+    No subject_hint/secondary_subject_hint here (the planner found neither
+    end) — Pathfind reports that honestly rather than guessing, and still
+    never touches the model or suite to do so.
+    """
     outcome = run_tool_loop(
         question="What is the career path from nurse to software developer?",
         suite=_BoomSuite(),
@@ -128,11 +140,177 @@ def test_tool_loop_gates_pathfind_intent_before_touching_model_or_suite() -> Non
     )
 
     assert outcome.result.capability == "pathfind"
-    assert outcome.result.warnings == ["capability_not_implemented:pathfind"]
+    assert outcome.result.warnings == ["pathfind_missing_subject"]
     assert outcome.result.nodes == []
     assert outcome.stages == []
     assert outcome.tool_calls == []
     assert outcome.plan.capabilities == ("pathfind",)
+
+
+_NURSE = FakeNode(
+    id="esco:occupation:nurse",
+    kind="Occupation",
+    label="nurse",
+    source="esco",
+    source_id="urn:esco:occupation:nurse",
+    properties={},
+)
+_ANALYST = FakeNode(
+    id="esco:occupation:analyst",
+    kind="Occupation",
+    label="data analyst",
+    source="esco",
+    source_id="urn:esco:occupation:analyst",
+    properties={},
+)
+_CARE = FakeNode(
+    id="esco:skill:care",
+    kind="Skill",
+    label="patient care",
+    source="esco",
+    source_id="urn:esco:skill:care",
+    properties={},
+)
+_STATISTICS = FakeNode(
+    id="esco:skill:statistics",
+    kind="Skill",
+    label="statistics",
+    source="esco",
+    source_id="urn:esco:skill:statistics",
+    properties={},
+)
+_SQL = FakeNode(
+    id="esco:skill:sql",
+    kind="Skill",
+    label="SQL",
+    source="esco",
+    source_id="urn:esco:skill:sql",
+    properties={},
+)
+_NURSE_HAS_CARE = FakeEdge(
+    type="HAS_SKILL", from_id=_NURSE.id, to_id=_CARE.id, properties={"relation_type": "essential"}
+)
+_ANALYST_HAS_STATS = FakeEdge(
+    type="HAS_SKILL",
+    from_id=_ANALYST.id,
+    to_id=_STATISTICS.id,
+    properties={"relation_type": "essential"},
+)
+_ANALYST_HAS_SQL = FakeEdge(
+    type="HAS_SKILL", from_id=_ANALYST.id, to_id=_SQL.id, properties={"relation_type": "optional"}
+)
+_BRIDGE_EDGE = FakeEdge(
+    type="HAS_SKILL",
+    from_id=_NURSE.id,
+    to_id=_STATISTICS.id,
+    properties={"relation_type": "optional"},
+)
+
+
+class _PathfindSuite:
+    """Nurse and data analyst, bridged by one shared skill (statistics)."""
+
+    @property
+    def suite_schema(self) -> SuiteSchema:
+        return _DEFAULT_SCHEMA
+
+    def search_nodes(self, text: str, kind: str | None = None) -> FakeToolResult:
+        if text == "nurse":
+            return FakeToolResult(
+                candidates=[FakeCandidate(node=_NURSE, confidence=0.95, method="exact_pref")],
+                nodes=[_NURSE],
+                evidence=["fake:search:exact_pref:nurse"],
+            )
+        if text == "data analyst":
+            return FakeToolResult(
+                candidates=[FakeCandidate(node=_ANALYST, confidence=0.95, method="exact_pref")],
+                nodes=[_ANALYST],
+                evidence=["fake:search:exact_pref:data analyst"],
+            )
+        return FakeToolResult(warnings=["not_found"])
+
+    def get_neighbors(self, node_id: str, rel_types: list[str] | None = None) -> FakeToolResult:
+        if node_id == _NURSE.id:
+            return FakeToolResult(
+                nodes=[_NURSE, _CARE], edges=[_NURSE_HAS_CARE], evidence=["fake:neighbors:nurse"]
+            )
+        if node_id == _ANALYST.id:
+            return FakeToolResult(
+                nodes=[_ANALYST, _STATISTICS, _SQL],
+                edges=[_ANALYST_HAS_STATS, _ANALYST_HAS_SQL],
+                evidence=["fake:neighbors:analyst"],
+            )
+        return FakeToolResult(warnings=["node_not_found"])
+
+    def enumerate_paths(
+        self, from_id: str, to_id: str, *, max_depth: int = 4, max_paths: int = 20
+    ) -> FakeToolResult:
+        if {from_id, to_id} != {_NURSE.id, _ANALYST.id}:
+            return FakeToolResult(warnings=["endpoint_not_found"])
+        return FakeToolResult(
+            nodes=[_NURSE, _STATISTICS, _ANALYST],
+            paths=[
+                FakePath(
+                    node_ids=[_NURSE.id, _STATISTICS.id, _ANALYST.id],
+                    edges=[_BRIDGE_EDGE, _ANALYST_HAS_STATS],
+                )
+            ],
+            pruning=FakePruning(considered=3, returned=1, pruned=2),
+            evidence=["fake:paths:nurse->analyst"],
+        )
+
+
+def test_dispatch_heuristic_pathfind_resolves_both_ends_and_returns_gap_and_routes() -> None:
+    from talent_angels.assistant.graph import _dispatch_heuristic
+    from talent_angels.assistant.llm_plan import PlanDraft
+    from talent_angels.assistant.planning import build_plan_for_capability
+
+    plan = build_plan_for_capability("pathfind", suites=("esco",))
+    draft = PlanDraft(target="pathfind", subject="nurse", secondary_subject="data analyst")
+    state = {"question": "path from nurse to data analyst", "plan": plan, "plan_draft": draft}
+
+    out = _dispatch_heuristic(state, suite=_PathfindSuite(), suite_name="esco")
+    result = out["result"]
+
+    assert result.capability == "pathfind"
+    assert "pathfind_missing_subject" not in result.warnings
+    labels = {node.pref_label for node in result.nodes}
+    assert {"nurse", "data analyst", "statistics", "SQL"} <= labels
+    assert any(edge.type == "HAS_SKILL" for edge in result.edges)
+    assert out["tool_calls"]
+
+
+def test_tool_loop_pathfind_resolves_both_ends_when_hints_are_present() -> None:
+    """With both hints, pathfind runs the real locate+connect+gap+routes code —
+    still never the model or the generic search_nodes/get_neighbors loop."""
+    outcome = run_tool_loop(
+        question="path from nurse to data analyst",
+        suite=_PathfindSuite(),
+        suite_name="esco",
+        llm_client=_BoomClient(),
+        subject_hint="nurse",
+        secondary_subject_hint="data analyst",
+    )
+
+    assert outcome.result.capability == "pathfind"
+    assert "pathfind_missing_subject" not in outcome.result.warnings
+    labels = {node.pref_label for node in outcome.result.nodes}
+    assert {"nurse", "data analyst"} <= labels
+    assert outcome.tool_calls
+
+
+def test_pathfind_reports_which_side_is_ambiguous_without_guessing() -> None:
+    from talent_angels.assistant.graph import _dispatch_heuristic
+    from talent_angels.assistant.llm_plan import PlanDraft
+    from talent_angels.assistant.planning import build_plan_for_capability
+
+    plan = build_plan_for_capability("pathfind", suites=("esco",))
+    draft = PlanDraft(target="pathfind", subject="unknown job", secondary_subject="data analyst")
+    state = {"question": "path from unknown job to data analyst", "plan": plan, "plan_draft": draft}
+
+    out = _dispatch_heuristic(state, suite=_PathfindSuite(), suite_name="esco")
+
+    assert "pathfind_side:start" in out["result"].warnings
 
 
 def test_tool_loop_pathfind_gate_matches_heuristic_dispatch_shape() -> None:

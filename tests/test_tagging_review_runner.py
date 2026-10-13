@@ -541,3 +541,17 @@ def test_a_changed_profile_is_not_answered_from_the_old_answers(project: Path) -
     )
 
     assert again.searched > 0
+
+
+def test_the_second_look_reports_its_own_progress(project: Path) -> None:
+    ticks: list[tuple[str, int, int]] = []
+    run(
+        project,
+        registry=_registry()[0],
+        opts=RunOptions(no_llm=False, fresh=True),
+        llm_client=ReviewScriptedClient(),
+        progress=lambda _message: None,
+        step_progress=lambda label, done, total: ticks.append((label, done, total)),
+    )
+    second_look = [(done, total) for label, done, total in ticks if "step 4/4" in label]
+    assert second_look == [(n, len(_GAP_KEYWORDS)) for n in range(1, len(_GAP_KEYWORDS) + 1)]

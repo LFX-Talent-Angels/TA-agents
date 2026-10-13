@@ -499,6 +499,13 @@ def run(
             rewrites: dict[str, Rewrite] = {}
             if llm_on and llm_client is not None:
                 say(f"{doc.key}: step 1/4 skill phrases for {len(units)} rows…")
+                rw_cached = sum(
+                    1
+                    for unit in units
+                    if _needs_rewrite(unit)
+                    and ledger.rewrite_lookup(rewrite_cache_key(unit, model, REWRITE_VERSION))
+                    is not None
+                )
                 rw_map, rw_stages = _rewrite_phase(
                     llm_client,
                     units,
@@ -512,14 +519,13 @@ def run(
                 )
                 rewrites = rw_map
                 doc_stages.extend(rw_stages)
-                say(
-                    f"{doc.key}: step 1/4 done "
-                    + (
-                        f"({len(rw_stages)} model calls, the rest reused)"
-                        if rw_stages
-                        else "(all reused, no model calls)"
-                    )
-                )
+                if not rw_stages:
+                    rw_note = "all reused, no model calls"
+                elif rw_cached:
+                    rw_note = f"{len(rw_stages)} model calls, {rw_cached} rows reused"
+                else:
+                    rw_note = f"{len(rw_stages)} model calls"
+                say(f"{doc.key}: step 1/4 done ({rw_note})")
 
             pending: dict[tuple[str, str], _Pending] = {}
 
@@ -672,6 +678,7 @@ def run(
                 pinned_versions=pinned_versions,
                 system=choose_sys,
                 document_label=profile.document_label,
+                progress=counter(f"{doc.key}: step 4/4 second look with wider context"),
             )
             doc_stages.extend(widened_stages)
 
@@ -956,6 +963,7 @@ def _widen_pending(
     pinned_versions: Versions,
     system: str,
     document_label: str,
+    progress: Callable[[int, int], None] | None = None,
 ) -> tuple[dict[tuple[str, str], str], list[StageUsage]]:
     """The widened re-attempt (rule 6) for every unit x suite that asked for one.
 
@@ -964,6 +972,8 @@ def _widen_pending(
     """
     stages: list[StageUsage] = []
     fps: dict[tuple[str, str], str] = {}
+    to_widen = sum(1 for verdict in verdicts.values() if verdict.needs_widening) if llm_on else 0
+    widened_done = 0
 
     for key, p in pending.items():
         verdict_result = verdicts.get(key)
@@ -973,6 +983,9 @@ def _widen_pending(
             and verdict_result is not None
             and verdict_result.needs_widening
         )
+        if widen and progress is not None:
+            widened_done += 1
+            progress(widened_done, to_widen)
         if not widen:
             fps[key] = fingerprint(
                 p.unit, p.suite_name, pinned_versions, hint=p.hint, attempt=p.attempt

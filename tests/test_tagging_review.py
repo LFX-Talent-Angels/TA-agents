@@ -463,3 +463,42 @@ def test_review_key_is_stable_for_the_same_decision() -> None:
     b = _decision()
     assert review_key(a) == review_key(b)
     assert review_key(a) != review_key(_decision(hint="different"))
+
+
+def test_approving_a_policy_accepted_answer_counts_toward_precision(tmp_path: Path) -> None:
+    """The human copy shares the reviewed answer's fingerprint; precision must still
+    find what the *policy* said (this read 0 approved after a real approval)."""
+    from talent_angels.tagging.models import TagUnit
+    from talent_angels.tagging.review import review_stats
+
+    ledger = Ledger(tmp_path / ".ta-tag")
+    ledger.append(_record("u1", "esco", fingerprint="fp1", verdict=Verdict.ACCEPTED))
+    ledger.append(_record("u2", "esco", fingerprint="fp2", verdict=Verdict.ACCEPTED))
+    ledger.append(_record("u2", "onet", fingerprint="fp3", verdict=Verdict.ADJACENT))
+    apply_decisions(
+        [
+            _decision(unit_key="u1", base_fp="fp1", action=ReviewAction.APPROVE),
+            _decision(unit_key="u2", base_fp="fp2", action=ReviewAction.REJECT),
+            _decision(unit_key="u2", suite="onet", base_fp="fp3", action=ReviewAction.APPROVE),
+        ],
+        Ledger(tmp_path / ".ta-tag"),
+        search_by_suite=lambda _suite: None,
+        run_id="run-1",
+    )
+    units = [
+        TagUnit(
+            unit_key=key,
+            doc_key="doc",
+            row_id=key,
+            kind="performance",
+            role="leaf",
+            text="t",
+            clean_text="t",
+            context_path=[],
+            group_key="0",
+        )
+        for key in ("u1", "u2")
+    ]
+    stats = review_stats(Ledger(tmp_path / ".ta-tag"), units, ["esco", "onet"])
+    assert (stats.approved_total, stats.rejected_total) == (1, 1)  # adjacent approve excluded
+    assert (stats.reviewed, stats.total) == (3, 4)  # per answer: 2 lines x 2 taxonomies

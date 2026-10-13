@@ -609,7 +609,7 @@ def _write_summary(
         row += 1
     row += 1
 
-    _set(ws, row, 1, f"Reviewed: {stats.reviewed} of {stats.total}").font = Font(bold=True)
+    _set(ws, row, 1, f"Reviewed: {stats.reviewed} of {stats.total} answers").font = Font(bold=True)
     row += 2
     _set(ws, row, 1, "Accepted precision (human-checked)").font = Font(bold=True)
     row += 1

@@ -632,7 +632,7 @@ def run(
             for key in results
             if (payload := ledger.latest_review_for(*key)) is not None
         }
-        stats = review_stats(ledger, units)
+        stats = review_stats(ledger, units, suite_names)
 
         out_dir.mkdir(parents=True, exist_ok=True)
         if review_outcome.applied:

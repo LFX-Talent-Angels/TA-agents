@@ -474,7 +474,7 @@ class ReviewStats:
     rejected_total: int = 0
 
 
-def review_stats(ledger: Ledger, units: list[TagUnit]) -> ReviewStats:
+def review_stats(ledger: Ledger, units: list[TagUnit], suites: Sequence[str] = ()) -> ReviewStats:
     """ "Reviewed: X of Y" plus "approved / (approved + rejected) of rows the policy had accepted".
 
     Precision only counts an approve/reject whose decision's own `base_fp`
@@ -483,7 +483,8 @@ def review_stats(ledger: Ledger, units: list[TagUnit]) -> ReviewStats:
     doesn't move this number, by design (that is not what it measures).
     """
     unit_keys = {unit.unit_key for unit in units}
-    reviewed_units: set[str] = set()
+    # Decisions are made per answer (one line x one taxonomy), so count those.
+    reviewed_answers: set[tuple[str, str]] = set()
     approved: dict[str, int] = {}
     rejected: dict[str, int] = {}
     approved_total = 0
@@ -493,12 +494,12 @@ def review_stats(ledger: Ledger, units: list[TagUnit]) -> ReviewStats:
         unit_key = payload.get("unit_key")
         if not isinstance(unit_key, str) or unit_key not in unit_keys:
             continue
-        reviewed_units.add(unit_key)
+        reviewed_answers.add((unit_key, str(payload.get("suite", ""))))
         action = payload.get("action")
         if action not in (ReviewAction.APPROVE.value, ReviewAction.REJECT.value):
             continue
         base_fp = payload.get("base_fp")
-        original = ledger.lookup(str(base_fp)) if isinstance(base_fp, str) else None
+        original = ledger.policy_record(str(base_fp)) if isinstance(base_fp, str) else None
         if original is None or original.verdict != Verdict.ACCEPTED:
             continue
         if action == ReviewAction.APPROVE.value:
@@ -509,8 +510,8 @@ def review_stats(ledger: Ledger, units: list[TagUnit]) -> ReviewStats:
             rejected[original.kind] = rejected.get(original.kind, 0) + 1
 
     return ReviewStats(
-        reviewed=len(reviewed_units),
-        total=len(units),
+        reviewed=len(reviewed_answers),
+        total=len(units) * max(len(suites), 1),
         approved_by_kind=approved,
         rejected_by_kind=rejected,
         approved_total=approved_total,

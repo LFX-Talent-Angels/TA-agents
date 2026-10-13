@@ -2,7 +2,7 @@
 
 Headless assistant runtime for **Talent Angels**. One main assistant
 interprets a natural-language question, searches **every attached taxonomy**
-(ESCO and O*NET today; more suites register the same way), and returns a
+(ESCO, O*NET and SFIA today; more suites register the same way), and returns a
 cited JSON answer with tokens and cost.
 
 `--suite` / API `suite` forces one taxonomy for debugging. Pathfind walks
@@ -22,7 +22,7 @@ Internals: [`ARCHITECTURE.md`](./ARCHITECTURE.md).
 you  →  CLI or FastAPI (/docs)
            →  main assistant (LLM tool loop)
                  →  search_nodes / get_neighbors / enumerate_paths
-                       →  Neo4j (ESCO, O*NET, … attached suites)
+                       →  Neo4j (ESCO, O*NET, SFIA, … attached suites)
 ```
 
 - CLI prints one JSON object (`answer`, `plan`, `tools`, `tokens`, `cost_usd`).
@@ -233,6 +233,10 @@ python -m talent_angels.cli query "What is the skill path from data analyst to d
 # O*NET is a second suite on the same Neo4j, not a merge. Default remains ESCO.
 python -m talent_angels.cli query --suite onet "Where is Software Engineer?"
 python -m talent_angels.cli connect --suite onet "What skills does a software developer need?"
+
+# SFIA 9 is a third suite (skills + levels, no occupations). Codes resolve exactly.
+python -m talent_angels.cli locate --suite sfia "PROG"
+python -m talent_angels.cli locate --suite sfia "PROG-4"
 ```
 
 Expect JSON with `plan`, `answer`, `tools`, `tokens`, `cost_usd`.

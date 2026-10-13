@@ -18,7 +18,7 @@ def test_suite_registry_imports_first_in_a_fresh_process() -> None:
             sys.executable,
             "-c",
             "from talent_angels.suites import default_suite_registry; "
-            "assert default_suite_registry().available == ('esco', 'onet')",
+            "assert default_suite_registry().available == ('esco', 'onet', 'sfia')",
         ],
         check=False,
         capture_output=True,
@@ -77,7 +77,7 @@ def test_registry_opens_only_the_explicit_suite() -> None:
     assert events == ["open:onet", "close:onet"]
 
 
-@pytest.mark.parametrize("name", ["sfia", ""])
+@pytest.mark.parametrize("name", ["bls", ""])
 def test_registry_rejects_unknown_suite_with_available_names(name: str) -> None:
     registry = SuiteRegistry({"esco": _factory("esco", [])}, default="esco")
 
@@ -89,5 +89,5 @@ def test_registry_rejects_empty_or_missing_default() -> None:
     with pytest.raises(ValueError, match="at least one"):
         SuiteRegistry({}, default="esco")
 
-    with pytest.raises(ValueError, match="default suite 'sfia' is not registered"):
-        SuiteRegistry({"esco": _factory("esco", [])}, default="sfia")
+    with pytest.raises(ValueError, match="default suite 'bls' is not registered"):
+        SuiteRegistry({"esco": _factory("esco", [])}, default="bls")

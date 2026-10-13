@@ -217,7 +217,7 @@ def test_api_unknown_suite_is_404() -> None:
     with TestClient(create_app(registry=_registry())) as client:
         response = client.post(
             "/v1/query",
-            json={"question": "developer", "suite": "sfia"},
+            json={"question": "developer", "suite": "bls"},
         )
     assert response.status_code == 404
 

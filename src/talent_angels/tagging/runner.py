@@ -102,6 +102,21 @@ def _newer_numbers_copy(out_path: Path) -> Path | None:
     return None
 
 
+def _other_newer_workbooks(out_path: Path) -> list[Path]:
+    """Other `.xlsx` files in `out/` saved after the workbook: likely an export that
+    missed it (Numbers' "tagged 2.xlsx", a "copy"), whose decisions won't be read."""
+    if not out_path.is_file():
+        return []
+    xlsx_mtime = out_path.stat().st_mtime
+    return [
+        candidate
+        for candidate in sorted(out_path.parent.glob("*.xlsx"))
+        if candidate != out_path
+        and not _system_file(candidate.name)
+        and candidate.stat().st_mtime > xlsx_mtime
+    ]
+
+
 @dataclass
 class _Pending:
     """One unit x suite not reused from the ledger: everything needed to decide."""
@@ -120,13 +135,34 @@ class _Pending:
     is_retry: bool = False
 
 
+def _system_file(name: str) -> bool:
+    """Files the OS or an office app puts in a folder on its own (Finder's
+    `.DS_Store`, `._*` AppleDouble files, the custom-folder-icon `Icon\r`,
+    Office's `~$*` lock files): never input, never worth a warning."""
+    return name.startswith((".", "~$")) or name == "Icon\r"
+
+
+def _numbers_hint(name: str) -> str:
+    return (
+        f"{name}: an Apple Numbers file, which this tool cannot read. In Numbers choose "
+        "File > Export To > Excel (or CSV) and put the exported file in this folder"
+    )
+
+
 def _scan(folder: Path) -> tuple[list[Path], list[str]]:
     """Readable files directly under `folder` (not recursive): candidates + warnings."""
     files: list[Path] = []
     warnings: list[str] = []
     if not folder.is_dir():
         return files, warnings
-    for entry in sorted(p for p in folder.iterdir() if p.is_file()):
+    for entry in sorted(folder.iterdir()):
+        if _system_file(entry.name):
+            continue
+        if entry.suffix.lower() == ".numbers":  # a file, or a package folder on older Macs
+            warnings.append(_numbers_hint(entry.name))
+            continue
+        if not entry.is_file():
+            continue
         if entry.suffix.lower() == ".csv" and entry.with_suffix(".json").exists():
             warnings.append(describe_csv_twin(entry, entry.with_suffix(".json")))
             continue
@@ -322,9 +358,10 @@ def run(
     llm_on = not opts.no_llm and llm_client is not None
 
     project, input_files = discover(path)
-    if not input_files:
-        raise ReaderError(f"no readable input files under {path}")
     run_warnings = _input_warnings(path)
+    if not input_files:
+        reasons = "".join(f"\n  {warning}" for warning in run_warnings)
+        raise ReaderError(f"no readable input files under {path}{reasons}")
 
     def say(message: str) -> None:
         if progress is not None:
@@ -395,6 +432,13 @@ def run(
                 "Numbers file, which this tool cannot read. In Numbers choose File > Export To > "
                 f"Excel and save it over {out_path}, then re-run (or delete {numbers_copy.name} "
                 "to ignore it)."
+            )
+
+        for stray in _other_newer_workbooks(out_path):
+            run_warnings.append(
+                f"{stray.name} in out/ is newer than {out_path.name}, but only {out_path.name} "
+                "is read: if your decisions are in it, save or export it over "
+                f"{out_path.name} and re-run"
             )
 
         # Read the expert's Decision/Hint off the *previous* workbook before any

@@ -34,9 +34,6 @@ from talent_angels.skills.locate.resolve import node_ref
 from talent_angels.tagging.ledger import Ledger
 from talent_angels.tagging.models import CandidateRef, TagRecord, TagUnit, Verdict
 
-#: A hidden-column search over the first N rows of a sheet finds the header
-#: row even if the expert inserted a banner or two above it.
-_HEADER_SCAN_ROWS = 10
 _MAX_RETRY_ATTEMPTS = 2
 _EXACT_METHODS = frozenset({"exact_code", "exact_pref", "exact_alt", "casefold_pref"})
 _REVIEWER_GAP_HINT = "reviewer says an existing skill fits"
@@ -162,12 +159,12 @@ def _find_header(
 ) -> tuple[int, dict[str, int]] | None:
     """The header row + `{column name (casefold, stripped) -> 1-based index}`.
 
-    Scans the first `_HEADER_SCAN_ROWS` rows for one containing a cell equal
-    to `required` and a cell starting with `decision_prefix` — tolerant of a
-    title row above it, and of the sheet being otherwise sorted/filtered.
+    Scans every row for one containing a cell equal to `required` and a cell
+    starting with `decision_prefix`. Not just the top: Apple Numbers imports
+    the sheet without header rows, so sorting it there moves the header (and
+    the title row) in among the data.
     """
-    max_row = min(ws.max_row, _HEADER_SCAN_ROWS)
-    for row_idx in range(1, max_row + 1):
+    for row_idx in range(1, ws.max_row + 1):
         values: dict[str, int] = {}
         has_required = False
         has_decision = False
@@ -184,6 +181,11 @@ def _find_header(
         if has_required and has_decision:
             return row_idx, values
     return None
+
+
+def _data_rows(ws: Any, header_row: int) -> list[int]:
+    """Every row but the header: rows are matched by their own key cell, not by position."""
+    return [row_idx for row_idx in range(1, ws.max_row + 1) if row_idx != header_row]
 
 
 def _col(columns: dict[str, int], *names: str) -> int | None:
@@ -217,7 +219,7 @@ def _read_review_sheet(ws: Any, source_sha: str, warnings: list[str]) -> list[Re
     col_row_id = _col(columns, "row id")
 
     decisions: list[ReviewDecision] = []
-    for row_idx in range(header_row + 1, ws.max_row + 1):
+    for row_idx in _data_rows(ws, header_row):
         decision_text = _cell_text(ws, row_idx, col_decision)
         unit_key = _cell_text(ws, row_idx, col_key)
         suite = _cell_text(ws, row_idx, col_suite)
@@ -269,7 +271,7 @@ def _read_gaps_sheet(ws: Any, source_sha: str, warnings: list[str]) -> list[Revi
     col_row_id = _col(columns, "row id")
 
     decisions: list[ReviewDecision] = []
-    for row_idx in range(header_row + 1, ws.max_row + 1):
+    for row_idx in _data_rows(ws, header_row):
         answer = _cell_text(ws, row_idx, col_decision)
         if not answer:
             continue
@@ -331,7 +333,7 @@ def decision_cells(path: Path) -> dict[tuple[str, str], tuple[str, str]]:
     col_key, col_suite = _col(columns, "key"), _col(columns, "suite")
     col_decision, col_hint = _col(columns, "decision"), _col(columns, "hint")
     cells: dict[tuple[str, str], tuple[str, str]] = {}
-    for row_idx in range(header_row + 1, ws.max_row + 1):
+    for row_idx in _data_rows(ws, header_row):
         text, hint = _cell_text(ws, row_idx, col_decision), _cell_text(ws, row_idx, col_hint)
         unit_key, suite = _cell_text(ws, row_idx, col_key), _cell_text(ws, row_idx, col_suite)
         if (text or hint) and unit_key and suite:
@@ -366,10 +368,23 @@ def read_decisions(path: Path) -> tuple[list[ReviewDecision], list[str]]:
     source_sha = _source_sha(path)
     workbook = load_workbook(path, data_only=True)
     decisions: list[ReviewDecision] = []
-    if "Review" in workbook.sheetnames:
-        decisions.extend(_read_review_sheet(workbook["Review"], source_sha, warnings))
-    if "Gaps" in workbook.sheetnames:
-        decisions.extend(_read_gaps_sheet(workbook["Gaps"], source_sha, warnings))
+    for name, reader, prefix in (
+        ("Review", _read_review_sheet, "decision"),
+        ("Gaps", _read_gaps_sheet, "reviewer confirms gap"),
+    ):
+        if name not in workbook.sheetnames:
+            continue
+        ws = workbook[name]
+        if _find_header(ws, required="key", decision_prefix=prefix) is None:
+            if not any(cell.value is not None for row in ws.iter_rows() for cell in row):
+                continue
+            warnings.append(
+                f"{name} sheet: its header row (with the 'key' and decision columns) is gone, "
+                "so no decisions could be read from it; re-run without changes to get a fresh "
+                "workbook"
+            )
+            continue
+        decisions.extend(reader(ws, source_sha, warnings))
     return decisions, warnings
 
 
@@ -693,7 +708,8 @@ def apply_decisions(
         if latest is None or latest.fingerprint != decision.base_fp:
             outcome.warnings.append(
                 f"row {decision.row_id or decision.unit_key}/{decision.suite} changed since this "
-                "workbook was written; decision ignored"
+                "workbook was written; decision ignored (if you kept an older copy open in "
+                "Numbers or Excel, reopen the file in out/ and decide again)"
             )
             continue
 

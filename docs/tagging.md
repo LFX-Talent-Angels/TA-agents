@@ -247,7 +247,12 @@ over `out/<doc>-tagged.xlsx`, replacing it. If a `.numbers` file in `out/` is
 newer than the workbook, the run stops before doing anything and says so. The
 exported file keeps everything the tool needs (an extra "Export Summary" sheet
 that Numbers adds is ignored); the dropdown may disappear, but typing the
-decision works the same.
+decision works the same. Sorting or filtering the sheets in Numbers is fine:
+rows are matched by their hidden `key` column (Numbers shows it), never by
+position, so leave the `key`, `suite`, `alt_ids` and `fp` columns as they are.
+If the export lands in `out/` under another name, the run points it out.
+Finder's `.DS_Store` and other macOS system files in `inputs/` are ignored; a
+`.numbers` input must be exported to Excel or CSV first.
 
 ### Known limitations
 

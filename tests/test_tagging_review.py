@@ -808,3 +808,43 @@ def test_a_later_decision_cancels_a_pending_retry(tmp_path: Path) -> None:
     )
 
     assert pending_retries(Ledger(tmp_path / ".ta-tag")) == {}
+
+
+# --- a sheet sorted in Apple Numbers -------------------------------------------------
+
+
+def test_decisions_are_read_after_the_sheet_was_sorted_with_its_header(tmp_path: Path) -> None:
+    """Numbers imports the sheet with no header rows, so a sort moves the title and
+    header rows in among the data; every decision must still be read."""
+    path = tmp_path / "out.xlsx"
+    _review_sheet(path, [], banner=False)
+    workbook = openpyxl.load_workbook(path)
+    ws = workbook["Review"]
+    header = [cell.value for cell in ws[1]]
+    ws.delete_rows(1)
+    ws.append(_row("3", "u1", "esco", "Approve"))
+    ws.append(["Review — set a Decision on any row, save, and re-run the same command"])
+    ws.append(header)
+    ws.append(_row("4", "u2", "esco", "Mark as gap"))
+    workbook.save(path)
+
+    decisions, warnings = read_decisions(path)
+
+    assert warnings == []
+    assert {(d.unit_key, d.action) for d in decisions} == {
+        ("u1", ReviewAction.APPROVE),
+        ("u2", ReviewAction.MARK_GAP),
+    }
+
+
+def test_a_sheet_whose_header_row_was_deleted_says_so(tmp_path: Path) -> None:
+    path = tmp_path / "out.xlsx"
+    _review_sheet(path, [_row("3", "u1", "esco", "Approve")])
+    workbook = openpyxl.load_workbook(path)
+    workbook["Review"].delete_rows(1)
+    workbook.save(path)
+
+    decisions, warnings = read_decisions(path)
+
+    assert decisions == []
+    assert any("header row" in w for w in warnings)

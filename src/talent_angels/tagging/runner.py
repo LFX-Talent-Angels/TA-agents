@@ -219,8 +219,14 @@ def _rewrite_phase(
     *,
     system: str,
     document_label: str,
+    workers: int = 1,
+    progress: Callable[[int, int], None] | None = None,
 ) -> tuple[dict[str, Rewrite], list[StageUsage]]:
-    """Fill in a `Rewrite` for every unit that needs one, cache-first, grouped by parent."""
+    """Fill in a `Rewrite` for every unit that needs one, cache-first, grouped by parent.
+
+    Batches never depend on each other, so they run `workers` at a time; the
+    cache is written from this thread only, as each batch comes back.
+    """
     rewrites: dict[str, Rewrite] = {}
     stages: list[StageUsage] = []
     pending_by_group: dict[str, list[TagUnit]] = defaultdict(list)
@@ -234,17 +240,43 @@ def _rewrite_phase(
             continue
         pending_by_group[unit.group_key].append(unit)
 
-    for group_units in pending_by_group.values():
-        for start in range(0, len(group_units), _REWRITE_CHUNK):
-            chunk = group_units[start : start + _REWRITE_CHUNK]
-            chunk_map, chunk_stages = rewrite_group(
-                client, chunk, doc_context, system=system, document_label=document_label
-            )
-            stages.extend(chunk_stages)
-            for unit in chunk:
-                rw = chunk_map.get(unit.unit_key, Rewrite())
-                rewrites[unit.unit_key] = rw
-                ledger.rewrite_append(rewrite_cache_key(unit, model, REWRITE_VERSION), rw)
+    chunks = [
+        group_units[start : start + _REWRITE_CHUNK]
+        for group_units in pending_by_group.values()
+        for start in range(0, len(group_units), _REWRITE_CHUNK)
+    ]
+
+    def _one(chunk: list[TagUnit]) -> tuple[dict[str, Rewrite], list[StageUsage]]:
+        return rewrite_group(
+            client, chunk, doc_context, system=system, document_label=document_label
+        )
+
+    def _store(chunk: list[TagUnit], result: tuple[dict[str, Rewrite], list[StageUsage]]) -> None:
+        chunk_map, chunk_stages = result
+        stages.extend(chunk_stages)
+        for unit in chunk:
+            rw = chunk_map.get(unit.unit_key, Rewrite())
+            rewrites[unit.unit_key] = rw
+            ledger.rewrite_append(rewrite_cache_key(unit, model, REWRITE_VERSION), rw)
+
+    done = 0
+    if workers > 1 and len(chunks) > 1:
+        with ThreadPoolExecutor(max_workers=workers) as executor:
+            futures = {
+                executor.submit(contextvars.copy_context().run, _one, chunk): index
+                for index, chunk in enumerate(chunks)
+            }
+            for future in as_completed(futures):
+                _store(chunks[futures[future]], future.result())
+                done += 1
+                if progress is not None:
+                    progress(done, len(chunks))
+    else:
+        for chunk in chunks:
+            _store(chunk, _one(chunk))
+            done += 1
+            if progress is not None:
+                progress(done, len(chunks))
     return rewrites, stages
 
 
@@ -255,7 +287,9 @@ def run(
     opts: RunOptions,
     llm_client: LLMClient | None = None,
     progress: Callable[[str], None] | None = None,
+    step_progress: Callable[[str, int, int], None] | None = None,
 ) -> RunSummary:
+    """`progress` gets readable lines; `step_progress` (label, done, total) feeds a live bar."""
     start = time.perf_counter()
     run_id = str(uuid.uuid4())
     llm_on = not opts.no_llm and llm_client is not None
@@ -268,6 +302,9 @@ def run(
     def say(message: str) -> None:
         if progress is not None:
             progress(message)
+
+    def counter(label: str) -> Callable[[int, int], None]:
+        return _step_counter(say, label, step_progress)
 
     profile = load_profile(project, name=opts.profile)
     if opts.depth is not None:
@@ -375,6 +412,8 @@ def run(
                     model,
                     system=rewrite_sys,
                     document_label=profile.document_label,
+                    workers=opts.workers,
+                    progress=counter(f"{doc.key}: step 1/4 skill phrases, batch"),
                 )
                 rewrites = rw_map
                 doc_stages.extend(rw_stages)
@@ -480,7 +519,9 @@ def run(
                     )
 
                 # After the row, so the counts include it (the last line adds up).
-                if progress is not None and (index % 10 == 0 or index == len(units)):
+                if step_progress is not None:
+                    step_progress(f"{doc.key}: step 2/4 searching taxonomies", index, len(units))
+                elif progress is not None and (index % 10 == 0 or index == len(units)):
                     say(
                         f"{doc.key}: step 2/4 rows {index}/{len(units)} "
                         f"({searched} answers searched, {reused} reused)"
@@ -490,7 +531,7 @@ def run(
                 pending,
                 llm_client=llm_client,
                 llm_on=llm_on,
-                progress=_step_counter(say, f"{doc.key}: step 3/4 model choosing among candidates"),
+                progress=counter(f"{doc.key}: step 3/4 model choosing among candidates"),
                 workers=opts.workers,
                 system=choose_sys,
                 document_label=profile.document_label,
@@ -689,11 +730,18 @@ def run(
     )
 
 
-def _step_counter(say: Callable[[str], None], label: str) -> Callable[[int, int], None]:
-    """A `done/total` reporter bound to one document's step label."""
+def _step_counter(
+    say: Callable[[str], None],
+    label: str,
+    step_progress: Callable[[str, int, int], None] | None = None,
+) -> Callable[[int, int], None]:
+    """A `done/total` reporter: every tick to a live bar, else a line every 10."""
 
     def report(done: int, total: int) -> None:
-        say(f"{label} {done}/{total}")
+        if step_progress is not None:
+            step_progress(label, done, total)
+        elif done % 10 == 0 or done == total:
+            say(f"{label} {done}/{total}")
 
     return report
 
@@ -743,9 +791,8 @@ def _decide_pending(
 
     def _tick() -> None:
         # The longest phase of a run: without a counter it looks frozen.
-        done = len(choose_results)
-        if progress is not None and (done % 10 == 0 or done == total):
-            progress(done, total)
+        if progress is not None:
+            progress(len(choose_results), total)
 
     if needs_choose:
         if workers > 1:

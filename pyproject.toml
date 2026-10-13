@@ -45,7 +45,7 @@ dev = [
 # lookup). Bump to the merge commit when the TA-taxonomies stack lands in `dev`.
 # Keep in step with the `app` dependency group below.
 taxonomies = [
-  "ta-taxonomies @ git+https://github.com/LFX-Talent-Angels/TA-taxonomies.git@2b5d80687e8ab6d20111778a7d16ca77f1440196",
+  "ta-taxonomies @ git+https://github.com/LFX-Talent-Angels/TA-taxonomies.git@db54b4ec3e0ee7014d94cf954e4cc376413abc6d",
   "openpyxl",
 ]
 # Free, local embeddings (all-MiniLM-L6-v2, CPU): the same model the suites use
@@ -59,7 +59,7 @@ local-embed = [
 # the local embedding model. pip users keep using the extras.
 [dependency-groups]
 app = [
-  "ta-taxonomies @ git+https://github.com/LFX-Talent-Angels/TA-taxonomies.git@2b5d80687e8ab6d20111778a7d16ca77f1440196",
+  "ta-taxonomies @ git+https://github.com/LFX-Talent-Angels/TA-taxonomies.git@db54b4ec3e0ee7014d94cf954e4cc376413abc6d",
   "openpyxl",
   "sentence-transformers>=3",
 ]

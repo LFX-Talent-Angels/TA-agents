@@ -106,11 +106,13 @@ def test_the_runtime_imports_every_symbol_it_needs_from_taxonomies() -> None:
     from ta_taxonomies.contract.schema import SuiteSchema
     from ta_taxonomies.suites.esco.tools import EscoSuite
     from ta_taxonomies.suites.onet.tools import OnetSuite
+    from ta_taxonomies.suites.sfia.tools import SfiaSuite
 
     import talent_angels.suites.esco  # noqa: F401
     import talent_angels.suites.onet  # noqa: F401
+    import talent_angels.suites.sfia  # noqa: F401
     from talent_angels.suites.schema import SuiteSchema as Reexported
 
     assert Reexported is SuiteSchema
-    for suite in (EscoSuite, OnetSuite):
+    for suite in (EscoSuite, OnetSuite, SfiaSuite):
         assert hasattr(suite, "suite_schema"), suite

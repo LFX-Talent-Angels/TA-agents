@@ -217,3 +217,23 @@ def test_a_plain_rerun_keeps_no_history_copy(project: Path) -> None:
     run(project, registry=_registry(), opts=RunOptions())
     run(project, registry=_registry(), opts=RunOptions())
     assert not (project / "out" / "history").exists()
+
+
+def test_a_newer_numbers_save_stops_the_run_before_any_work(project: Path) -> None:
+    """Numbers saves edits as `.numbers`: the decisions must not be silently ignored."""
+    import time
+
+    run(project, registry=_registry(), opts=RunOptions())
+    doc = read_document(project / "inputs" / "standard.json")
+    out_path = project / "out" / f"{doc.key}-tagged.xlsx"
+    time.sleep(0.01)
+    numbers_copy = out_path.with_suffix(".numbers")
+    numbers_copy.write_text("numbers document")
+
+    with pytest.raises(WorkbookOpenError, match="Export To > Excel"):
+        run(project, registry=_registry(), opts=RunOptions())
+
+    # Once exported over the xlsx (now the newer file), the run goes ahead.
+    os.utime(out_path, None)
+    os.utime(numbers_copy, (0, 0))
+    run(project, registry=_registry(), opts=RunOptions())

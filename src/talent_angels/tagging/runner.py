@@ -82,7 +82,22 @@ _REWRITE_CHUNK = 6
 
 
 class WorkbookOpenError(RuntimeError):
-    """A previous `out/<doc>-tagged.xlsx` is still open (Excel's `~$` lock file)."""
+    """The previous workbook can't be read safely: still open in Excel, or edited in Numbers."""
+
+
+def _newer_numbers_copy(out_path: Path) -> Path | None:
+    """A `.numbers` save of the workbook newer than the `.xlsx`, if any.
+
+    Apple Numbers saves edits of an `.xlsx` as a separate `.numbers` file, so
+    the reviewer's decisions would be silently ignored: stop and say so.
+    """
+    if not out_path.is_file():
+        return None
+    xlsx_mtime = out_path.stat().st_mtime
+    for candidate in sorted(out_path.parent.glob(f"{out_path.stem}*.numbers")):
+        if candidate.stat().st_mtime > xlsx_mtime:
+            return candidate
+    return None
 
 
 @dataclass
@@ -303,6 +318,14 @@ def run(
         if lock_path.exists():
             raise WorkbookOpenError(f"close {lock_path} in Excel and re-run")
         out_path = out_dir / f"{doc.key}-tagged.xlsx"
+        numbers_copy = _newer_numbers_copy(out_path)
+        if numbers_copy is not None:
+            raise WorkbookOpenError(
+                f"{numbers_copy.name} is newer than {out_path.name}: your decisions are in the "
+                "Numbers file, which this tool cannot read. In Numbers choose File > Export To > "
+                f"Excel and save it over {out_path}, then re-run (or delete {numbers_copy.name} "
+                "to ignore it)."
+            )
 
         # Read the expert's Decision/Hint off the *previous* workbook before any
         # search or model spend happens for this doc (PILOT-PLAN.md "Review loop").

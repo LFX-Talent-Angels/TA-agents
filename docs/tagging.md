@@ -225,6 +225,16 @@ uv run ta-agent tag data/local/sprint7/pilot-run --fresh
 | `unavailable` | The suite was down this run (not cached — retried every run until it's back). |
 | `n/a` | This suite has no concept of this row's kind (e.g. no "occupation" node type) — not a gap. |
 
+### Editing on a Mac without Excel (Apple Numbers)
+
+Numbers saves your edits as a separate `.numbers` file, which this tool cannot
+read. After setting decisions, choose **File > Export To > Excel** and save it
+over `out/<doc>-tagged.xlsx`, replacing it. If a `.numbers` file in `out/` is
+newer than the workbook, the run stops before doing anything and says so. The
+exported file keeps everything the tool needs (an extra "Export Summary" sheet
+that Numbers adds is ignored); the dropdown may disappear, but typing the
+decision works the same.
+
 ### Known limitations
 
 - If the model call itself fails during a retry, that row shows `error`

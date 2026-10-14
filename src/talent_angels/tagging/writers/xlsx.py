@@ -68,17 +68,19 @@ _VERDICT_ICON = {
     Verdict.HUMAN_GAP: "✔ gap (confirmed)",
 }
 
-#: Review sheet sort order (PR4 "Review loop"): rows still needing a look
-#: first, then policy-accepted, then anything the reviewer already settled.
+#: Review sheet sort order: best match first, so the sheet opens on what
+#: worked, down to the gaps. Rows whose run failed (`error`, `unavailable`)
+#: stay above everything: rare, and easy to miss at the bottom. Ties keep
+#: document order. Rows are matched by key, so re-sorting in Excel/Numbers is safe.
 _SORT_TIER = {
-    Verdict.REVIEW: 0,
-    Verdict.ADJACENT: 0,
-    Verdict.GAP: 0,
     Verdict.ERROR: 0,
     Verdict.UNAVAILABLE: 0,
-    Verdict.ACCEPTED: 1,
-    Verdict.HUMAN_ACCEPTED: 2,
-    Verdict.HUMAN_GAP: 2,
+    Verdict.HUMAN_ACCEPTED: 1,
+    Verdict.ACCEPTED: 2,
+    Verdict.REVIEW: 3,
+    Verdict.ADJACENT: 4,
+    Verdict.GAP: 5,
+    Verdict.HUMAN_GAP: 6,
 }
 
 _PREVIOUS_DECISION_LABELS = {
@@ -319,7 +321,7 @@ def _review_rows(
                 alt_ids,
                 record.fingerprint,
             ]
-            priority = _SORT_TIER.get(record.verdict, 1)
+            priority = _SORT_TIER.get(record.verdict, len(_SORT_TIER))
             collected.append((priority, row, _VERDICT_FILL.get(record.verdict.value)))
     # Stable sort: ties (same priority) keep the document order they were
     # appended in (unit, then suite within unit).

@@ -263,7 +263,7 @@ Finder's `.DS_Store` and other macOS system files in `inputs/` are ignored; a
 ### Known limitations
 
 - If the model call itself fails during a retry, that row shows `error`
-  (sorted to the top of the Review sheet) until the next run repeats the
+  (failed rows sit at the top of the Review sheet, above the best matches) until the next run repeats the
   retry with the same hint.
 - Most rows of an emerging-field standard come back `adjacent`: the
   taxonomies (ESCO v1.2.1, O*NET 31.0) have no prompt-engineering entries.

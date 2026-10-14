@@ -275,3 +275,37 @@ def test_true_gaps_come_before_adjacent_rows_on_the_gaps_sheet() -> None:
     }
     rows = build_gap_rows(units, results, ["esco"], frozenset({"performance"}))
     assert [row.row_id for row in rows] == ["2", "1", "3"]
+
+
+def test_review_sheet_shows_best_matches_first_and_failures_on_top(
+    tmp_path: Path, _doc: Document
+) -> None:
+    order = [
+        Verdict.GAP,
+        Verdict.ADJACENT,
+        Verdict.HUMAN_GAP,
+        Verdict.ACCEPTED,
+        Verdict.REVIEW,
+        Verdict.HUMAN_ACCEPTED,
+        Verdict.ERROR,
+    ]
+    units = [_unit(f"u{i}", str(10 + i), f"line {i}") for i in range(len(order))]
+    results = {
+        (unit.unit_key, "esco"): _record(unit, "esco", verdict)
+        for unit, verdict in zip(units, order, strict=True)
+    }
+
+    out_path = write_workbook(tmp_path / "out.xlsx", _doc, units, [], results, ["esco"], {})
+
+    review = openpyxl.load_workbook(out_path)["Review"]
+    verdict_col = [c.value for c in review[2]].index("Verdict") + 1
+    shown = [review.cell(row=r, column=verdict_col).value for r in range(3, review.max_row + 1)]
+    assert shown == [
+        "❌ error",
+        "✔ approved",
+        "✅ accepted",
+        "🔍 review",
+        "🟡 adjacent",
+        "🔴 gap",
+        "✔ gap (confirmed)",
+    ]

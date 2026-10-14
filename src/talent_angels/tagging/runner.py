@@ -135,6 +135,11 @@ class _Pending:
     is_retry: bool = False
 
 
+#: Documents a client may hand over alongside the export (the Word original,
+#: notes): kept as reference, never read as rows to tag.
+_REFERENCE_SUFFIXES = frozenset({".docx", ".doc", ".pdf", ".md", ".txt", ".rtf", ".pptx", ".key"})
+
+
 def _system_file(name: str) -> bool:
     """Files the OS or an office app puts in a folder on its own (Finder's
     `.DS_Store`, `._*` AppleDouble files, the custom-folder-icon `Icon\r`,
@@ -167,7 +172,14 @@ def _scan(folder: Path) -> tuple[list[Path], list[str]]:
             warnings.append(describe_csv_twin(entry, entry.with_suffix(".json")))
             continue
         if not any(reader.can_read(entry) for reader in READERS):
-            warnings.append(f"{entry.name}: no reader recognizes this file")
+            if entry.suffix.lower() in _REFERENCE_SUFFIXES:
+                warnings.append(
+                    f"{entry.name}: a reference document, not tagged (only structured exports "
+                    "and tables are); move it to inputs/context/ to keep it with the project "
+                    "without this note"
+                )
+            else:
+                warnings.append(f"{entry.name}: no reader recognizes this file")
             continue
         files.append(entry)
     return files, warnings

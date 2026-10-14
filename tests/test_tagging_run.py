@@ -284,3 +284,15 @@ def test_an_export_saved_under_another_name_is_pointed_out(project: Path) -> Non
     summary = run(project, registry=_registry(), opts=RunOptions())
 
     assert any(stray.name in w and "only" in w for w in summary.warnings)
+
+
+def test_a_reference_document_in_inputs_gets_a_plain_note(project: Path) -> None:
+    (project / "inputs" / "Standard original.docx").write_bytes(b"PK\x03\x04")
+    (project / "inputs" / "context").mkdir()
+    (project / "inputs" / "context" / "notes.pdf").write_bytes(b"%PDF")
+
+    summary = run(project, registry=_registry(), opts=RunOptions())
+
+    notes = [w for w in summary.warnings if "Standard original.docx" in w]
+    assert notes and "reference document, not tagged" in notes[0]
+    assert not any("notes.pdf" in w for w in summary.warnings)  # context/ is never scanned

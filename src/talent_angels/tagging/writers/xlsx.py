@@ -107,6 +107,7 @@ _REASON_SENTENCES = {
     "human_alternative": "The reviewer chose this alternative.",
     "human_tag": "The reviewer chose this tag.",
     "human_gap": "The reviewer confirmed that no taxonomy entry fits.",
+    # Written before a retry past the limit was refused instead (older ledgers).
     "retries_exhausted": "Still no fit after two reviewer retries; recorded as a confirmed gap.",
 }
 

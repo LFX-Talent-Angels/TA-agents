@@ -13,6 +13,10 @@ document_label: Document
 depth: all
 groups: false
 
+# How many times a reviewer may Retry with hint / Reject one answer before the
+# tool asks for Use my tag or Mark as gap instead.
+max_retries: 2
+
 # No heading text assigns a kind — every row falls through to `default_kind`.
 kinds: {}
 row_rules: []

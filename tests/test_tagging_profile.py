@@ -170,3 +170,16 @@ def test_tag_yaml_overrides_apply_on_top_of_a_path_profile(tmp_path: Path) -> No
     profile = load_profile(project_dir=project)
     assert profile.name == "base"
     assert profile.include_kinds == ["item", "extra"]
+
+
+def test_max_retries_defaults_to_two_and_can_be_set_per_project(tmp_path: Path) -> None:
+    assert load_profile().max_retries == 2
+    assert load_profile(name="generic").max_retries == 2
+    (tmp_path / "tag.yaml").write_text("max_retries: 3\n")
+    assert load_profile(project_dir=tmp_path).max_retries == 3
+
+
+def test_max_retries_cannot_be_negative(tmp_path: Path) -> None:
+    (tmp_path / "tag.yaml").write_text("max_retries: -1\n")
+    with pytest.raises(ValueError, match="max_retries"):
+        load_profile(project_dir=tmp_path)

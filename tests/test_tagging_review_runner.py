@@ -555,3 +555,24 @@ def test_the_second_look_reports_its_own_progress(project: Path) -> None:
     )
     second_look = [(done, total) for label, done, total in ticks if "step 4/4" in label]
     assert second_look == [(n, len(_GAP_KEYWORDS)) for n in range(1, len(_GAP_KEYWORDS) + 1)]
+
+
+def test_a_project_setting_changes_the_retry_limit(project: Path) -> None:
+    (project / "tag.yaml").write_text("groups: false\nmax_retries: 0\n")
+    _first_run_with_retry_on_13(project)
+
+    summary = run(
+        project,
+        registry=_registry()[0],
+        opts=RunOptions(no_llm=False),
+        llm_client=ReviewScriptedClient(),
+    )
+
+    assert summary.retried == 0
+    assert any("not retried again" in w for w in summary.warnings)
+    out_path = Path(summary.outputs[0])
+    _, ws = _open_review(out_path)
+    row = _row_by_id(ws, "13", _header_index(ws, "Row ID"))
+    assert ws.cell(row=row, column=_header_index(ws, "Decision ▼")).value == "Retry with hint"  # type: ignore[attr-defined]
+    previous = str(ws.cell(row=row, column=_header_index(ws, "Previous decision")).value)  # type: ignore[attr-defined]
+    assert previous.startswith("Not retried")

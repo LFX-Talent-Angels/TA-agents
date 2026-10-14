@@ -480,6 +480,7 @@ def run(
                 search_by_suite=_search_by_suite(suites),
                 lookup_by_suite=_lookup_by_suite(suites),
                 run_id=run_id,
+                max_retries=profile.max_retries,
             )
             run_warnings.extend(review_outcome.warnings)
             kept_decisions = kept_cells(review_cells, review_outcome.unapplied)

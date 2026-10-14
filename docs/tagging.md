@@ -201,8 +201,10 @@ uv run ta-agent tag data/local/sprint7/pilot-run --fresh
      testing"). The hint is searched as well, and its best matches head the
      candidate list; the model is asked again with the hint and more of the
      standard's own context (parent heading, then grandparent + sibling lines
-     on a second retry). Up to 2 retries per row; a 3rd becomes a confirmed
-     gap automatically. The pilot's own second look doesn't count as one.
+     on a second retry). Up to 2 retries per answer (`max_retries` in
+     `tag.yaml`); one more is refused, not guessed: the decision stays in its
+     cell, and the row asks you to choose Use my tag or Mark as gap instead.
+     The pilot's own second look doesn't count as a retry.
      A retry is only done once it has produced an answer: if the run is
      stopped, the model call fails, or the row isn't part of this run
      (`--rows`, `--limit`, `--suites`), the next run does it, hint included.

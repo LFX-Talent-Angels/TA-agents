@@ -34,7 +34,7 @@ from talent_angels.skills.locate.resolve import node_ref
 from talent_angels.tagging.ledger import Ledger
 from talent_angels.tagging.models import CandidateRef, TagRecord, TagUnit, Verdict
 
-_MAX_RETRY_ATTEMPTS = 2
+_DEFAULT_MAX_RETRIES = 2
 _EXACT_METHODS = frozenset({"exact_code", "exact_pref", "exact_alt", "casefold_pref"})
 _REVIEWER_GAP_HINT = "reviewer says an existing skill fits"
 #: Gaps-sheet answers, after casefolding and stripping accents ("Sí" -> "si").
@@ -499,16 +499,24 @@ def _apply_retry_or_reject(
     decision: ReviewDecision,
     latest: TagRecord,
     *,
-    run_id: str,
     retries_so_far: int,
+    max_retries: int,
     warnings: list[str],
-) -> TagRecord | RetryRequest:
-    if retries_so_far >= _MAX_RETRY_ATTEMPTS:
+    notes: dict[tuple[str, str], str],
+) -> RetryRequest | None:
+    if retries_so_far >= max_retries:
+        # Not turned into a gap on the reviewer's behalf: "still wrong" is not
+        # "nothing fits". The decision stays in its cell for them to change.
         warnings.append(
             f"row {decision.row_id or decision.unit_key}/{decision.suite}: already retried "
-            f"{_MAX_RETRY_ATTEMPTS} times; marked as a confirmed gap"
+            f"{retries_so_far} times, so not retried again; choose Use my tag or Mark as gap"
         )
-        return _apply_mark_gap(latest, run_id=run_id, reason_code="retries_exhausted")
+        notes[(decision.unit_key, decision.suite)] = (
+            f"Not retried: this answer was already retried {retries_so_far} times "
+            f"(the limit is {max_retries}). If you know the right tag, choose Use my tag and "
+            "paste its id in Hint; if nothing fits, choose Mark as gap."
+        )
+        return None
     hint = decision.hint if decision.action == ReviewAction.RETRY else ""
     return RetryRequest(hint=hint, attempt=latest.attempt + 1, level=retries_so_far + 1)
 
@@ -711,6 +719,7 @@ def apply_decisions(
     search_by_suite: Callable[[str], Callable[[str, str | None], object] | None],
     run_id: str,
     lookup_by_suite: Callable[[str], Callable[[str], object | None] | None] | None = None,
+    max_retries: int = _DEFAULT_MAX_RETRIES,
 ) -> ReviewOutcome:
     """Apply every unseen decision; skip (silently) any already in `reviews.jsonl`.
 
@@ -772,9 +781,10 @@ def apply_decisions(
             result = _apply_retry_or_reject(
                 decision,
                 latest,
-                run_id=run_id,
                 retries_so_far=retries_so_far,
+                max_retries=max_retries,
                 warnings=outcome.warnings,
+                notes=outcome.notes,
             )
         elif decision.action == ReviewAction.USE_MY_TAG:
             result = _apply_use_my_tag(
@@ -816,11 +826,7 @@ def apply_decisions(
         else:
             ledger.append(result)
             outcome.human_records.append(result)
-            payload["result"] = (
-                "retries_exhausted"
-                if result.reason_code == "retries_exhausted"
-                else result.verdict.value
-            )
+            payload["result"] = result.verdict.value
 
         outcome.applied += 1
         ledger.review_append(payload)

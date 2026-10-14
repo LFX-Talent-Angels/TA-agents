@@ -347,9 +347,10 @@ def _log_reviewer_retry(ledger: Ledger, n: int) -> None:
     )
 
 
-def test_reject_after_two_retries_becomes_human_gap_exhausted(tmp_path: Path) -> None:
+def test_a_retry_past_the_limit_is_refused_not_turned_into_a_gap(tmp_path: Path) -> None:
+    """ "Still wrong" is not "nothing fits": the tool must not decide that for the reviewer."""
     ledger = Ledger(tmp_path / ".ta-tag")
-    ledger.append(_record(attempt=2))
+    ledger.append(_record(attempt=2, verdict=Verdict.ADJACENT))
     _log_reviewer_retry(ledger, 1)
     _log_reviewer_retry(ledger, 2)
 
@@ -358,9 +359,40 @@ def test_reject_after_two_retries_becomes_human_gap_exhausted(tmp_path: Path) ->
     )
 
     assert outcome.retries == {}
-    [record] = outcome.human_records
-    assert record.verdict == Verdict.HUMAN_GAP
-    assert record.reason_code == "retries_exhausted"
+    assert outcome.human_records == []
+    assert outcome.applied == 0
+    assert outcome.unapplied == {("u1", "esco")}  # the decision stays in its cell
+    assert any("not retried again" in w for w in outcome.warnings)
+    note = outcome.notes[("u1", "esco")]
+    assert "Use my tag" in note and "Mark as gap" in note
+    assert ledger.latest_for("u1", "esco").verdict == Verdict.ADJACENT  # type: ignore[union-attr]
+
+
+def test_the_retry_limit_is_a_setting(tmp_path: Path) -> None:
+    ledger = Ledger(tmp_path / ".ta-tag")
+    ledger.append(_record(attempt=2, verdict=Verdict.ADJACENT))
+    _log_reviewer_retry(ledger, 1)
+    _log_reviewer_retry(ledger, 2)
+
+    allowed = apply_decisions(
+        [_decision(action=ReviewAction.RETRY, hint="third try")],
+        ledger,
+        search_by_suite=_no_search,
+        run_id="r1",
+        max_retries=3,
+    )
+    assert allowed.retries == {("u1", "esco"): RetryRequest(hint="third try", attempt=3, level=3)}
+
+    ledger_none = Ledger(tmp_path / "other")
+    ledger_none.append(_record(verdict=Verdict.ADJACENT))
+    refused = apply_decisions(
+        [_decision(action=ReviewAction.RETRY, hint="x")],
+        ledger_none,
+        search_by_suite=_no_search,
+        run_id="r1",
+        max_retries=0,
+    )
+    assert refused.retries == {}
 
 
 def test_automatic_second_look_does_not_use_up_a_reviewer_retry(tmp_path: Path) -> None:
@@ -675,23 +707,6 @@ def test_use_my_tag_accepts_a_node_id(tmp_path: Path) -> None:
     [record] = outcome.human_records
     assert record.tags[0].id == "esco:skill:987a"
     assert record.tags[0].label == "maintain test equipment"
-
-
-def test_retries_used_up_warns_and_says_so(tmp_path: Path) -> None:
-    ledger = Ledger(tmp_path / ".ta-tag")
-    ledger.append(_record(verdict=Verdict.ADJACENT))
-    _log_reviewer_retry(ledger, 1)
-    _log_reviewer_retry(ledger, 2)
-
-    outcome = apply_decisions(
-        [_decision(action=ReviewAction.RETRY, hint="third")],
-        ledger,
-        search_by_suite=_no_search,
-        run_id="r1",
-    )
-
-    assert any("already retried 2 times" in w for w in outcome.warnings)
-    assert ledger.reviews()[-1]["result"] == "retries_exhausted"
 
 
 # --- precision -------------------------------------------------------------------

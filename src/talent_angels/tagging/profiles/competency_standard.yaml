@@ -23,6 +23,10 @@ depth: leaves
 # requirement" gets a group-level answer and each of its 4 steps its own.
 groups: true
 
+# How many times a reviewer may Retry with hint / Reject one answer before the
+# tool asks for Use my tag or Mark as gap instead.
+max_retries: 2
+
 # Heading text (fullmatch, case-insensitive) -> kind. A row's kind is the
 # nearest ancestor (or itself) whose own text matches one of these — never
 # its Neo4j label.

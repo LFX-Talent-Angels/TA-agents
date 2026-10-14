@@ -759,6 +759,9 @@ def run(
             for key in results
             if (payload := ledger.latest_review_for(*key)) is not None
         }
+        for key, note in review_outcome.notes.items():
+            if key in results:
+                previous_decisions[key] = {"note": note}
         stats = review_stats(ledger, units, suite_names)
 
         out_dir.mkdir(parents=True, exist_ok=True)

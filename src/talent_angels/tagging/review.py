@@ -134,6 +134,8 @@ class ReviewOutcome:
     applied: int = 0
     #: Decisions read but not applied (warned about); their cells are kept.
     unapplied: set[tuple[str, str]] = field(default_factory=set)
+    #: A line for the row's "Previous decision" cell, e.g. tags to choose from.
+    notes: dict[tuple[str, str], str] = field(default_factory=dict)
 
 
 def review_key(decision: ReviewDecision) -> str:
@@ -548,6 +550,7 @@ def _apply_use_my_tag(
     search_by_suite: Callable[[str], Callable[[str, str | None], object] | None],
     lookup_by_suite: Callable[[str], Callable[[str], object | None] | None] | None,
     warnings: list[str],
+    notes: dict[tuple[str, str], str] | None = None,
 ) -> TagRecord | None:
     where = f"row {decision.row_id or decision.unit_key}/{decision.suite}"
     if not decision.hint:
@@ -614,12 +617,27 @@ def _apply_use_my_tag(
             tags=[tag],
             alternatives=[],
         )
-    names = ", ".join(c.node.label for c in candidates[:5]) or "none"
-    warnings.append(
-        f"{where}: '{label}' not found exactly in {decision.suite.upper()}; "
-        f"candidates: {names}. Tip: paste the id shown under the tag (e.g. "
-        f"{decision.suite}:…) into Hint"
-    )
+    # Never guess: a partial or misspelt name is not applied. Offer the closest
+    # tags with their ids, in the workbook row too, so one can be pasted in.
+    options = [f"{c.node.label} ({c.node.id})" for c in candidates[:5]]
+    if options:
+        warnings.append(
+            f"{where}: '{label}' is not exactly one {decision.suite.upper()} tag; did you mean: "
+            + "; ".join(options)
+            + ". Paste one id into Hint and re-run"
+        )
+        if notes is not None:
+            notes[(decision.unit_key, decision.suite)] = (
+                f"Use my tag: '{label}' is not exactly one tag, so nothing was applied. "
+                "Paste one of these ids into Hint and re-run:\n" + "\n".join(options)
+            )
+    else:
+        warnings.append(f"{where}: '{label}' not found in {decision.suite.upper()}")
+        if notes is not None:
+            notes[(decision.unit_key, decision.suite)] = (
+                f"Use my tag: '{label}' was not found in {decision.suite.upper()}; "
+                "nothing was applied"
+            )
     return None
 
 
@@ -766,6 +784,7 @@ def apply_decisions(
                 search_by_suite=search_by_suite,
                 lookup_by_suite=lookup_by_suite,
                 warnings=outcome.warnings,
+                notes=outcome.notes,
             )
         else:  # pragma: no cover - _parse_action never returns an unknown action
             result = None

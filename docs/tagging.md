@@ -209,7 +209,10 @@ uv run ta-agent tag data/local/sprint7/pilot-run --fresh
    - **Use my tag** — put the taxonomy's own id (e.g. `esco:skill:…`,
      `onet:task:3967`) or exact label in Hint. Pasting a whole tag cell works
      too: the id in it is used. Several ids keep exactly those tags, e.g. to
-     keep only the first of two suggested tags, paste just its id.
+     keep only the first of two suggested tags, paste just its id. A partial
+     or misspelt name is never guessed: nothing is applied, the decision stays,
+     and the row's Previous decision cell lists the closest tags with their
+     ids; paste one into Hint and re-run.
 3. On the **Gaps** sheet, one row per confirmed-or-likely gap: answer
    **Yes** ("really is a gap"; `Sí`/`si`/`y` work too) or **No** ("an existing
    skill fits" — same effect as Retry). Yes on an `adjacent` row keeps its

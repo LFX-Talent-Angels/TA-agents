@@ -466,7 +466,12 @@ def test_use_my_tag_not_found_warns_with_candidates(tmp_path: Path) -> None:
     )
 
     assert outcome.human_records == []
-    assert any("not found exactly" in w for w in outcome.warnings)
+    assert outcome.unapplied == {("u1", "esco")}
+    assert any("did you mean" in w and "esco:skill:x" in w for w in outcome.warnings)
+    # The suggestions, with ids to paste, also go into the row in the workbook.
+    note = outcome.notes[("u1", "esco")]
+    assert "nothing was applied" in note
+    assert "contains hit 1 (esco:skill:x)" in note
 
 
 def test_applying_the_same_decision_twice_is_a_no_op(tmp_path: Path) -> None:

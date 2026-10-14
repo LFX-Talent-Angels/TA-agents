@@ -246,6 +246,8 @@ def _format_previous_decision(payload: dict[str, object] | None) -> str:
     """ "Retry with hint 'x' (applied 2026-10-12)" from one `reviews.jsonl` line."""
     if payload is None:
         return ""
+    if "note" in payload:  # this run's message about a decision it could not apply
+        return str(payload["note"])
     action = str(payload.get("action", ""))
     hint = str(payload.get("hint") or "")
     if payload.get("result") == "retries_exhausted":

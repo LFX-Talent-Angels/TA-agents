@@ -40,8 +40,9 @@ _REVIEWER_GAP_HINT = "reviewer says an existing skill fits"
 #: Gaps-sheet answers, after casefolding and stripping accents ("Sí" -> "si").
 _GAP_YES = frozenset({"yes", "y", "si", "s"})
 _GAP_NO = frozenset({"no", "n"})
-#: A suite-scoped node id typed into "Use my tag" ("esco:skill:<uuid>", "onet:task:3967").
-_NODE_ID_RE = re.compile(r"^[a-z][a-z0-9_]*:[A-Za-z_]+:\S+$")
+#: A suite-scoped node id in a "Use my tag" hint ("esco:skill:<uuid>", "onet:task:3967"),
+#: alone or inside text pasted from a tag cell ("Software Developers → …\nonet:…").
+_NODE_ID_RE = re.compile(r"\b([a-z][a-z0-9_]*):([A-Za-z_]+):([^\s,;()]+)")
 #: Verdicts with no tag to approve; Approve on these is refused (gap ones are confirmed).
 _NOTHING_TO_APPROVE = frozenset(
     {Verdict.ERROR, Verdict.UNAVAILABLE, Verdict.NOT_APPLICABLE, Verdict.SKIPPED}
@@ -525,6 +526,20 @@ def _candidate_from_raw(raw: object, suite: str, query: str) -> CandidateRef:
     )
 
 
+def tag_reference(hint: str) -> str:
+    """What a "Use my tag" hint refers to, short: its id(s), else the name before any "→"."""
+    ids = list(
+        dict.fromkeys(
+            f"{m.group(1)}:{m.group(2)}:{m.group(3).rstrip('.')}"
+            for m in _NODE_ID_RE.finditer(hint)
+        )
+    )
+    if ids:
+        return ", ".join(ids)
+    lines = hint.strip().splitlines()
+    return lines[0].split("→")[0].strip() if lines else ""
+
+
 def _apply_use_my_tag(
     decision: ReviewDecision,
     latest: TagRecord,
@@ -545,40 +560,52 @@ def _apply_use_my_tag(
         )
         return None
     lookup = lookup_by_suite(decision.suite) if lookup_by_suite is not None else None
-    if lookup is not None and _NODE_ID_RE.match(decision.hint):
-        node = lookup(decision.hint)
-        if node is not None:
+    reference = tag_reference(decision.hint)
+    ids = reference.split(", ") if _NODE_ID_RE.search(decision.hint) else []
+    if ids:
+        # One or more ids (typed, or pasted with a whole tag cell): keep exactly those.
+        foreign = [node_id for node_id in ids if not node_id.startswith(f"{decision.suite}:")]
+        if foreign:
+            warnings.append(
+                f"{where}: {', '.join(foreign)} is not a {decision.suite.upper()} id; "
+                "use an id from this taxonomy"
+            )
+            return None
+        tags: list[CandidateRef] = []
+        for node_id in ids:
+            node = lookup(node_id) if lookup is not None else None
+            if node is None:
+                warnings.append(f"{where}: {node_id} not found in {decision.suite.upper()}")
+                return None
             ref = node_ref(node, decision.suite)  # type: ignore[arg-type]
-            tag = CandidateRef(
-                suite=decision.suite,
-                id=ref.id,
-                source_id=ref.source_id,
-                kind=ref.kind,
-                label=ref.pref_label,
-                method="id",
-                best_rank=1,
-                hits=1,
-                queries=[decision.hint],
+            tags.append(
+                CandidateRef(
+                    suite=decision.suite,
+                    id=ref.id,
+                    source_id=ref.source_id,
+                    kind=ref.kind,
+                    label=ref.pref_label,
+                    method="id",
+                    best_rank=1,
+                    hits=1,
+                    queries=[node_id],
+                )
             )
-            return _human_copy(
-                latest,
-                run_id=run_id,
-                verdict=Verdict.HUMAN_ACCEPTED,
-                reason_code="human_tag",
-                tags=[tag],
-                alternatives=[],
-            )
-    result = search(decision.hint, None)
+        return _human_copy(
+            latest,
+            run_id=run_id,
+            verdict=Verdict.HUMAN_ACCEPTED,
+            reason_code="human_tag",
+            tags=tags,
+            alternatives=[],
+        )
+    label = reference  # a name: the label part of a pasted "label → covers" line
+    result = search(label, None)
     candidates = list(getattr(result, "candidates", None) or [])
-    exact = [
-        c
-        for c in candidates
-        if getattr(c, "method", "") in _EXACT_METHODS
-        or getattr(c.node, "id", None) == decision.hint
-    ]
+    exact = [c for c in candidates if getattr(c, "method", "") in _EXACT_METHODS]
     unique_ids = {c.node.id for c in exact}
     if len(unique_ids) == 1:
-        tag = _candidate_from_raw(exact[0], decision.suite, decision.hint)
+        tag = _candidate_from_raw(exact[0], decision.suite, label)
         return _human_copy(
             latest,
             run_id=run_id,
@@ -589,8 +616,9 @@ def _apply_use_my_tag(
         )
     names = ", ".join(c.node.label for c in candidates[:5]) or "none"
     warnings.append(
-        f"{where}: '{decision.hint}' not found exactly in {decision.suite.upper()}; "
-        f"candidates: {names}"
+        f"{where}: '{label}' not found exactly in {decision.suite.upper()}; "
+        f"candidates: {names}. Tip: paste the id shown under the tag (e.g. "
+        f"{decision.suite}:…) into Hint"
     )
     return None
 

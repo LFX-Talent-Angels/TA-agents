@@ -206,9 +206,10 @@ uv run ta-agent tag data/local/sprint7/pilot-run --fresh
      A retry is only done once it has produced an answer: if the run is
      stopped, the model call fails, or the row isn't part of this run
      (`--rows`, `--limit`, `--suites`), the next run does it, hint included.
-   - **Use my tag** — type the taxonomy's own label or id (e.g.
-     `esco:skill:…`, `onet:task:3967`) in Hint; accepted only if it matches
-     **exactly** one entry in that suite.
+   - **Use my tag** — put the taxonomy's own id (e.g. `esco:skill:…`,
+     `onet:task:3967`) or exact label in Hint. Pasting a whole tag cell works
+     too: the id in it is used. Several ids keep exactly those tags, e.g. to
+     keep only the first of two suggested tags, paste just its id.
 3. On the **Gaps** sheet, one row per confirmed-or-likely gap: answer
    **Yes** ("really is a gap"; `Sí`/`si`/`y` work too) or **No** ("an existing
    skill fits" — same effect as Retry). Yes on an `adjacent` row keeps its

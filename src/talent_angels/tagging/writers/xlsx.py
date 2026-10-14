@@ -30,7 +30,7 @@ from talent_angels.tagging.models import (
     TagUnit,
     Verdict,
 )
-from talent_angels.tagging.review import ReviewStats
+from talent_angels.tagging.review import ReviewStats, tag_reference
 
 _MAX_CELL_LEN = 32_767
 _FORMULA_PREFIXES = ("=", "+", "-", "@")
@@ -256,6 +256,8 @@ def _format_previous_decision(payload: dict[str, object] | None) -> str:
         template = _PREVIOUS_DECISION_LABELS.get(action)
         if template is None:
             return ""
+        if action == "use_my_tag":
+            hint = tag_reference(hint)
         text = template.format(hint=hint, alt_index=payload.get("alt_index"))
     date = str(payload.get("ts") or "")[:10]
     return f"{text} (applied {date})" if date else text

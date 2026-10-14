@@ -848,3 +848,105 @@ def test_a_sheet_whose_header_row_was_deleted_says_so(tmp_path: Path) -> None:
 
     assert decisions == []
     assert any("header row" in w for w in warnings)
+
+
+# --- "Use my tag" with text pasted from a tag cell ------------------------------------
+
+
+def _id_lookup(*nodes: _FakeNode) -> Callable[[str], Callable[[str], object | None] | None]:
+    by_id = {node.id: node for node in nodes}
+    return lambda _suite: lambda node_id: by_id.get(node_id)
+
+
+def _no_name_search(_suite: str) -> Callable[[str, str | None], object] | None:
+    return lambda text, kind: _FakeResult([])
+
+
+def _onet_record() -> TagRecord:
+    return _record(suite="onet").model_copy(update={"verdict": Verdict.ADJACENT})
+
+
+def test_use_my_tag_reads_the_id_out_of_a_pasted_tag_cell(tmp_path: Path) -> None:
+    """The expert copies the whole tag cell (label → covers, then the id) into Hint."""
+    ledger = Ledger(tmp_path / ".ta-tag")
+    ledger.append(_onet_record())
+    pasted = (
+        "Software Developers → Prompt Engineer / Generative AI Instruction Engineering "
+        "Specialist\nonet:occupation:15-1252.00"
+    )
+
+    outcome = apply_decisions(
+        [_decision(suite="onet", action=ReviewAction.USE_MY_TAG, hint=pasted)],
+        ledger,
+        search_by_suite=_no_name_search,
+        lookup_by_suite=_id_lookup(_FakeNode("onet:occupation:15-1252.00", "Software Developers")),
+        run_id="r1",
+    )
+
+    [record] = outcome.human_records
+    assert [tag.label for tag in record.tags] == ["Software Developers"]
+
+
+def test_use_my_tag_keeps_every_id_listed(tmp_path: Path) -> None:
+    ledger = Ledger(tmp_path / ".ta-tag")
+    ledger.append(_onet_record())
+
+    outcome = apply_decisions(
+        [
+            _decision(
+                suite="onet",
+                action=ReviewAction.USE_MY_TAG,
+                hint="onet:task:3967, onet:occupation:15-1252.00",
+            )
+        ],
+        ledger,
+        search_by_suite=_no_name_search,
+        lookup_by_suite=_id_lookup(
+            _FakeNode("onet:task:3967", "Maintain records"),
+            _FakeNode("onet:occupation:15-1252.00", "Software Developers"),
+        ),
+        run_id="r1",
+    )
+
+    [record] = outcome.human_records
+    assert [tag.id for tag in record.tags] == ["onet:task:3967", "onet:occupation:15-1252.00"]
+
+
+def test_use_my_tag_refuses_an_id_from_another_taxonomy(tmp_path: Path) -> None:
+    ledger = Ledger(tmp_path / ".ta-tag")
+    ledger.append(_onet_record())
+
+    outcome = apply_decisions(
+        [_decision(suite="onet", action=ReviewAction.USE_MY_TAG, hint="esco:skill:abc")],
+        ledger,
+        search_by_suite=_no_name_search,
+        lookup_by_suite=_id_lookup(),
+        run_id="r1",
+    )
+
+    assert outcome.human_records == []
+    assert outcome.unapplied == {("u1", "onet")}
+    assert any("not a ONET id" in w for w in outcome.warnings)
+
+
+def test_use_my_tag_takes_the_name_before_the_arrow(tmp_path: Path) -> None:
+    ledger = Ledger(tmp_path / ".ta-tag")
+    ledger.append(_record())
+    searched: list[str] = []
+
+    def search_by_suite(_suite: str) -> Callable[[str, str | None], object] | None:
+        def _search(text: str, kind: str | None) -> object:
+            searched.append(text)
+            return _FakeResult([_FakeCandidate(_FakeNode("esco:skill:x", text), "exact_pref")])
+
+        return _search
+
+    outcome = apply_decisions(
+        [_decision(action=ReviewAction.USE_MY_TAG, hint="write specifications → documenting")],
+        ledger,
+        search_by_suite=search_by_suite,
+        run_id="r1",
+    )
+
+    assert searched == ["write specifications"]
+    assert outcome.human_records[0].tags[0].id == "esco:skill:x"

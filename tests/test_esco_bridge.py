@@ -95,8 +95,27 @@ def test_only_a_suite_that_found_nothing_is_bridged() -> None:
     assert bridge_via_esco(_registry(_Esco(), _Jobtech()), _not_found("bls"), "baker") is None
 
 
-def test_a_weak_esco_match_is_not_followed() -> None:
-    assert bridge_via_esco(_registry(_Esco(0.6), _Jobtech()), _not_found(), "baker") is None
+def test_a_weak_whole_word_esco_match_is_only_a_pick_list() -> None:
+    bridged = bridge_via_esco(_registry(_Esco(0.6), _Jobtech()), _not_found(), "baker")
+    assert bridged is not None and "ambiguous" in bridged.warnings
+
+
+class _GiftedEsco(_Esco):
+    """ESCO's only hit for "gift" holds it inside "gifted" (BX-02)."""
+
+    def search_nodes(self, text: str, kind: str | None = None) -> FakeToolResult:
+        node = FakeNode(
+            "esco:occupation:g",
+            "Occupation",
+            "teacher of talented and gifted students",
+            source="esco",
+            source_id=BAKER_URI,
+        )
+        return FakeToolResult(candidates=[FakeCandidate(node, 0.70, "contains")])
+
+
+def test_a_part_of_a_word_esco_match_is_never_followed() -> None:
+    assert bridge_via_esco(_registry(_GiftedEsco(), _Jobtech()), _not_found(), "gift") is None
 
 
 def test_an_ambiguous_esco_answer_is_not_followed() -> None:
@@ -112,7 +131,8 @@ def test_an_ambiguous_esco_answer_is_not_followed() -> None:
             result.warnings.append("ambiguous")
             return result
 
-    assert bridge_via_esco(_registry(_AmbiguousEsco(), _Jobtech()), _not_found(), "baker") is None
+    bridged = bridge_via_esco(_registry(_AmbiguousEsco(), _Jobtech()), _not_found(), "baker")
+    assert bridged is not None and "ambiguous" in bridged.warnings  # offered, never bound
 
 
 def test_nothing_in_esco_means_no_bridge() -> None:
@@ -265,7 +285,15 @@ def test_rescue_tries_the_users_own_swedish_word_first() -> None:
 
 def test_rescue_never_follows_a_partial_esco_match() -> None:
     # ESCO "gift" -> "teacher of talented and gifted students" is a contains hit (0.70).
-    assert _rescue(_registry(_Esco(0.70), _Jobtech()), _not_found()) is None
+    assert (
+        _rescue(
+            _registry(_GiftedEsco(), _Jobtech()),
+            _not_found(),
+            subject="gift",
+            question="gift in jobtech",
+        )
+        is None
+    )
 
 
 def test_a_weak_swedish_hit_is_replaced_for_an_english_question_only() -> None:

@@ -180,6 +180,9 @@ def synthesize_structured(
         any(w.startswith("unknown_kind:") for w in result.warnings) for result in results
     ):
         kinds = ", ".join(sorted(unknown))
+        if len(results) == 1:
+            heading = suite_heading(results[0].suite)
+            return f"{heading} has no records of the kind '{kinds}'.\n\n{sources}"
         return f"No attached taxonomy has records of the kind '{kinds}'.\n\n{sources}"
     if all("bind_required" in result.warnings for result in results):
         return f"Name or pick an occupation first, then ask for skills.\n\n{sources}"

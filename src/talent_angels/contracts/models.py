@@ -28,6 +28,9 @@ class NodeRef(BaseModel):
     pref_label: str
     alt_labels: list[str] = Field(default_factory=list)
     description: str | None = None  # official suite text when the tool returned it
+    # Published facts the suite attaches to the node (BLS: wage, outlook, entry
+    # education), keyed as the suite stores them. Graph data, never model text.
+    facts: dict[str, str | int | float | bool] = Field(default_factory=dict)
 
 
 class EdgeRef(BaseModel):

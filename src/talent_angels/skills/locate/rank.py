@@ -234,6 +234,43 @@ _ONET_CODE = re.compile(r"^onet:occupation:(\d{2}-\d{4}\.\d{2})$")
 _SOC_CODE = re.compile(r"^bls:occupation:(\d{2}-\d{4})$")
 
 
+def published_facts(node: NodeRef) -> list[str]:
+    """Card lines for the facts a suite published on the node (BLS today).
+
+    Each line names its source and period, so pay and outlook are stated as
+    graph data with a date, never as the model's own knowledge.
+    """
+    f = node.facts
+    lines: list[str] = []
+    wage = f.get("median_wage_annual")
+    if isinstance(wage, (int, float)) and not isinstance(wage, bool):
+        period = f.get("wage_period") or "latest"
+        lines.append(f"Median annual wage: ${wage:,.0f} (BLS, {period})")
+    cycle = f.get("projection_cycle")
+    during = f" {cycle}" if cycle else ""
+    change = f.get("employment_change_pct")
+    if isinstance(change, (int, float)) and not isinstance(change, bool):
+        lines.append(f"Projected employment change{during}: {change:+.1f}% (BLS)")
+    openings = f.get("openings_annual")
+    if isinstance(openings, (int, float)) and not isinstance(openings, bool):
+        average = f", {cycle} average" if cycle else ""
+        lines.append(f"Openings per year{average}: {openings:,.0f} (BLS)")
+    for key, label in (
+        ("entry_education", "Typical entry education"),
+        ("work_experience", "Work experience in a related occupation"),
+        ("job_training", "Typical on-the-job training"),
+    ):
+        value = f.get(key)
+        if isinstance(value, str) and value:
+            lines.append(f"{label}: {value} (BLS)")
+    if f.get("projection_aggregate") is True and lines:
+        lines.append(
+            f"Note: BLS publishes these figures for the combined group "
+            f"{f.get('projection_code')}, not for this occupation alone."
+        )
+    return lines
+
+
 def code_facts(result: AgentResult, node: NodeRef) -> list[str]:
     """Codes and group of ``node`` that the graph result itself carries.
 
@@ -248,6 +285,7 @@ def code_facts(result: AgentResult, node: NodeRef) -> list[str]:
     match = _SOC_CODE.match(node.id)
     if match:
         facts.append(f"SOC 2018 code: {match.group(1)}")
+    facts.extend(published_facts(node))
     for edge in result.edges:
         label = edge.properties.get("group_label")
         if edge.source_node_id != node.id or not label:

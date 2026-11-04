@@ -17,7 +17,7 @@ from talent_angels.llm.protocol import uses_chat_phrasing
 from talent_angels.memory.agent_notes import notes_prefix
 from talent_angels.memory.profile import profile_prefix
 from talent_angels.session.followup import relation_tags
-from talent_angels.skills.locate.rank import code_facts
+from talent_angels.skills.locate.rank import code_facts, published_facts
 
 _CHAT_SYSTEM = """You are LFX Talent Angels, a concise assistant in a terminal.
 Warm and useful. You look up occupations and skills on a taxonomy map.
@@ -160,6 +160,7 @@ def connect_card(result: AgentResult, *, shown: int = CONNECT_PREVIEW_CAP) -> st
     ]
     if center.description:
         lines.append(f"description: {center.description}")
+    lines.extend(published_facts(center))
     lines.extend(
         [
             "shown skills: " + "; ".join(skills) if skills else "shown skills: none",

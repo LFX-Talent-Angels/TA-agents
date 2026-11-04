@@ -99,6 +99,22 @@ def test_a_weak_esco_match_is_not_followed() -> None:
     assert bridge_via_esco(_registry(_Esco(0.6), _Jobtech()), _not_found(), "baker") is None
 
 
+def test_an_ambiguous_esco_answer_is_not_followed() -> None:
+    # ESCO offering a list must not become one confident JobTech record (which
+    # would bind it and save a goal the user never chose).
+    class _AmbiguousEsco(_Esco):
+        def search_nodes(self, text: str, kind: str | None = None) -> FakeToolResult:
+            result = super().search_nodes("baker", kind)
+            second = FakeNode(
+                "esco:occupation:2", "Occupation", "baker 2", source="esco", source_id=BAKER_URI
+            )
+            result.candidates.append(FakeCandidate(second, 0.95, "exact_pref"))
+            result.warnings.append("ambiguous")
+            return result
+
+    assert bridge_via_esco(_registry(_AmbiguousEsco(), _Jobtech()), _not_found(), "baker") is None
+
+
 def test_nothing_in_esco_means_no_bridge() -> None:
     assert bridge_via_esco(_registry(_Esco(), _Jobtech()), _not_found(), "plonkwurst") is None
 

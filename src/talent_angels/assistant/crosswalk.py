@@ -22,7 +22,8 @@ from talent_angels.suites import SuiteRegistry
 #: Suites whose records carry their own ESCO matches.
 BRIDGED_SUITES = frozenset({"jobtech"})
 ESCO = "esco"
-#: How many of ESCO's best records to follow (only clear ones: see MIN_CONFIDENCE).
+#: How many of ESCO's records to follow. Only a clear (not ambiguous) ESCO
+#: answer is followed, so in practice this is its one title.
 MAX_ESCO_RECORDS = 3
 #: ESCO's word matches only; a meaning-only ESCO guess is too weak to follow.
 MIN_CONFIDENCE = 0.70
@@ -64,6 +65,11 @@ def bridge_via_esco(
     with registry.open(ESCO) as esco_runtime:
         found = locate(esco_runtime.suite, ESCO, text, kind=kind)
     if not found.nodes or (found.confidence or 0.0) < MIN_CONFIDENCE:
+        return None
+    if "ambiguous" in found.warnings:
+        # ESCO itself needs the user to choose. Following its first records
+        # would hand JobTech a confident answer ESCO never had (and a unique
+        # bridged hit binds the occupation and saves a goal).
         return None
     records = found.nodes[:MAX_ESCO_RECORDS]
     uris = [node.source_id for node in records if node.source_id.startswith("http")]

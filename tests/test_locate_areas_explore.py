@@ -228,3 +228,21 @@ def test_a_planner_subject_with_no_confirmed_title_is_still_not_bound() -> None:
     )
     assert explored is not None
     assert "ambiguous" in explored[0].warnings
+
+
+def test_one_title_that_only_contains_the_word_is_offered_not_bound() -> None:
+    # JobTech has one English-word title with "Engineer" in it. It is not the
+    # answer to "engineer": it is offered, never bound (nor saved as a goal).
+    sqe = _occ("SQE Supplier Quality Engineer")
+    suite = _Suite({"engineer": _hits(sqe)})
+    explored = explore(suite, "jobtech", "engineer", [], kind="occupation")
+    assert explored is not None
+    result, _areas = explored
+    assert [n.pref_label for n in result.nodes] == ["SQE Supplier Quality Engineer"]
+    assert "ambiguous" in result.warnings
+
+
+def test_one_title_that_is_the_word_is_still_bound() -> None:
+    bakers = _occ("Bakers")
+    suite = _Suite({"baker": _hits(bakers)})  # a contains hit, but it names the subject
+    assert explore(suite, "bls", "baker", [], kind="occupation") is None

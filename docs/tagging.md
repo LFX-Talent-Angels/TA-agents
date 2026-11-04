@@ -182,7 +182,7 @@ uv run ta-agent tag data/local/sprint7/pilot-run --fresh
 | `--no-llm` | Search only; verdict is always `review` (top hit) or `gap` (no hits) — no model spend. |
 | `--limit N` | Tag at most N rows (after `--rows`, if both are given). |
 | `--rows "66-91,100"` | Tag only these row ids. |
-| `--suites esco,onet` | Only these suites (default: every suite the registry has attached). |
+| `--suites esco,onet` | Only these suites. Default: `TA_TAG_SUITES` if set, else every attached suite except SFIA, BLS and JobTech (so ESCO and O*NET). Each extra taxonomy adds one model call per row (the choose step), so SFIA, BLS and JobTech are opt-in. |
 | `--depth leaves\|headings\|all` | Which rows count as taggable (overrides the profile). |
 | `--profile NAME\|PATH` | Built-in profile name (e.g. `generic`) or a path to a `.yaml` profile file (see "Profiles"). |
 | `--workers N` | Concurrent `choose` model calls. |
@@ -296,7 +296,7 @@ Measured on the CONOCER pilot standard (129 tagged units, ESCO + O*NET):
   `src/talent_angels/tagging/readers/__init__.py`. The rest of the pipeline is
   format-agnostic.
 - **New taxonomy suite**: register it in `suites/registry.py` the normal way
-  (see the main README) — it automatically gets searched, its own Review
+  (see the main README) — with `--suites` (or `TA_TAG_SUITES`) it gets searched, its own Review
   rows, and its own document-sheet columns. A suite that doesn't support a
   given row's kind just shows `n/a` for that row; it never produces a false
   gap.

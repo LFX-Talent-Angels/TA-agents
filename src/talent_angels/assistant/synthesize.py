@@ -22,7 +22,7 @@ from talent_angels.skills.connect.compare import CAPABILITY_COMPARE, skill_overl
 from talent_angels.skills.locate.rank import code_facts
 
 _NODE_ID_RE = re.compile(
-    r"\b(?:esco|onet|sfia|bls):[a-z0-9][a-z0-9_.:-]*",
+    r"\b(?:esco|onet|sfia|bls|jobtech):[a-z0-9][a-z0-9_.:-]*",
     re.IGNORECASE,
 )
 _DUMMY_SUBJECT_RE = re.compile(
@@ -54,8 +54,9 @@ Rules:
 - A fact the card does not hold (a code, a group, pay, outlook) is not known:
   say the card does not include it. Never state it from memory, and never
   correct yourself mid-answer.
-- ESCO and O*NET are separate taxonomies with no official link here: never say
-  a record in one maps to, equals, or is the equivalent of one in the other.
+- Each taxonomy (ESCO, O*NET, SFIA, BLS, JobTech) is separate, with no official
+  link here: never say a record in one maps to, equals, or is the equivalent of
+  one in another.
 - Write in the same language as the user's message; keep job and skill titles
   exactly as the card writes them.
 - 2-4 plain sentences: no tables, lists, headings, or code. Then stop; Sources

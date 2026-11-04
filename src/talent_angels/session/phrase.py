@@ -48,8 +48,9 @@ Rules:
 - A fact the card does not hold (a code, a group, pay, outlook) is not known:
   say the card does not include it. Never state it from memory, and never
   correct yourself mid-answer.
-- ESCO and O*NET are separate taxonomies with no official link here: never say
-  a record in one maps to, equals, or is the equivalent of one in the other.
+- Each taxonomy (ESCO, O*NET, SFIA, BLS, JobTech) is separate, with no official
+  link here: never say a record in one maps to, equals, or is the equivalent of
+  one in another.
 - Write in the same language as the user's message; keep job and skill titles
   exactly as the card writes them."""
 

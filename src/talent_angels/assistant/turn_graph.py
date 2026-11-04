@@ -30,7 +30,7 @@ from langgraph.graph.state import CompiledStateGraph
 
 from talent_angels.assistant.answer import NO_SUBJECT, build_answer
 from talent_angels.assistant.cache import ResultCache
-from talent_angels.assistant.crosswalk import bridge_via_esco, wants_bridge
+from talent_angels.assistant.crosswalk import needs_rescue, rescue_jobtech
 from talent_angels.assistant.graph import _dispatch_heuristic, dispatch_plan
 from talent_angels.assistant.honesty import honesty_warnings
 from talent_angels.assistant.intent import (
@@ -400,9 +400,16 @@ def _run_suite(name: str, state: TurnState, rt: TurnRuntime, seed: dict[str, Any
             return run
     except UnknownSuiteError:
         raise
-    except Exception:  # noqa: BLE001 — a down suite must not fail the turn
-        logger.warning("suite %s unavailable", name, exc_info=True)
+    except Exception as exc:  # noqa: BLE001 — a down suite must not fail the turn
+        # One line per suite; the full trace only at debug level (a bad
+        # NEO4J_URI printed ~130 traceback lines per suite to stderr).
+        logger.warning("suite %s unavailable: %s", name, type(exc).__name__)
+        logger.debug("suite %s unavailable", name, exc_info=True)
         return _SuiteRun(warning=f"suite_unavailable:{name}")
+
+
+def _lacks_the_kind(result: AgentResult) -> bool:
+    return not result.nodes and any(w.startswith("unknown_kind:") for w in result.warnings)
 
 
 def _dispatch(state: TurnState, rt: TurnRuntime) -> dict[str, Any]:
@@ -428,6 +435,7 @@ def _dispatch(state: TurnState, rt: TurnRuntime) -> dict[str, Any]:
     runs = [_run_suite(name, state, rt, seed) for name in names]
 
     collected: list[AgentResult] = []
+    not_applicable: list[AgentResult] = []
     tools: list[ToolCall] = []
     draft = state.get("plan_draft")
     subject = (draft.subject if draft is not None else None) or state["question"]
@@ -438,23 +446,38 @@ def _dispatch(state: TurnState, rt: TurnRuntime) -> dict[str, Any]:
             extra.append(run.warning)
             continue
         if run.result is not None:
-            if area is None and wants_bridge(run.result):
-                # A Swedish-labelled suite found nothing for these words: try
-                # its own published matches to what ESCO finds (crosswalk.py).
+            if area is None and needs_rescue(run.result):
+                # A Swedish-labelled suite without a clear answer: the user's
+                # own words, then its published ESCO matches (crosswalk.py).
                 try:
-                    bridged = bridge_via_esco(
-                        rt.registry, run.result, subject, kind=state.get("kind")
+                    rescued = rescue_jobtech(
+                        rt.registry,
+                        run.result,
+                        subject=subject,
+                        question=state["question"],
+                        kind=state.get("kind"),
+                        language=getattr(draft, "language", None),
+                        wants_skills=plan.intent.target == CAPABILITY_CONNECT,
+                        draft=draft,
                     )
-                except Exception:  # noqa: BLE001 — a bridge is a bonus, never a failure
-                    logger.warning("esco bridge failed for %s", name, exc_info=True)
-                    bridged = None
-                run.result = bridged or run.result
-            collected.append(run.result)
+                except Exception:  # noqa: BLE001 — a rescue is a bonus, never a failure
+                    logger.warning("jobtech rescue failed for %s", name, exc_info=True)
+                    rescued = None
+                run.result = rescued or run.result
+            if _lacks_the_kind(run.result):
+                # SFIA has no occupations: not a miss, and not proof that the
+                # graph answered (with Neo4j down it was the only "result").
+                not_applicable.append(run.result)
+            else:
+                collected.append(run.result)
         tools.extend(run.tools)
         stages.extend(run.stages)
         if run.areas:
             areas[name] = run.areas
         cache_hit = cache_hit or run.cache_hit
+    unavailable = any(w.startswith("suite_unavailable:") for w in extra)
+    if not collected and not_applicable and not unavailable:
+        collected = not_applicable  # every suite lacked the kind: say so per suite
     return {
         "results": collected,
         "areas": areas,

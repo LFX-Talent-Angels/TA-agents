@@ -26,8 +26,10 @@ SUITE_ALIASES: dict[str, tuple[str, ...]] = {
         "jobtech taxonomy",
         "swedish taxonomy",
         "arbetsförmedlingen",
-        "sweden",
     ),
+    # Not attached (ADR-0006 rejected it); named so a question about it is told
+    # so instead of being silently searched everywhere.
+    "lightcast": ("lightcast", "emsi", "emsi burning glass"),
 }
 
 

@@ -186,3 +186,142 @@ def test_tagging_bridge_survives_an_esco_outage() -> None:
 
     bridged = with_esco_bridge("jobtech", _Jobtech(), _Down())
     assert bridged.search_nodes("baker", kind="occupation").warnings == ["not_found"]
+
+
+# -- chat rescue: own words, strict bridge, skills -----------------------------
+
+
+class _SwedishJobtech(_Jobtech):
+    """Knows "Elevassistent" exactly and one weak English-word title."""
+
+    suite_schema = __import__("talent_angels.suites.schema", fromlist=["SuiteSchema"]).SuiteSchema(
+        skill_rel_types=("HAS_SKILL",),
+        optional_rel_values=frozenset({"optional", "group"}),
+        group_rel_type="CLASSIFIED_UNDER",
+        group_node_kinds=frozenset({"SSYKGroup"}),
+    )
+
+    def search_nodes(self, text: str, kind: str | None = None) -> FakeToolResult:
+        if text.casefold() == "elevassistent":
+            node = FakeNode(
+                "jobtech:occupation:Sbzf",
+                "Occupation",
+                "Elevassistent",
+                source="jobtech",
+                source_id="Sbzf",
+            )
+            return FakeToolResult(candidates=[FakeCandidate(node, 0.95, "exact_pref")])
+        if text == "chef":
+            node = FakeNode(
+                "jobtech:occupation:HR", "Occupation", "HR-chef", source="jobtech", source_id="HR"
+            )
+            return FakeToolResult(candidates=[FakeCandidate(node, 0.70, "contains")])
+        return FakeToolResult(warnings=["not_found"])
+
+    def get_neighbors(self, node_id: str, rel_types: list[str] | None = None) -> FakeToolResult:
+        skill = FakeNode("jobtech:skill:x", "Skill", "Matbröd", source="jobtech", source_id="x")
+        center = FakeNode(node_id, "Occupation", "Bagare/Konditor", source="jobtech", source_id="c")
+        result = FakeToolResult(candidates=[])
+        result.nodes = [center, skill]  # type: ignore[attr-defined]
+        from tests.fakes.taxonomy import FakeEdge
+
+        result.edges = [  # type: ignore[attr-defined]
+            FakeEdge(
+                type="HAS_SKILL",
+                from_id=node_id,
+                to_id="jobtech:skill:x",
+                properties={"relation_type": "group"},
+            )
+        ]
+        return result
+
+
+def _rescue(registry: SuiteRegistry, result: AgentResult, **kw: object) -> AgentResult | None:
+    from talent_angels.assistant.crosswalk import rescue_jobtech
+
+    args: dict[str, object] = {
+        "subject": "baker",
+        "question": "baker in jobtech",
+        "kind": "occupation",
+        "language": "en",
+        "wants_skills": False,
+    }
+    args.update(kw)
+    return rescue_jobtech(registry, result, **args)  # type: ignore[arg-type]
+
+
+def test_rescue_tries_the_users_own_swedish_word_first() -> None:
+    # The planner wrote "elevator operator"; the user wrote "Elevassistent".
+    rescued = _rescue(
+        _registry(_Esco(), _SwedishJobtech()),
+        _not_found(),
+        subject="elevator operator",
+        question="what can an Elevassistent move to?",
+    )
+    assert rescued is not None
+    assert [n.pref_label for n in rescued.nodes] == ["Elevassistent"]
+    assert not any(w.startswith("via_esco:") for w in rescued.warnings)
+
+
+def test_rescue_never_follows_a_partial_esco_match() -> None:
+    # ESCO "gift" -> "teacher of talented and gifted students" is a contains hit (0.70).
+    assert _rescue(_registry(_Esco(0.70), _Jobtech()), _not_found()) is None
+
+
+def test_a_weak_swedish_hit_is_replaced_for_an_english_question_only() -> None:
+    weak = AgentResult(
+        capability="locate",
+        suite="jobtech",
+        confidence=0.70,
+        warnings=["ambiguous"],
+        nodes=[
+            __import__("talent_angels.contracts", fromlist=["NodeRef"]).NodeRef(
+                id="jobtech:occupation:HR",
+                suite="jobtech",
+                source="jobtech",
+                source_id="HR",
+                kind="Occupation",
+                pref_label="HR-chef",
+            )
+        ],
+    )
+    english = _rescue(_registry(_Esco(), _Jobtech()), weak, language="en")
+    assert english is not None and english.nodes[0].pref_label == "Bagare/Konditor"
+    # A Swedish speaker typing "chef" means a manager: keep JobTech's own hits.
+    assert _rescue(_registry(_Esco(), _Jobtech()), weak, language="sv") is None
+
+
+def test_a_clear_answer_is_never_rescued() -> None:
+    clear = AgentResult(
+        capability="locate",
+        suite="jobtech",
+        confidence=0.95,
+        nodes=[
+            __import__("talent_angels.contracts", fromlist=["NodeRef"]).NodeRef(
+                id="jobtech:occupation:D",
+                suite="jobtech",
+                source="jobtech",
+                source_id="D",
+                kind="Occupation",
+                pref_label="Barnmorska",
+            )
+        ],
+    )
+    assert _rescue(_registry(_Esco(), _Jobtech()), clear) is None
+
+
+def test_a_rescued_record_gets_its_skills_when_asked() -> None:
+    class _BakerWithSkills(_SwedishJobtech):
+        def search_by_esco(self, uris: list[str], kind: str = "occupation") -> FakeToolResult:
+            return _Jobtech().search_by_esco(uris, kind)
+
+    rescued = _rescue(
+        _registry(_Esco(), _BakerWithSkills()),
+        _not_found(),
+        question="what skills does a baker need in jobtech?",
+        wants_skills=True,
+    )
+    assert rescued is not None
+    assert rescued.capability == "connect"
+    assert "Matbröd" in [n.pref_label for n in rescued.nodes]
+    assert "via_esco:baker" in rescued.warnings

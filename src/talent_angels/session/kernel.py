@@ -1470,12 +1470,10 @@ def _handle_map(
         )
         _record(state, "assistant", message)
         return _reply(state, message)
-    if (
-        pair is None
-        and bound_nodes
-        and is_facts_followup(text, bound_nodes)
-        and any(published_facts(node) for node in bound_nodes.values())
-    ):
+    if pair is None and bound_nodes and is_facts_followup(text, bound_nodes):
+        # Answered from the graph whatever it holds: a job with no BLS figures
+        # (Legislators) or a taxonomy with none (JobTech) says so, rather than
+        # falling to generic advice.
         return _facts_bound(state)
     if pair is None and bound_nodes and is_describe_followup(text, bound_nodes):
         return _describe_bound(state, text, llm_client=llm_client)

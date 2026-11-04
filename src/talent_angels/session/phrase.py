@@ -17,6 +17,7 @@ from talent_angels.llm.protocol import uses_chat_phrasing
 from talent_angels.memory.agent_notes import notes_prefix
 from talent_angels.memory.profile import profile_prefix
 from talent_angels.session.followup import relation_tags
+from talent_angels.session.i18n import language
 from talent_angels.skills.locate.rank import code_facts, published_facts
 
 _CHAT_SYSTEM = """You are LFX Talent Angels, a concise assistant in a terminal.
@@ -52,7 +53,21 @@ Rules:
   link here: never say a record in one maps to, equals, or is the equivalent of
   one in another.
 - Write in the same language as the user's message; keep job and skill titles
-  exactly as the card writes them."""
+  exactly as the card writes them.
+- A card may hold titles and descriptions in another language (JobTech is
+  Swedish). Still write in the user's language (see "Reply language"),
+  keeping those titles as written."""
+
+_LANGUAGE_NAMES = {"en": "English", "es": "Spanish", "sv": "Swedish"}
+
+
+def _reply_language_line() -> str:
+    """Anchor the reply to the user's words, not the card's (JobTech cards are Swedish)."""
+    guess = _LANGUAGE_NAMES.get(language(), language())
+    return (
+        f"Reply language: the language of the User line above (app's guess: {guess}); "
+        "never switch to the language of the card."
+    )
 
 
 def phrase_chat(
@@ -108,7 +123,10 @@ def phrase_map(
             role="system",
             content=(profile_prefix() + notes_prefix() + _MAP_SYSTEM),
         ),
-        Message(role="user", content=f"User: {question}\n\nFACT CARD:\n{card}"),
+        Message(
+            role="user",
+            content=f"User: {question}\n{_reply_language_line()}\n\nFACT CARD:\n{card}",
+        ),
     ]
     try:
         llm_result, _ = measure_complete(client, messages, stage="phrase")

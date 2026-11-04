@@ -289,6 +289,12 @@ def code_facts(result: AgentResult, node: NodeRef) -> list[str]:
     if match:
         facts.append(f"SOC 2018 code: {match.group(1)}")
     facts.extend(published_facts(node))
+    via = [w.removeprefix("via_esco:") for w in result.warnings if w.startswith("via_esco:")]
+    if via and node.suite != "esco":
+        facts.append(
+            f"found through {node.suite}'s own match to the ESCO record(s): {', '.join(via)}; "
+            "the words matched ESCO, not this record's own (non-English) title"
+        )
     for edge in result.edges:
         label = edge.properties.get("group_label")
         if edge.source_node_id != node.id or not label:

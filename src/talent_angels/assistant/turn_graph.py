@@ -30,6 +30,7 @@ from langgraph.graph.state import CompiledStateGraph
 
 from talent_angels.assistant.answer import NO_SUBJECT, build_answer
 from talent_angels.assistant.cache import ResultCache
+from talent_angels.assistant.crosswalk import bridge_via_esco, wants_bridge
 from talent_angels.assistant.graph import _dispatch_heuristic, dispatch_plan
 from talent_angels.assistant.honesty import honesty_warnings
 from talent_angels.assistant.intent import (
@@ -428,6 +429,8 @@ def _dispatch(state: TurnState, rt: TurnRuntime) -> dict[str, Any]:
 
     collected: list[AgentResult] = []
     tools: list[ToolCall] = []
+    draft = state.get("plan_draft")
+    subject = (draft.subject if draft is not None else None) or state["question"]
     areas: dict[str, list[Area]] = {}
     cache_hit = False
     for name, run in zip(names, runs, strict=True):
@@ -435,6 +438,17 @@ def _dispatch(state: TurnState, rt: TurnRuntime) -> dict[str, Any]:
             extra.append(run.warning)
             continue
         if run.result is not None:
+            if area is None and wants_bridge(run.result):
+                # A Swedish-labelled suite found nothing for these words: try
+                # its own published matches to what ESCO finds (crosswalk.py).
+                try:
+                    bridged = bridge_via_esco(
+                        rt.registry, run.result, subject, kind=state.get("kind")
+                    )
+                except Exception:  # noqa: BLE001 — a bridge is a bonus, never a failure
+                    logger.warning("esco bridge failed for %s", name, exc_info=True)
+                    bridged = None
+                run.result = bridged or run.result
             collected.append(run.result)
         tools.extend(run.tools)
         stages.extend(run.stages)

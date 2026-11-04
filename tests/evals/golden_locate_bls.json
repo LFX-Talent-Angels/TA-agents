@@ -1,6 +1,6 @@
 {
   "suite": "bls",
-  "note": "Expected values from the full BLS graph (SOC 2018 + EP 2025-35: 867 occupations, 17 EP skills; direct-match titles are aliases). Additive truncated / match_count_capped / ambiguous / vector_index_missing warnings are allowed. '15-1252.00' is the O*NET form of a SOC code and names the same BLS occupation. 'RN' and 'CEO' are BLS direct-match titles. 'web developer' matches the alias 'Web Developer' apart from case (casefold, 0.85).",
+  "note": "Expected values from the full BLS graph (SOC 2018 + EP 2025-35: 867 occupations, 17 EP skills; direct-match titles are aliases). Additive truncated / match_count_capped / ambiguous / vector_index_missing warnings are allowed. '15-1252.00' is the O*NET form of a SOC code and names the same BLS occupation. 'RN' and 'CEO' are BLS direct-match titles. 'web developer' matches the alias 'Web Developer' apart from case (an alias hit, 0.90).",
   "cases": [
     {
       "question": "Software Developers",
@@ -70,8 +70,8 @@
       "question": "web developer",
       "kind": "occupation",
       "expected_top_id": "bls:occupation:15-1254",
-      "expected_confidence": 0.85,
-      "expected_method": "casefold_pref",
+      "expected_confidence": 0.9,
+      "expected_method": "exact_alt",
       "expected_warnings": []
     },
     {

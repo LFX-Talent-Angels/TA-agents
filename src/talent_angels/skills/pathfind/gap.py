@@ -33,6 +33,10 @@ _MAX_REALISTIC_GAP_SKILLS_BY_SUITE: dict[str, int] = {
     # of 5 per occupation). Missing 8 or more is most of an occupation's
     # profile. Provisional: re-measure with golden pairs (PF-6).
     "bls": 8,
+    # JobTech marks few skills essential (direct links on 144 of 2,105
+    # occupations); its group skills count as optional. Provisional, as ESCO's,
+    # until golden pairs measure it (PF-6).
+    "jobtech": MAX_REALISTIC_GAP_SKILLS,
 }
 
 GAP_TOO_LARGE_WARNING = "gap_too_large"

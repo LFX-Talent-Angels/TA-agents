@@ -70,6 +70,7 @@ class SearchableSuite(Protocol):
 #: puts on a node (today BLS's Employment Projections), so a card can state
 #: pay or outlook from the graph instead of from the model's memory.
 FACT_KEYS: tuple[str, ...] = (
+    "ssyk_code",
     "median_wage_annual",
     "wage_period",
     "employment_change_pct",

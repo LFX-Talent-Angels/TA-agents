@@ -96,6 +96,15 @@ def _open_default_bls() -> Iterator[SuiteRuntime]:
         yield runtime
 
 
+@contextmanager
+def _open_default_jobtech() -> Iterator[SuiteRuntime]:
+    """Load the optional concrete adapter only when JobTech is opened."""
+    from talent_angels.suites.jobtech import open_jobtech_runtime
+
+    with open_jobtech_runtime() as runtime:
+        yield runtime
+
+
 def with_neighbor_cache(factory: SuiteFactory) -> SuiteFactory:
     """Wrap one suite factory so every open() serves get_neighbors from SQLite.
 
@@ -140,6 +149,7 @@ def default_suite_registry(*, neighbor_cache: bool = True) -> SuiteRegistry:
         "onet": _open_default_onet,
         "sfia": _open_default_sfia,
         "bls": _open_default_bls,
+        "jobtech": _open_default_jobtech,
     }
     if neighbor_cache:
         factories = {name: with_neighbor_cache(factory) for name, factory in factories.items()}

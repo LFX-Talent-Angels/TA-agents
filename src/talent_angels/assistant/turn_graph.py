@@ -48,7 +48,8 @@ from talent_angels.assistant.memo import TurnMemo, append_bounded, memo_for
 from talent_angels.assistant.merge import merge_answers
 from talent_angels.assistant.planning import ExecutionPlan
 from talent_angels.assistant.state import AssistantState
-from talent_angels.assistant.suite_select import named_unattached, select_suites
+from talent_angels.assistant.suite_select import named_suites, named_unattached, select_suites
+from talent_angels.assistant.transitions import is_transition_question, transitions_for
 from talent_angels.contracts import AgentResult, NodeRef
 from talent_angels.llm import LLMClient
 from talent_angels.memory.cache import CachedSuite
@@ -251,6 +252,14 @@ def _is_broad(result: AgentResult) -> bool:
     )
 
 
+def _bound_suite_names(state: TurnState) -> set[str]:
+    names = set((state.get("bound_nodes") or {}).keys())
+    bound = state.get("bound_node")
+    if bound is not None:
+        names.add(bound.suite)
+    return names
+
+
 def _plan(state: TurnState, rt: TurnRuntime) -> dict[str, Any]:
     question = state["question"]
     registry = rt.registry
@@ -288,6 +297,20 @@ def _plan(state: TurnState, rt: TurnRuntime) -> dict[str, Any]:
         draft = draft.model_copy(update={"subject": None, "profile_intent": None})
         update["plan_draft"] = draft
     has_bound = state.get("bound_node") is not None or bool(state.get("bound_nodes"))
+    bound_suites = _bound_suite_names(state)
+    if (
+        has_bound
+        and not (draft is not None and draft.subject)
+        and state.get("suite_override") is None
+        and not named_suites(question, registry.available)
+    ):
+        # A follow-up about the job already chosen ("what can they move to?")
+        # goes to the suites where one is chosen, not to every suite with a
+        # "nothing chosen yet" (and SFIA, which has no occupations at all).
+        narrowed = [name for name in selected if name in bound_suites]
+        if narrowed:
+            selected = tuple(narrowed)
+            update["selected"] = list(selected)
     if (
         (not interpreted.heuristic or trivial)
         and draft is not None
@@ -464,6 +487,13 @@ def _dispatch(state: TurnState, rt: TurnRuntime) -> dict[str, Any]:
                     logger.warning("jobtech rescue failed for %s", name, exc_info=True)
                     rescued = None
                 run.result = rescued or run.result
+            if area is None and is_transition_question(state["question"]):
+                try:
+                    moved = transitions_for(rt.registry, run.result)
+                except Exception:  # noqa: BLE001 — never fail the turn over it
+                    logger.warning("transitions failed for %s", name, exc_info=True)
+                    moved = None
+                run.result = moved or run.result
             if _lacks_the_kind(run.result):
                 # SFIA has no occupations: not a miss, and not proof that the
                 # graph answered (with Neo4j down it was the only "result").

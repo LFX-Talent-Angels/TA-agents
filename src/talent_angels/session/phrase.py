@@ -179,6 +179,12 @@ def connect_card(result: AgentResult, *, shown: int = CONNECT_PREVIEW_CAP) -> st
     if center.description:
         lines.append(f"description: {center.description}")
     lines.extend(published_facts(center))
+    filtered = next((w for w in result.warnings if w.startswith("filtered:")), None)
+    if filtered:
+        _, kind, total = filtered.split(":", 2)
+        lines.append(
+            f"only the {kind} ones are shown, as the user asked; the job has {total} in all"
+        )
     lines.extend(
         [
             "shown skills: " + "; ".join(skills) if skills else "shown skills: none",

@@ -694,7 +694,7 @@ def _connect_more_hint(result: AgentResult) -> str:
     skills" (session.followup) — the gap was that nothing ever told the user
     those words work. Returns "" when there is nothing left to expand to.
     """
-    if result.capability != "connect" or not result.nodes:
+    if result.capability != "connect" or not result.nodes or "transitions" in result.warnings:
         return ""
     if len(result.nodes) - 1 <= CONNECT_PREVIEW_CAP:
         return ""

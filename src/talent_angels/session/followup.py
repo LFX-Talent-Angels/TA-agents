@@ -5,6 +5,7 @@ from __future__ import annotations
 import re
 from collections.abc import Sequence
 
+from talent_angels.assistant.merge import suite_heading
 from talent_angels.contracts import AgentResult, EdgeRef, NodeRef
 from talent_angels.session.i18n import plural, t
 
@@ -114,6 +115,10 @@ def relation_tags(edges: Sequence[EdgeRef], center_id: str) -> dict[str, str]:
     tags: dict[str, str] = {}
     for edge in edges:
         other_id = edge.target_node_id if edge.source_node_id == center_id else edge.source_node_id
+        pct = edge.properties.get("substitutability_pct")
+        if edge.type == "SUBSTITUTES" and isinstance(pct, (int, float)):
+            tags[other_id] = f"{pct:.0f}%"
+            continue
         rel = edge.properties.get("relation_type")
         if rel:
             tags[other_id] = str(rel)
@@ -140,10 +145,18 @@ def render_connect_list(result: AgentResult, *, cap: int = CONNECT_LIST_CAP) -> 
         return "I don't have a stored skill list for this session yet. Name a job title first."
     center = result.nodes[0]
     neighbors = result.nodes[1:]
+    if "no_transition_data" in result.warnings:
+        return t("no_transitions", title=center.pref_label, suite=suite_heading(result.suite))
+    if "transitions" in result.warnings:
+        return _render_transitions(result, cap=cap)
     shown = neighbors[:cap]
     omitted = len(neighbors) - len(shown)
     relations = relation_tags(result.edges, center.id)
     counts = _skill_count(neighbors, relations)
+    filtered = next((w for w in result.warnings if w.startswith("filtered:")), None)
+    if filtered:
+        _, kind, total = filtered.split(":", 2)
+        counts = t("filtered_count", count=len(neighbors), kind=kind, total=total)
     lines = [t("connect_head", title=center.pref_label, counts=counts), ""]
     for index, node in enumerate(shown, start=1):
         tag = relations.get(node.id)
@@ -153,4 +166,34 @@ def render_connect_list(result: AgentResult, *, cap: int = CONNECT_LIST_CAP) -> 
     if omitted:
         lines.append(t("connect_more", count=omitted))
     lines.append(t("connect_foot"))
+    return "\n".join(lines)
+
+
+def _render_transitions(result: AgentResult, *, cap: int) -> str:
+    """Jobs the taxonomy says a person can move to, with JobTech's percentage."""
+    center = result.nodes[0]
+    neighbors = result.nodes[1:]
+    if not neighbors:
+        return t("no_transitions", title=center.pref_label, suite=suite_heading(result.suite))
+    tags = relation_tags(result.edges, center.id)
+    lines = [
+        t(
+            "transitions_head",
+            title=center.pref_label,
+            count=len(neighbors),
+            suite=suite_heading(result.suite),
+        ),
+        "",
+    ]
+    for index, node in enumerate(neighbors[:cap], start=1):
+        tag = tags.get(node.id)
+        suffix = f" ({tag})" if tag and tag.endswith("%") else ""
+        lines.append(f"{index}. {node.pref_label}{suffix}")
+    lines.append("")
+    if len(neighbors) > cap:
+        lines.append(t("connect_more", count=len(neighbors) - cap))
+    if any(tag.endswith("%") for tag in tags.values()):
+        lines.append(t("transitions_foot"))
+    else:
+        lines.append(t("connect_foot_moves"))
     return "\n".join(lines)

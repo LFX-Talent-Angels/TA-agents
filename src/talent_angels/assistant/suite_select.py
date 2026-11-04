@@ -19,7 +19,7 @@ SUITE_ALIASES: dict[str, tuple[str, ...]] = {
     "esco": ("esco",),
     "onet": ("onet", "o*net", "o-net"),
     "sfia": ("sfia",),
-    "bls": ("bls",),
+    "bls": ("bls", "bureau of labor statistics", "us bls"),
 }
 
 

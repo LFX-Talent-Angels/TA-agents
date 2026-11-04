@@ -87,6 +87,15 @@ def _open_default_sfia() -> Iterator[SuiteRuntime]:
         yield runtime
 
 
+@contextmanager
+def _open_default_bls() -> Iterator[SuiteRuntime]:
+    """Load the optional concrete adapter only when BLS is opened."""
+    from talent_angels.suites.bls import open_bls_runtime
+
+    with open_bls_runtime() as runtime:
+        yield runtime
+
+
 def with_neighbor_cache(factory: SuiteFactory) -> SuiteFactory:
     """Wrap one suite factory so every open() serves get_neighbors from SQLite.
 
@@ -130,6 +139,7 @@ def default_suite_registry(*, neighbor_cache: bool = True) -> SuiteRegistry:
         "esco": _open_default_esco,
         "onet": _open_default_onet,
         "sfia": _open_default_sfia,
+        "bls": _open_default_bls,
     }
     if neighbor_cache:
         factories = {name: with_neighbor_cache(factory) for name, factory in factories.items()}

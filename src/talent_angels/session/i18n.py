@@ -86,6 +86,9 @@ _EN: dict[str, str] = {
     "shared_tools_noun": "shared tools",
     "connect_head": "**{title}** — {counts} on the map:",
     "transitions_head": "**{title}** — {count} jobs to move to ({suite}):",
+    "long_input": (
+        "Your message is long, so I read its start and its end ({limit} characters in all)."
+    ),
     "filtered_count": "{count} {kind} (of {total} in all)",
     "transitions_foot": (
         "The percentage is how far the taxonomy says the experience carries over. "
@@ -188,6 +191,9 @@ _ES: dict[str, str] = {
     "shared_tools_noun": "herramientas en común",
     "connect_head": "**{title}** — {counts} en el mapa:",
     "transitions_head": "**{title}** — {count} empleos a los que pasar ({suite}):",
+    "long_input": (
+        "Tu mensaje es largo: leí el principio y el final ({limit} caracteres en total)."
+    ),
     "filtered_count": "{count} {kind} (de {total} en total)",
     "transitions_foot": (
         "El porcentaje indica cuánto de la experiencia se aprovecha según la taxonomía. "

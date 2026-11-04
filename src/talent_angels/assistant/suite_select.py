@@ -101,6 +101,10 @@ def select_suites(
     if not attached:
         raise ValueError("no suites attached")
     if override is not None:
+        # "JobTech" from an API or CLI caller is the suite "jobtech".
+        override = next(
+            (name for name in attached if name.casefold() == override.casefold()), override
+        )
         if override not in attached:
             listed = ", ".join(attached)
             raise UnknownSuiteError(f"unknown suite {override!r}; available: {listed}")

@@ -57,8 +57,15 @@ class SuiteRegistry:
     def default(self) -> str:
         return self._default
 
+    def resolve(self, name: str) -> str:
+        """The registered name for ``name`` in any case ("JobTech" -> "jobtech")."""
+        if name in self._factories:
+            return name
+        folded = {key.casefold(): key for key in self._factories}
+        return folded.get(name.strip().casefold(), name)
+
     def open(self, name: str | None = None) -> AbstractContextManager[SuiteRuntime]:
-        selected = self._default if name is None else name
+        selected = self._default if name is None else self.resolve(name)
         try:
             factory = self._factories[selected]
         except KeyError as exc:

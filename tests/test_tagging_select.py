@@ -64,7 +64,7 @@ def test_kind_decided_by_heading_text_not_label() -> None:
 
 
 def test_depth_leaves_only_tags_leaf_rows() -> None:
-    units, skipped = _select(depth="leaves")
+    units, skipped = _select(depth="leaves", groups=False)
     skipped_by_row = {s.row_id: s for s in skipped}
     assert all(u.role in ("leaf", "row_rule") for u in units)
     # "1. Cleans the work area:" (16) has children -> heading, skipped at this depth.
@@ -73,7 +73,7 @@ def test_depth_leaves_only_tags_leaf_rows() -> None:
 
 
 def test_depth_headings_only_tags_heading_rows() -> None:
-    units, _ = _select(depth="headings")
+    units, _ = _select(depth="headings", groups=False)
     assert units  # at least the two heading rows (16, 29)
     assert all(u.role in ("heading", "row_rule") for u in units)
     rows = {u.row_id for u in units}
@@ -170,3 +170,29 @@ def test_document_context_returns_title_and_purpose() -> None:
         "Purpose of the Standard: To certify competency in bakery hygiene and "
         "food safety practices",
     ]
+
+
+def test_a_heading_is_tagged_as_a_group_next_to_its_steps() -> None:
+    """Alfonso: "what does TA say about this group of nodes" — heading + steps as one."""
+    units, _ = _select()
+    by_row = {u.row_id: u for u in units}
+    group = by_row["16"]
+    assert group.role == "group"
+    assert group.kind == "performance"
+    # Numbering and the trailing colon are cleaned; the steps follow the heading.
+    assert group.clean_text.startswith("Cleans the work area: ")
+    steps = [u for u in units if u.group_key == "16" and u.role == "leaf"]
+    assert steps and all(step.clean_text in group.clean_text for step in steps)
+
+
+def test_a_group_has_its_own_key() -> None:
+    grouped, _ = _select(depth="all")
+    plain, _ = _select(depth="all", groups=False)
+    group_key = next(u.unit_key for u in grouped if u.row_id == "16")
+    heading_key = next(u.unit_key for u in plain if u.row_id == "16")
+    assert group_key != heading_key
+
+
+def test_groups_off_leaves_headings_skipped() -> None:
+    _, skipped = _select(groups=False)
+    assert {s.row_id: s.reason for s in skipped}["16"] == "heading"

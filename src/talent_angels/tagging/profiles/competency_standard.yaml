@@ -12,6 +12,11 @@ version: 1
 # or both.
 depth: leaves
 
+# Also tag every heading that has steps under it as one group (heading + its
+# steps in one request), next to the steps themselves: "1. Analyzes the prompt
+# requirement" gets a group-level answer and each of its 4 steps its own.
+groups: true
+
 # Heading text (fullmatch, case-insensitive) -> kind. A row's kind is the
 # nearest ancestor (or itself) whose own text matches one of these — never
 # its Neo4j label.
@@ -71,10 +76,11 @@ report_kinds:
 # stripped. The last one removes a trailing ", and" / "," / "." / " and"
 # without eating a real final word such as "hand" (word-boundary on "and").
 cleaners:
+  - "^\\d+[.)]\\s+"
   - "^subject area:\\s*"
   - "\\s*\\|\\s*competency level:.*$"
   - "^(emergent situation|expected response):\\s*"
-  - "[\\s,;.]*(\\band)?[\\s,;.]*$"
+  - "[\\s,;.:]*(\\band)?[\\s,;.:]*$"
 
 # kind -> ordered suite kinds to try when searching the taxonomy (search.py,
 # PR2).

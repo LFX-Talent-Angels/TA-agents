@@ -36,6 +36,9 @@ class Profile(BaseModel):
     name: str
     version: int
     depth: Literal["leaves", "headings", "all"] = "leaves"
+    #: Also tag each heading *as a group*: its own text plus its direct
+    #: children's, one request — the group-level answer next to the steps'.
+    groups: bool = True
     kinds: dict[str, list[str]] = Field(default_factory=dict)
     row_rules: list[RowRule] = Field(default_factory=list)
     include_kinds: list[str] = Field(default_factory=list)

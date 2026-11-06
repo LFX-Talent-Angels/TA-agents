@@ -149,6 +149,11 @@ overrides use.
   main [README](../README.md) §§1–2).
 - `.env` with `LLM_PROVIDER` and the matching API key, unless you're running
   `--no-llm`.
+- **Client data leaves the machine on a model run.** The rewrite and choose
+  steps send the client's own lines, the headings above them and any review
+  hint to the configured provider. Use `--no-llm` for material you may not
+  share, and check the client's data-processing terms before the first model
+  run.
 
 ## Commands
 

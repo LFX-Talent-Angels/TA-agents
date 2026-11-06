@@ -48,19 +48,57 @@ def _norm(value: str) -> str:
     return " ".join(str(value).strip().casefold().split())
 
 
-def _table_overrides(path: Path) -> dict[str, str]:
+def _table_overrides(path: Path, *, strict: bool = False) -> dict[str, str]:
     """`<project>/tag.yaml`'s `table:` key — checked at both the `inputs/` layout's
-    project root (`path.parent.parent`) and the bare-folder layout's (`path.parent`)."""
+    project root (`path.parent.parent`) and the bare-folder layout's (`path.parent`).
+
+    `can_read` must never raise on a malformed file (Reader protocol), so it
+    reads with `strict=False`; `read()` passes `strict=True` and reports a
+    broken `tag.yaml` instead of silently ignoring the column overrides.
+    """
     for candidate in (path.parent / "tag.yaml", path.parent.parent / "tag.yaml"):
         if not candidate.is_file():
             continue
         try:
             data = yaml.safe_load(candidate.read_text(encoding="utf-8"))
-        except yaml.YAMLError:
+        except yaml.YAMLError as exc:
+            if strict:
+                raise ReaderError(f"{candidate}: invalid YAML ({exc})") from exc
             return {}
-        table = data.get("table") if isinstance(data, dict) else None
-        return {str(k): str(v) for k, v in table.items()} if isinstance(table, dict) else {}
+        if data is None:
+            return {}
+        if not isinstance(data, dict):
+            if strict:
+                raise ReaderError(f"{candidate}: expected a mapping at the top level")
+            return {}
+        table = data.get("table")
+        if table is None:
+            return {}
+        if not isinstance(table, dict):
+            if strict:
+                raise ReaderError(f"{candidate}: 'table' must be a mapping")
+            return {}
+        return {str(k): str(v) for k, v in table.items()}
     return {}
+
+
+def _check_no_cycles(parent_of: dict[str, str], path: Path) -> None:
+    """Walk every parent chain once; a revisited row inside a chain is a cycle.
+
+    `select.py` walks the same chains, so a cyclic table would hang the whole
+    run (or blow the recursion limit) instead of failing with a message.
+    """
+    resolved: set[str] = set()
+    for start in parent_of:
+        chain: list[str] = []
+        node: str | None = start
+        while node is not None and node not in resolved:
+            if node in chain:
+                cycle = [*chain[chain.index(node) :], node]
+                raise ReaderError(f"{path}: cycle in parent chain: {' -> '.join(cycle)}")
+            chain.append(node)
+            node = parent_of.get(node)
+        resolved.update(chain)
 
 
 def _find_column(
@@ -148,7 +186,7 @@ class TableReader:
         return _find_column(rows[0], "text", _TEXT_ALIASES, overrides) is not None
 
     def read(self, path: Path) -> Document:
-        overrides = _table_overrides(path)
+        overrides = _table_overrides(path, strict=True)
         rows = _rows_for(path, overrides)
         if not rows:
             raise ReaderError(f"{path}: empty or unreadable table")
@@ -179,6 +217,11 @@ class TableReader:
         for row_id, parent_id, _text, _label in pending:
             if parent_id is not None and parent_id not in row_ids:
                 raise ReaderError(f"{path}: row {row_id} has an unknown parent {parent_id!r}")
+
+        _check_no_cycles(
+            {row_id: parent_id for row_id, parent_id, _t, _l in pending if parent_id is not None},
+            path,
+        )
 
         source_rows: list[SourceRow] = [
             SourceRow(row_id=_ROOT_ID, parent_id=None, label="root", text=path.stem, order=0)

@@ -198,3 +198,29 @@ def test_read_document_dispatches_to_table_reader(tmp_path: Path) -> None:
     path = _write_csv(tmp_path / "plain.csv", [["text"], ["a row"]])
     doc = read_document(path)
     assert doc.source_format == "table"
+
+
+def test_parent_cycle_is_a_reader_error(tmp_path: Path) -> None:
+    """A cyclic table would hang `select.context_path_for` instead of failing."""
+    path = _write_csv(
+        tmp_path / "cycle.csv",
+        [["id", "parent", "text"], ["A", "B", "first statement"], ["B", "A", "second statement"]],
+    )
+    with pytest.raises(ReaderError, match="cycle"):
+        TableReader().read(path)
+
+
+def test_self_parent_is_a_reader_error(tmp_path: Path) -> None:
+    path = _write_csv(tmp_path / "self-parent.csv", [["id", "parent", "text"], ["A", "A", "x"]])
+    with pytest.raises(ReaderError, match="cycle"):
+        TableReader().read(path)
+
+
+def test_broken_tag_yaml_is_reported_by_read_but_never_by_can_read(tmp_path: Path) -> None:
+    """`can_read` must not raise on a malformed project file; `read` must say so."""
+    path = _write_csv(tmp_path / "flat.csv", [["id", "parent", "text"], ["A", "", "a statement"]])
+    (tmp_path / "tag.yaml").write_text("table: [not, a, mapping]\n")
+
+    assert TableReader().can_read(path) is True
+    with pytest.raises(ReaderError, match="table"):
+        TableReader().read(path)

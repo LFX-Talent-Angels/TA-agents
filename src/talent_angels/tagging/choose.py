@@ -21,7 +21,7 @@ from talent_angels.runlog import StageUsage
 from talent_angels.tagging import jsonio
 from talent_angels.tagging.models import CandidateRef, SearchOutcome, TagUnit
 from talent_angels.tagging.prompts import choose_message
-from talent_angels.tagging.search import _keep_by_routed_kind
+from talent_angels.tagging.search import keep_by_routed_kind
 
 _MAX_PICKS = 3
 
@@ -59,7 +59,7 @@ class ValidatedChoice:
 
 def _kind_compatible(candidate: CandidateRef, unit_kind: str) -> bool:
     routed = "occupation" if unit_kind.casefold() == "occupation" else "task"
-    return _keep_by_routed_kind(candidate.kind, routed)
+    return keep_by_routed_kind(candidate.kind, routed)
 
 
 def validate(candidates: list[CandidateRef], unit_kind: str, choice: Choice) -> ValidatedChoice:

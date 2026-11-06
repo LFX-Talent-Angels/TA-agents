@@ -129,6 +129,11 @@ _DISPLAY_NAMES = {"esco": "ESCO", "onet": "O*NET"}
 _DEFAULT_ATTRIBUTION = {
     "esco": "ESCO © European Union, CC BY 4.0",
     "onet": "O*NET 31.0 Database, U.S. Department of Labor, CC BY 4.0",
+    "sfia": (
+        "SFIA — skill codes, names, levels and structure only (ADR-0006); "
+        "SFIA descriptive text is not reproduced."
+    ),
+    "bls": "BLS/SOC — U.S. Bureau of Labor Statistics (public domain).",
 }
 
 
@@ -194,7 +199,9 @@ def _package_attribution(suite: str) -> str | None:
 def _attribution_lines(suites: list[str]) -> list[str]:
     lines = []
     for suite in suites:
-        text = _package_attribution(suite) if suite in _DEFAULT_ATTRIBUTION else None
+        # Try the installed package's own NOTES.md for *any* suite: a suite's
+        # attribution should not need a hardcoded default to be picked up.
+        text = _package_attribution(suite)
         lines.append(
             text or _DEFAULT_ATTRIBUTION.get(suite, f"{suite.upper()}: see the suite's license.")
         )

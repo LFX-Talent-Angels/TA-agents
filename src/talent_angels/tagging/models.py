@@ -46,7 +46,7 @@ class Document(BaseModel):
 
 
 class Verdict(StrEnum):
-    """Per unit x suite outcome (tag-v1 policy, ``verdict.py`` — PR3)."""
+    """Per unit x suite outcome (policy in ``verdict.py``)."""
 
     ACCEPTED = "accepted"
     REVIEW = "review"
@@ -141,6 +141,10 @@ class SearchOutcome(BaseModel):
     queries: list[QueryLog] = Field(default_factory=list)
     candidates: list[CandidateRef] = Field(default_factory=list)
     error: str | None = None
+    #: Candidate id -> suite description text, for the `choose` prompt only.
+    #: `exclude=True` keeps it out of `model_dump`/JSON so it never reaches the
+    #: ledger or the workbook (licensing: pointer, not payload).
+    descriptions: dict[str, str] = Field(default_factory=dict, exclude=True)
 
 
 class VerdictResult(BaseModel):
@@ -150,6 +154,17 @@ class VerdictResult(BaseModel):
     reason_code: str
     tags: list[CandidateRef] = Field(default_factory=list)
     alternatives: list[CandidateRef] = Field(default_factory=list)
+    #: Tag id -> what part of the line it covers (rule 5, `fit=partial`).
+    covers: dict[str, str] = Field(default_factory=dict)
+    #: True when rule 6 (`fit=none`/no valid picks) wants a widened attempt
+    #: the caller hasn't made yet — the caller re-calls `decide` with
+    #: `widened=True` once it has.
+    needs_widening: bool = False
+    #: A gap's proposed skill name, labelled model inference, never taxonomy fact.
+    missing_skill: str | None = None
+    #: The model's own one-sentence reason (`choose.Choice.reason`), shown next
+    #: to the policy's reason sentence in the workbook.
+    model_reason: str | None = None
 
 
 class TagRecord(BaseModel):
@@ -181,6 +196,12 @@ class TagRecord(BaseModel):
     reason_code: str
     tags: list[CandidateRef] = Field(default_factory=list)
     alternatives: list[CandidateRef] = Field(default_factory=list)
+    #: Tag id -> what part of the line it covers (adjacent verdicts only).
+    covers: dict[str, str] = Field(default_factory=dict)
+    #: A gap's proposed skill name (model inference, never taxonomy fact).
+    missing_skill: str | None = None
+    #: The model's own reason sentence, shown alongside the policy reason.
+    model_reason: str | None = None
     usage: dict[str, float] = Field(default_factory=dict)
     decided_by: Literal["policy", "human"] = "policy"
 
@@ -210,3 +231,5 @@ class RunSummary(BaseModel):
     outputs: list[str] = Field(default_factory=list)
     seconds: float = 0.0
     warnings: list[str] = Field(default_factory=list)
+    model_calls: int = 0
+    cost_usd: float | None = None

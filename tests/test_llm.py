@@ -58,6 +58,23 @@ def test_factory_rejects_unsupported_provider(monkeypatch: pytest.MonkeyPatch) -
         get_llm_client()
 
 
+def test_factory_reasoning_enabled_override_beats_env(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("LLM_PROVIDER", "litellm")
+    monkeypatch.setenv("LLM_MODEL", "anthropic/claude-test")
+    monkeypatch.setenv("LLM_REASONING_ENABLED", "true")
+
+    # The env says reasoning on; tagging's explicit `False` must win (fixed
+    # `max_tokens` + reasoning tokens can truncate a model-step JSON reply).
+    client = get_llm_client(reasoning_enabled=False)
+    assert isinstance(client, LiteLLMClient)
+    assert client.reasoning_enabled is False
+
+    # `None` (the default) keeps today's env-driven behaviour.
+    client_default = get_llm_client()
+    assert isinstance(client_default, LiteLLMClient)
+    assert client_default.reasoning_enabled is True
+
+
 def test_factory_requires_model_for_anthropic(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setenv("LLM_PROVIDER", "anthropic")
     monkeypatch.delenv("LLM_MODEL", raising=False)

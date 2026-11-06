@@ -14,10 +14,12 @@ from importlib import metadata
 
 from talent_angels.tagging.models import TagUnit, Versions
 
-#: `tag-v1` policy versions (verdict.py, PR3); bump when the rule changes.
+#: Versions that key the ledger; bump the one whose rule or wording changes.
 PIPELINE_VERSION = "tag-1"
-POLICY_VERSION = "tag-v1"
-PROMPTS_VERSION = "rw-1/ch-1"
+POLICY_VERSION = "tag-v2"
+REWRITE_VERSION = "rw-1"
+CHOOSE_VERSION = "ch-3"
+PROMPTS_VERSION = f"{REWRITE_VERSION}/{CHOOSE_VERSION}"
 
 _SEP = "\x1f"
 

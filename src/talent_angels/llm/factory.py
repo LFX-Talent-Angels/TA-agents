@@ -20,7 +20,13 @@ def get_answer_mode() -> str:
     return os.environ.get("ANSWER_MODE", "structured").strip() or "structured"
 
 
-def get_llm_client() -> LLMClient:
+def get_llm_client(*, reasoning_enabled: bool | None = None) -> LLMClient:
+    """Build the configured client; `reasoning_enabled` overrides the env flag.
+
+    `None` keeps today's behaviour (`LLM_REASONING_ENABLED`). Tagging passes
+    `False`: `max_tokens` is fixed at 1024 and reasoning tokens can eat the
+    whole budget, truncating the JSON a model-step prompt expects back.
+    """
     provider = os.environ.get("LLM_PROVIDER", "none").strip().lower()
     model = os.environ.get("LLM_MODEL", "").strip()
 
@@ -43,10 +49,12 @@ def get_llm_client() -> LLMClient:
                 raise ValueError("LiteLLM OpenRouter models require OPENROUTER_API_KEY to be set")
         from talent_angels.llm.litellm_client import LiteLLMClient
 
-        reasoning_enabled = os.environ.get("LLM_REASONING_ENABLED", "false").strip().lower()
+        if reasoning_enabled is None:
+            env_flag = os.environ.get("LLM_REASONING_ENABLED", "false").strip().lower()
+            reasoning_enabled = env_flag in {"1", "true", "yes", "on"}
         return LiteLLMClient(
             model=model,
-            reasoning_enabled=reasoning_enabled in {"1", "true", "yes", "on"},
+            reasoning_enabled=reasoning_enabled,
         )
 
     raise ValueError(

@@ -248,6 +248,8 @@ Expect JSON with `plan`, `answer`, `tools`, `tokens`, `cost_usd`.
 | Ambiguous *developer* | Locate + clarification, no neighbors |
 | Path / gap from A to B | Honest Pathfind refusal, no fake skill list |
 
+Batch-tag a whole client document instead of chatting row by row: see [`docs/tagging.md`](./docs/tagging.md) (`ta-agent tag <project>`).
+
 ### HTTP / Swagger
 
 ```bash

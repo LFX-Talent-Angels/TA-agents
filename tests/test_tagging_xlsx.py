@@ -94,7 +94,7 @@ def _doc() -> Document:
     )
 
 
-def test_write_workbook_creates_all_three_sheets(tmp_path: Path, _doc: Document) -> None:
+def test_write_workbook_creates_all_four_sheets(tmp_path: Path, _doc: Document) -> None:
     unit = _unit("u2", "2", "=SUM(A1:A2) weird line")
     skipped = [
         SkippedRow(row_id="0", reason="root"),
@@ -107,7 +107,7 @@ def test_write_workbook_creates_all_three_sheets(tmp_path: Path, _doc: Document)
         tmp_path / "out.xlsx", _doc, [unit], skipped, results, ["esco"], {"title": "Sample"}
     )
     workbook = openpyxl.load_workbook(out_path)
-    assert workbook.sheetnames == ["Summary", "Review", "Standard"]
+    assert workbook.sheetnames == ["Summary", "Review", "Standard", "Gaps"]
 
 
 def test_formula_like_text_stays_literal_text(tmp_path: Path, _doc: Document) -> None:
@@ -178,15 +178,15 @@ def test_review_sheet_has_hidden_key_suite_alt_ids_fp_columns(
     review = workbook["Review"]
     headers = [cell.value for cell in review[2]]
     assert headers[-4:] == ["key", "suite", "alt_ids", "fp"]
-    for idx in (12, 13, 14, 15):  # 1-based columns for the 4 hidden fields
+    for idx in (13, 14, 15, 16):  # 1-based columns for the 4 hidden fields
         letter = review.cell(row=2, column=idx).column_letter
         assert review.column_dimensions[letter].hidden is True
 
     data_row = next(row for row in review.iter_rows(min_row=3) if row[0].value == "3")
-    assert data_row[11].value == unit.unit_key
-    assert data_row[12].value == "esco"
-    assert json.loads(data_row[13].value) == ["esco:skill:alt"]
-    assert data_row[14].value == results[(unit.unit_key, "esco")].fingerprint
+    assert data_row[12].value == unit.unit_key
+    assert data_row[13].value == "esco"
+    assert json.loads(data_row[14].value) == ["esco:skill:alt"]
+    assert data_row[15].value == results[(unit.unit_key, "esco")].fingerprint
 
 
 def test_review_sheet_has_decision_dropdown(tmp_path: Path, _doc: Document) -> None:
@@ -214,3 +214,64 @@ def test_not_applicable_verdict_excluded_from_review(tmp_path: Path, _doc: Docum
     workbook = openpyxl.load_workbook(out_path)
     review = workbook["Review"]
     assert review.max_row == 2  # title + header only, no data rows
+
+
+# --- Gaps sheet/csv: report_kinds + verdict filter --------------------------
+
+
+def test_gaps_sheet_only_lists_report_kinds_and_gap_like_verdicts(
+    tmp_path: Path, _doc: Document
+) -> None:
+    gap_unit = _unit("u-gap", "3", "a gap line", kind="performance")
+    adjacent_unit = _unit("u-adj", "3", "an adjacent line", kind="performance")
+    definition_unit = _unit("u-def", "3", "a definition line", kind="definition")
+    accepted_unit = _unit("u-acc", "3", "an accepted line", kind="performance")
+    results = {
+        (gap_unit.unit_key, "esco"): _record(
+            gap_unit, "esco", Verdict.GAP, missing_skill="missing one"
+        ),
+        (adjacent_unit.unit_key, "esco"): _record(
+            adjacent_unit,
+            "esco",
+            Verdict.ADJACENT,
+            tags=[_candidate("esco:skill:a", "esco")],
+            covers={"esco:skill:a": "part of it"},
+            missing_skill="missing two",
+        ),
+        (definition_unit.unit_key, "esco"): _record(
+            definition_unit, "esco", Verdict.GAP, missing_skill="out of scope"
+        ),
+        (accepted_unit.unit_key, "esco"): _record(
+            accepted_unit, "esco", Verdict.ACCEPTED, tags=[_candidate("esco:skill:a", "esco")]
+        ),
+    }
+    out_path = write_workbook(
+        tmp_path / "out.xlsx",
+        _doc,
+        [gap_unit, adjacent_unit, definition_unit, accepted_unit],
+        [],
+        results,
+        ["esco"],
+        {},
+        report_kinds=frozenset({"performance"}),
+    )
+
+    workbook = openpyxl.load_workbook(out_path)
+    gaps = workbook["Gaps"]
+    # Every fixture unit shares row_id "3"; the hidden "key" column (index 9,
+    # 0-based) is what actually tells them apart.
+    keys = {row[9].value for row in gaps.iter_rows(min_row=3)}
+    assert keys == {gap_unit.unit_key, adjacent_unit.unit_key}
+
+
+def test_true_gaps_come_before_adjacent_rows_on_the_gaps_sheet() -> None:
+    from talent_angels.tagging.writers.xlsx import build_gap_rows
+
+    units = [_unit("k1", "1", "first"), _unit("k2", "2", "second"), _unit("k3", "3", "third")]
+    results = {
+        ("k1", "esco"): _record(units[0], "esco", Verdict.ADJACENT, missing_skill="m1"),
+        ("k2", "esco"): _record(units[1], "esco", Verdict.GAP, missing_skill="m2"),
+        ("k3", "esco"): _record(units[2], "esco", Verdict.ADJACENT, missing_skill="m3"),
+    }
+    rows = build_gap_rows(units, results, ["esco"], frozenset({"performance"}))
+    assert [row.row_id for row in rows] == ["2", "1", "3"]

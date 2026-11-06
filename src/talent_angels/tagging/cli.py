@@ -81,6 +81,8 @@ def _print_summary(summary: RunSummary) -> None:
     if summary.model_calls:
         cost_text = f"${summary.cost_usd:.4f}" if summary.cost_usd is not None else "unknown"
         print(f"model_calls={summary.model_calls} cost_usd={cost_text}")
+    if summary.reviews_applied or summary.retried:
+        print(f"reviews_applied={summary.reviews_applied} retried={summary.retried}")
     for warning in summary.warnings:
         print(f"warning: {warning}")
     for output in summary.outputs:

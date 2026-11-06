@@ -1,1 +1,1 @@
-"""Deliverable writers: the client-facing workbook (`xlsx.py`), CSV in PR4."""
+"""Deliverable writers: the workbook (`xlsx.py`) and `out/<doc>-gaps.csv` (`csv.py`)."""

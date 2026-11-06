@@ -89,7 +89,7 @@ def test_first_run_produces_expected_verdict_mix(project: Path) -> None:
     [output] = summary.outputs
     assert Path(output).is_file()
     workbook = openpyxl.load_workbook(output)
-    assert workbook.sheetnames == ["Summary", "Review", "Standard"]
+    assert workbook.sheetnames == ["Summary", "Review", "Standard", "Gaps"]
 
 
 def test_second_run_reuses_cacheable_suites(project: Path) -> None:
@@ -134,6 +134,22 @@ def test_cli_main_returns_0_and_prints_outputs(
     assert exit_code == 0
     out = capsys.readouterr().out
     assert "tagged.xlsx" in out
+
+
+def test_cli_prints_reviews_applied_and_retried_when_nonzero(
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    from talent_angels.tagging.cli import _print_summary
+    from talent_angels.tagging.models import RunSummary
+
+    _print_summary(RunSummary(project="p", reviews_applied=3, retried=1))
+    out = capsys.readouterr().out
+    assert "reviews_applied=3 retried=1" in out
+
+    capsys.readouterr()
+    _print_summary(RunSummary(project="p"))
+    out = capsys.readouterr().out
+    assert "reviews_applied" not in out
 
 
 def test_tui_dispatches_tag_without_opening_the_chat_loop(
@@ -195,3 +211,9 @@ def test_the_same_document_twice_is_tagged_once(project: Path) -> None:
 def test_a_suite_down_for_every_row_is_called_out(project: Path) -> None:
     summary = run(project, registry=_registry(), opts=RunOptions())
     assert any(w.startswith("down: unavailable for every row") for w in summary.warnings)
+
+
+def test_a_plain_rerun_keeps_no_history_copy(project: Path) -> None:
+    run(project, registry=_registry(), opts=RunOptions())
+    run(project, registry=_registry(), opts=RunOptions())
+    assert not (project / "out" / "history").exists()

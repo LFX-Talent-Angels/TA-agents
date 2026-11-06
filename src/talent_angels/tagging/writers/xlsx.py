@@ -11,6 +11,7 @@ import json
 import os
 import tempfile
 from collections.abc import Callable
+from dataclasses import dataclass
 from datetime import UTC, datetime
 from importlib import resources
 from pathlib import Path
@@ -29,6 +30,7 @@ from talent_angels.tagging.models import (
     TagUnit,
     Verdict,
 )
+from talent_angels.tagging.review import ReviewStats
 
 _MAX_CELL_LEN = 32_767
 _FORMULA_PREFIXES = ("=", "+", "-", "@")
@@ -62,8 +64,29 @@ _VERDICT_ICON = {
     Verdict.NOT_APPLICABLE: "— n/a",
     Verdict.UNAVAILABLE: "⚠️ unavailable",
     Verdict.ERROR: "❌ error",
-    Verdict.HUMAN_ACCEPTED: "✔ human_accepted",
-    Verdict.HUMAN_GAP: "✔ human_gap",
+    Verdict.HUMAN_ACCEPTED: "✔ approved",
+    Verdict.HUMAN_GAP: "✔ gap (confirmed)",
+}
+
+#: Review sheet sort order (PR4 "Review loop"): rows still needing a look
+#: first, then policy-accepted, then anything the reviewer already settled.
+_SORT_TIER = {
+    Verdict.REVIEW: 0,
+    Verdict.ADJACENT: 0,
+    Verdict.GAP: 0,
+    Verdict.ERROR: 0,
+    Verdict.ACCEPTED: 1,
+    Verdict.HUMAN_ACCEPTED: 2,
+    Verdict.HUMAN_GAP: 2,
+}
+
+_PREVIOUS_DECISION_LABELS = {
+    "approve": "Approved",
+    "reject": "Rejected",
+    "use_alt": "Used alternative {alt_index}",
+    "mark_gap": "Marked as gap",
+    "retry": "Retry with hint '{hint}'",
+    "use_my_tag": "Used tag '{hint}'",
 }
 
 _REASON_SENTENCES = {
@@ -210,10 +233,23 @@ def _write_table(
     ws.auto_filter.ref = f"A{header_row}:{last_col_letter}{last_row}"
 
 
+def _format_previous_decision(payload: dict[str, object] | None) -> str:
+    """ "Retry with hint 'x' (applied 2026-10-12)" from one `reviews.jsonl` line."""
+    if payload is None:
+        return ""
+    template = _PREVIOUS_DECISION_LABELS.get(str(payload.get("action", "")))
+    if template is None:
+        return ""
+    text = template.format(hint=str(payload.get("hint") or ""), alt_index=payload.get("alt_index"))
+    date = str(payload.get("ts") or "")[:10]
+    return f"{text} (applied {date})" if date else text
+
+
 def _review_rows(
     units: list[TagUnit],
     results: dict[tuple[str, str], TagRecord],
     suites: list[str],
+    previous_decisions: dict[tuple[str, str], dict[str, object]],
 ) -> tuple[list[list[object]], list[str | None]]:
     collected: list[tuple[int, list[object], str | None]] = []
     for unit in units:
@@ -241,6 +277,7 @@ def _review_rows(
             if record.model_reason:
                 why = f"{why}\nModel: {record.model_reason}"
             alt_ids = json.dumps([alt.id for alt in record.alternatives])
+            previous = _format_previous_decision(previous_decisions.get((unit.unit_key, suite)))
             row: list[object] = [
                 unit.row_id,
                 where,
@@ -251,6 +288,7 @@ def _review_rows(
                 icon,
                 why,
                 alt_text,
+                previous,
                 "",
                 "",
                 unit.unit_key,
@@ -258,7 +296,7 @@ def _review_rows(
                 alt_ids,
                 record.fingerprint,
             ]
-            priority = 0 if record.verdict in _NEEDS_REVIEW else 1
+            priority = _SORT_TIER.get(record.verdict, 1)
             collected.append((priority, row, _VERDICT_FILL.get(record.verdict.value)))
     # Stable sort: ties (same priority) keep the document order they were
     # appended in (unit, then suite within unit).
@@ -273,6 +311,7 @@ def _write_review(
     units: list[TagUnit],
     results: dict[tuple[str, str], TagRecord],
     suites: list[str],
+    previous_decisions: dict[tuple[str, str], dict[str, object]],
 ) -> None:
     headers = [
         "Row ID",
@@ -284,6 +323,7 @@ def _write_review(
         "Verdict",
         "Why (model reasoning is inference)",
         "Alternatives",
+        "Previous decision",
         "Decision ▼",
         "Hint",
         "key",
@@ -291,8 +331,8 @@ def _write_review(
         "alt_ids",
         "fp",
     ]
-    rows, fills = _review_rows(units, results, suites)
-    widths = [8, 24, 44, 12, 10, 36, 14, 38, 32, 20, 26, 10, 8, 12, 14]
+    rows, fills = _review_rows(units, results, suites, previous_decisions)
+    widths = [8, 24, 44, 12, 10, 36, 14, 38, 32, 26, 20, 26, 10, 8, 12, 14]
     _write_table(
         ws,
         title="Review — set a Decision on any row, save, and re-run the same command",
@@ -300,11 +340,11 @@ def _write_review(
         rows=rows,
         widths=widths,
         row_fills=fills,
-        edit_cols=(9, 10),
-        hidden_cols=(11, 12, 13, 14),
+        edit_cols=(10, 11),
+        hidden_cols=(12, 13, 14, 15),
     )
     header_row = 2
-    decision_col = get_column_letter(10)
+    decision_col = get_column_letter(11)
     last_row = max(ws.max_row, header_row + 1)
     validation = DataValidation(type="list", formula1=f'"{_DECISION_OPTIONS}"', allow_blank=True)
     ws.add_data_validation(validation)
@@ -369,6 +409,117 @@ def _write_standard(
     )
 
 
+@dataclass
+class GapRow:
+    """One (unit, suite) worth a human look: a gap, or a partial cover with one."""
+
+    row_id: str
+    where: str
+    line: str
+    kind: str
+    taxonomy: str
+    verdict: str
+    missing_skill: str
+    nearest_existing: str
+    unit_key: str
+    suite: str
+    fp: str
+
+
+def build_gap_rows(
+    units: list[TagUnit],
+    results: dict[tuple[str, str], TagRecord],
+    suites: list[str],
+    report_kinds: frozenset[str],
+) -> list[GapRow]:
+    """Rows for the Gaps sheet/csv: `report_kinds` only (definitions/summary stay out)."""
+    rows: list[GapRow] = []
+    for unit in units:
+        if unit.kind not in report_kinds:
+            continue
+        for suite in suites:
+            record = results.get((unit.unit_key, suite))
+            if record is None:
+                continue
+            is_gap = record.verdict in (Verdict.GAP, Verdict.HUMAN_GAP)
+            is_adjacent_gap = record.verdict == Verdict.ADJACENT and bool(record.missing_skill)
+            if not (is_gap or is_adjacent_gap):
+                continue
+            if record.verdict == Verdict.ADJACENT:
+                nearest = "; ".join(f"{tag.label} ({tag.id})" for tag in record.tags)
+            else:
+                nearest = "; ".join(f"{alt.label} ({alt.id})" for alt in record.alternatives)
+            rows.append(
+                GapRow(
+                    row_id=unit.row_id,
+                    where=" › ".join(unit.context_path[-2:]),
+                    line=unit.clean_text,
+                    kind=_kind_label(unit),
+                    taxonomy=_display_name(suite),
+                    verdict=_VERDICT_ICON.get(record.verdict, str(record.verdict.value)),
+                    missing_skill=record.missing_skill or "",
+                    nearest_existing=nearest,
+                    unit_key=unit.unit_key,
+                    suite=suite,
+                    fp=record.fingerprint,
+                )
+            )
+    # True gaps first (the "missing from the taxonomies" list), then the
+    # partial covers; stable, so document order holds within each group.
+    adjacent_icon = _VERDICT_ICON.get(Verdict.ADJACENT)
+    return sorted(rows, key=lambda row: row.verdict == adjacent_icon)
+
+
+def _write_gaps(ws: Worksheet, rows: list[GapRow]) -> None:
+    headers = [
+        "Row ID",
+        "Where",
+        "Line",
+        "Kind",
+        "Taxonomy",
+        "Verdict",
+        "Proposed missing skill (by TA — not taxonomy fact)",
+        "Nearest existing (adjacent picks)",
+        "Reviewer confirms gap? ▼",
+        "key",
+        "suite",
+        "fp",
+    ]
+    data_rows: list[list[object]] = [
+        [
+            row.row_id,
+            row.where,
+            row.line,
+            row.kind,
+            row.taxonomy,
+            row.verdict,
+            row.missing_skill,
+            row.nearest_existing,
+            "",
+            row.unit_key,
+            row.suite,
+            row.fp,
+        ]
+        for row in rows
+    ]
+    widths = [8, 24, 44, 14, 10, 16, 32, 32, 22, 10, 8, 14]
+    _write_table(
+        ws,
+        title="Gaps — confirm whether an existing taxonomy entry really fits",
+        headers=headers,
+        rows=data_rows,
+        widths=widths,
+        edit_cols=(8,),
+        hidden_cols=(9, 10, 11),
+    )
+    header_row = 2
+    decision_col = get_column_letter(9)
+    last_row = max(ws.max_row, header_row + 1)
+    validation = DataValidation(type="list", formula1='"Yes,No"', allow_blank=True)
+    ws.add_data_validation(validation)
+    validation.add(f"{decision_col}{header_row + 1}:{decision_col}{last_row}")
+
+
 def _write_summary(
     ws: Worksheet,
     doc: Document,
@@ -376,6 +527,7 @@ def _write_summary(
     results: dict[tuple[str, str], TagRecord],
     suites: list[str],
     summary: dict[str, object],
+    stats: ReviewStats,
 ) -> None:
     title = str(summary.get("title") or doc.key)
     _set(ws, 1, 1, title).font = Font(bold=True, size=14)
@@ -443,12 +595,43 @@ def _write_summary(
         ("Searched", summary.get("searched", 0)),
         ("Model calls", summary.get("model_calls", 0)),
         ("Estimated cost", cost_text),
+        ("Reviews applied", summary.get("reviews_applied", 0)),
+        ("Retried", summary.get("retried", 0)),
     ]
     for label, value in run_info:
         _set(ws, row, 1, label).font = Font(bold=True)
         _set(ws, row, 2, value)
         row += 1
     row += 1
+
+    _set(ws, row, 1, f"Reviewed: {stats.reviewed} of {stats.total}").font = Font(bold=True)
+    row += 2
+    _set(ws, row, 1, "Accepted precision (human-checked)").font = Font(bold=True)
+    row += 1
+    header_row = row
+    for col, header in enumerate(["Kind", "Approved", "Rejected", "Precision"], start=1):
+        cell = _set(ws, header_row, col, header)
+        cell.fill = _HEADER_FILL
+        cell.font = _HEADER_FONT
+    row += 1
+    precision_kinds = sorted(set(stats.approved_by_kind) | set(stats.rejected_by_kind))
+    for kind in precision_kinds:
+        approved = stats.approved_by_kind.get(kind, 0)
+        rejected = stats.rejected_by_kind.get(kind, 0)
+        denom = approved + rejected
+        precision = f"{approved}/{denom}" if denom else "—"
+        _set(ws, row, 1, kind)
+        _set(ws, row, 2, approved)
+        _set(ws, row, 3, rejected)
+        _set(ws, row, 4, precision)
+        row += 1
+    total_denom = stats.approved_total + stats.rejected_total
+    total_precision = f"{stats.approved_total}/{total_denom}" if total_denom else "—"
+    _set(ws, row, 1, "Total").font = Font(bold=True)
+    _set(ws, row, 2, stats.approved_total)
+    _set(ws, row, 3, stats.rejected_total)
+    _set(ws, row, 4, total_precision)
+    row += 2
 
     _set(
         ws,
@@ -480,15 +663,24 @@ def write_workbook(
     results: dict[tuple[str, str], TagRecord],
     suites: list[str],
     summary: dict[str, object],
+    *,
+    report_kinds: frozenset[str] = frozenset(),
+    previous_decisions: dict[tuple[str, str], dict[str, object]] | None = None,
+    stats: ReviewStats | None = None,
 ) -> Path:
     """Write the deliverable to `path`: temp file in the same dir, then atomic replace."""
+    previous_decisions = previous_decisions or {}
+    stats = stats or ReviewStats(reviewed=0, total=len(units))
+
     workbook = Workbook()
     summary_ws = workbook.active
     assert summary_ws is not None
     summary_ws.title = "Summary"
-    _write_summary(summary_ws, doc, units, results, suites, summary)
-    _write_review(workbook.create_sheet("Review"), units, results, suites)
+    _write_summary(summary_ws, doc, units, results, suites, summary, stats)
+    _write_review(workbook.create_sheet("Review"), units, results, suites, previous_decisions)
     _write_standard(workbook.create_sheet("Standard"), doc, units, skipped, results, suites)
+    gap_rows = build_gap_rows(units, results, suites, report_kinds)
+    _write_gaps(workbook.create_sheet("Gaps"), gap_rows)
 
     path.parent.mkdir(parents=True, exist_ok=True)
     fd, tmp_name = tempfile.mkstemp(dir=path.parent, prefix=f".{path.stem}-", suffix=".xlsx.tmp")

@@ -92,9 +92,12 @@ def select_units(
         else:
             ancestor = nearest_kind(row)
             if ancestor is None:
-                skipped.append(SkippedRow(row_id=row.row_id, reason="metadata"))
-                continue
-            kind = ancestor
+                if profile.default_kind is None:
+                    skipped.append(SkippedRow(row_id=row.row_id, reason="metadata"))
+                    continue
+                kind = profile.default_kind
+            else:
+                kind = ancestor
             role = "heading" if children.get(row.row_id) else "leaf"
             if role == "heading" and profile.groups:
                 role = "group"

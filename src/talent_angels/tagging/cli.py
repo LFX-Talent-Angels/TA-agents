@@ -56,6 +56,14 @@ def _build_parser() -> argparse.ArgumentParser:
         "--suites", default=None, help='Comma-separated suite names, e.g. "esco,onet".'
     )
     parser.add_argument("--depth", choices=["leaves", "headings", "all"], default=None)
+    parser.add_argument(
+        "--profile",
+        default=None,
+        help=(
+            "Built-in profile name (e.g. 'generic') or a path to a .yaml profile file; "
+            "default: tag.yaml's base_profile, else competency_standard."
+        ),
+    )
     refresh_group = parser.add_mutually_exclusive_group()
     refresh_group.add_argument(
         "--refresh", action="store_true", help="Re-run non-final verdicts; keep human decisions."
@@ -71,6 +79,8 @@ def _build_parser() -> argparse.ArgumentParser:
 
 
 def _print_summary(summary: RunSummary) -> None:
+    if summary.profile:
+        print(f"profile={summary.profile}")
     for suite in sorted(summary.counts):
         counts = ", ".join(f"{verdict}={n}" for verdict, n in sorted(summary.counts[suite].items()))
         print(f"{suite}: {counts}")
@@ -130,6 +140,7 @@ def main(
         refresh=args.refresh,
         fresh=args.fresh,
         workers=args.workers,
+        profile=args.profile,
     )
 
     selected_registry = (

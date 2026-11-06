@@ -55,6 +55,7 @@ from talent_angels.tagging.models import (
     Versions,
 )
 from talent_angels.tagging.profile import Profile, load_profile
+from talent_angels.tagging.prompts import choose_system, rewrite_system
 from talent_angels.tagging.readers import READERS, read_document
 from talent_angels.tagging.readers.base import ReaderError
 from talent_angels.tagging.review import (
@@ -198,6 +199,9 @@ def _rewrite_phase(
     doc_context: list[str],
     ledger: Ledger,
     model: str,
+    *,
+    system: str,
+    document_label: str,
 ) -> tuple[dict[str, Rewrite], list[StageUsage]]:
     """Fill in a `Rewrite` for every unit that needs one, cache-first, grouped by parent."""
     rewrites: dict[str, Rewrite] = {}
@@ -216,7 +220,9 @@ def _rewrite_phase(
     for group_units in pending_by_group.values():
         for start in range(0, len(group_units), _REWRITE_CHUNK):
             chunk = group_units[start : start + _REWRITE_CHUNK]
-            chunk_map, chunk_stages = rewrite_group(client, chunk, doc_context)
+            chunk_map, chunk_stages = rewrite_group(
+                client, chunk, doc_context, system=system, document_label=document_label
+            )
             stages.extend(chunk_stages)
             for unit in chunk:
                 rw = chunk_map.get(unit.unit_key, Rewrite())
@@ -246,7 +252,7 @@ def run(
         if progress is not None:
             progress(message)
 
-    profile = load_profile(project)
+    profile = load_profile(project, name=opts.profile)
     if opts.depth is not None:
         profile = profile.model_copy(update={"depth": opts.depth})
 
@@ -258,6 +264,13 @@ def run(
     if unknown:
         available = ", ".join(registry.available)
         raise UnknownSuiteError(f"unknown suite(s) {unknown}; available: {available}")
+
+    # Computed once per run: the two system prompts only vary by the profile's own
+    # document_type/attached suites, never per unit or per call (keeps the CONOCER
+    # `competency_standard` + esco/onet rendering byte-identical to before PR5).
+    suite_display_names = [display_name(name) for name in suite_names]
+    rewrite_sys = rewrite_system(profile.document_type, suite_display_names)
+    choose_sys = choose_system(profile.document_type)
 
     ledger = Ledger(project / ".ta-tag")
     documents: list[str] = []
@@ -328,7 +341,13 @@ def run(
             rewrites: dict[str, Rewrite] = {}
             if llm_on and llm_client is not None:
                 rw_map, rw_stages = _rewrite_phase(
-                    llm_client, units, document_context(doc, profile), ledger, model
+                    llm_client,
+                    units,
+                    document_context(doc, profile),
+                    ledger,
+                    model,
+                    system=rewrite_sys,
+                    document_label=profile.document_label,
                 )
                 rewrites = rw_map
                 doc_stages.extend(rw_stages)
@@ -429,7 +448,12 @@ def run(
                     )
 
             verdicts, choose_stages = _decide_pending(
-                pending, llm_client=llm_client, llm_on=llm_on, workers=opts.workers
+                pending,
+                llm_client=llm_client,
+                llm_on=llm_on,
+                workers=opts.workers,
+                system=choose_sys,
+                document_label=profile.document_label,
             )
             doc_stages.extend(choose_stages)
 
@@ -442,6 +466,8 @@ def run(
                 suites=suites,
                 profile=profile,
                 pinned_versions=pinned_versions,
+                system=choose_sys,
+                document_label=profile.document_label,
             )
             doc_stages.extend(widened_stages)
 
@@ -541,6 +567,7 @@ def run(
                 "title": _document_title(doc, profile),
                 "model": model,
                 "versions": f"{pinned_versions.pipeline}/{pinned_versions.policy}",
+                "profile": profile.name,
                 "units": len(units),
                 "seconds": time.perf_counter() - start,
                 "reused": reused,
@@ -553,6 +580,7 @@ def run(
             report_kinds=frozenset(profile.report_kinds),
             previous_decisions=previous_decisions,
             stats=stats,
+            document_label=profile.document_label,
         )
         workbook_gap_rows = build_gap_rows(
             units, results, suite_names, frozenset(profile.report_kinds)
@@ -601,6 +629,7 @@ def run(
     total_cost = estimate_turn_cost_usd(all_stages, model)
     return RunSummary(
         project=str(project),
+        profile=profile.name,
         documents=documents,
         units=total_units,
         counts=overall_counts,
@@ -622,6 +651,8 @@ def _decide_pending(
     llm_client: LLMClient | None,
     llm_on: bool,
     workers: int,
+    system: str,
+    document_label: str,
 ) -> tuple[dict[tuple[str, str], VerdictResult], list[StageUsage]]:
     """First decide pass: immediate for non-`ok`/no-candidate outcomes, modelled for the rest."""
     verdicts: dict[tuple[str, str], VerdictResult] = {}
@@ -645,6 +676,8 @@ def _decide_pending(
             suite_display=display_name(p.suite_name),
             hint=p.hint,
             widened=p.is_retry,
+            system=system,
+            document_label=document_label,
         )
 
     def _choose_one_in_context(key: tuple[str, str]) -> tuple[Choice | None, list[StageUsage]]:
@@ -689,6 +722,8 @@ def _widen_pending(
     suites: dict[str, MeasuredSuite | None],
     profile: Profile,
     pinned_versions: Versions,
+    system: str,
+    document_label: str,
 ) -> tuple[dict[tuple[str, str], str], list[StageUsage]]:
     """The widened re-attempt (rule 6) for every unit x suite that asked for one.
 
@@ -751,6 +786,8 @@ def _widen_pending(
             suite_display=display_name(p.suite_name),
             hint="",
             widened=True,
+            system=system,
+            document_label=document_label,
         )
         stages.extend(call_stages)
         p.outcome = widened_outcome

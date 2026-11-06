@@ -20,7 +20,7 @@ from talent_angels.llm import LLMClient, LLMError, Message
 from talent_angels.runlog import StageUsage
 from talent_angels.tagging import jsonio
 from talent_angels.tagging.models import TagUnit
-from talent_angels.tagging.prompts import REWRITE_SYSTEM, rewrite_message
+from talent_angels.tagging.prompts import rewrite_message
 
 _SEP = "\x1f"
 
@@ -43,11 +43,16 @@ def rewrite_cache_key(unit: TagUnit, model: str, prompts_version: str) -> str:
 
 
 def _call(
-    client: LLMClient, units: Sequence[TagUnit], doc_context: Sequence[str]
+    client: LLMClient,
+    units: Sequence[TagUnit],
+    doc_context: Sequence[str],
+    *,
+    system: str,
+    document_label: str,
 ) -> tuple[_RewriteReply, StageUsage]:
     messages = [
-        Message(role="system", content=REWRITE_SYSTEM),
-        Message(role="user", content=rewrite_message(units, doc_context)),
+        Message(role="system", content=system),
+        Message(role="user", content=rewrite_message(units, doc_context, document_label)),
     ]
     result, stage = measure_complete(client, messages, stage="tag_rewrite")
     try:
@@ -70,17 +75,35 @@ def _attempt(
     doc_context: Sequence[str],
     *,
     allow_split: bool,
+    system: str,
+    document_label: str,
 ) -> tuple[dict[str, Rewrite], list[StageUsage]]:
     if not units:
         return {}, []
     try:
-        reply, stage = _call(client, units, doc_context)
+        reply, stage = _call(
+            client, units, doc_context, system=system, document_label=document_label
+        )
     except (LLMError, ValueError) as exc:
         spent = [exc.stage] if isinstance(exc, _BadReply) else []
         if allow_split and len(units) > 1:
             mid = len(units) // 2
-            left_map, left_stages = _attempt(client, units[:mid], doc_context, allow_split=False)
-            right_map, right_stages = _attempt(client, units[mid:], doc_context, allow_split=False)
+            left_map, left_stages = _attempt(
+                client,
+                units[:mid],
+                doc_context,
+                allow_split=False,
+                system=system,
+                document_label=document_label,
+            )
+            right_map, right_stages = _attempt(
+                client,
+                units[mid:],
+                doc_context,
+                allow_split=False,
+                system=system,
+                document_label=document_label,
+            )
             return {**left_map, **right_map}, [*spent, *left_stages, *right_stages]
         return {unit.unit_key: Rewrite() for unit in units}, spent
 
@@ -92,11 +115,20 @@ def _attempt(
 
 
 def rewrite_group(
-    client: LLMClient, units: list[TagUnit], doc_context: list[str]
+    client: LLMClient,
+    units: list[TagUnit],
+    doc_context: list[str],
+    *,
+    system: str,
+    document_label: str,
 ) -> tuple[dict[str, Rewrite], list[StageUsage]]:
     """Rewrite every unit in one parent group (<= 6 units) in a single call.
 
-    Returns a `Rewrite` for every `unit.unit_key` passed in — never a partial
-    dict — so the caller can apply the cache/fallback uniformly.
+    `system` is `prompts.rewrite_system(profile.document_type, suite_display_names)`
+    and `document_label` is `profile.document_label` — both constant for a run, computed
+    once by the caller. Returns a `Rewrite` for every `unit.unit_key` passed in — never a
+    partial dict — so the caller can apply the cache/fallback uniformly.
     """
-    return _attempt(client, units, doc_context, allow_split=True)
+    return _attempt(
+        client, units, doc_context, allow_split=True, system=system, document_label=document_label
+    )

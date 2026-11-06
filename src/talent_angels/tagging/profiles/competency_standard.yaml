@@ -8,6 +8,12 @@
 name: competency_standard
 version: 1
 
+# What this profile calls its input: fills the model prompts' "lines of a
+# {document_type}" wording, and the workbook's document-sheet name/context
+# prefix ("<context>{document_label}: ...").
+document_type: competency standard
+document_label: Standard
+
 # Which rows get tagged: leaf rows only (most standards), heading rows only,
 # or both.
 depth: leaves

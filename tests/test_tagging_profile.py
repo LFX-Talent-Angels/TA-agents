@@ -90,3 +90,83 @@ def test_invalid_regex_raises_value_error(tmp_path: Path) -> None:
     (tmp_path / "tag.yaml").write_text("cleaners: ['[unterminated']\n")
     with pytest.raises(ValueError):
         load_profile(project_dir=tmp_path)
+
+
+# --- profile selection (PR5 "generic across businesses") -------------------
+
+
+def test_builtin_generic_profile_loads() -> None:
+    profile = load_profile(name="generic")
+    assert profile.name == "generic"
+    assert profile.document_type == "document"
+    assert profile.document_label == "Document"
+    assert profile.default_kind == "item"
+    assert profile.depth == "all"
+    assert profile.groups is False
+    assert profile.include_kinds == ["item"]
+    assert profile.routing == {"item": ["skill", "task", "knowledge"]}
+
+
+def test_explicit_name_wins_over_tag_yaml_base_profile(tmp_path: Path) -> None:
+    (tmp_path / "tag.yaml").write_text("base_profile: generic\n")
+    profile = load_profile(project_dir=tmp_path, name="competency_standard")
+    assert profile.name == "competency_standard"
+
+
+def test_tag_yaml_base_profile_wins_over_the_default(tmp_path: Path) -> None:
+    (tmp_path / "tag.yaml").write_text("base_profile: generic\n")
+    profile = load_profile(project_dir=tmp_path)
+    assert profile.name == "generic"
+
+
+def test_default_is_competency_standard_with_no_name_or_base_profile(tmp_path: Path) -> None:
+    (tmp_path / "tag.yaml").write_text("include_kinds: [performance]\n")
+    profile = load_profile(project_dir=tmp_path)
+    assert profile.name == "competency_standard"
+    assert profile.include_kinds == ["performance"]
+
+
+def test_name_may_be_a_path_to_a_yaml_profile_file(tmp_path: Path) -> None:
+    custom = tmp_path / "my-profile.yaml"
+    custom.write_text(
+        "name: my-profile\n"
+        "version: 1\n"
+        "document_type: course catalog\n"
+        "document_label: Catalog\n"
+        "depth: all\n"
+        "groups: false\n"
+        "default_kind: item\n"
+        "include_kinds: [item]\n"
+        "report_kinds: [item]\n"
+        "routing:\n  item: [skill]\n"
+    )
+    profile = load_profile(name=str(custom))
+    assert profile.name == "my-profile"
+    assert profile.document_type == "course catalog"
+
+
+def test_unknown_profile_name_lists_builtins() -> None:
+    pattern = "competency_standard.*generic|generic.*competency_standard"
+    with pytest.raises(ValueError, match=pattern):
+        load_profile(name="not-a-real-profile")
+
+
+def test_tag_yaml_overrides_apply_on_top_of_a_path_profile(tmp_path: Path) -> None:
+    custom = tmp_path / "base.yaml"
+    custom.write_text(
+        "name: base\n"
+        "version: 1\n"
+        "document_type: course catalog\n"
+        "document_label: Catalog\n"
+        "depth: all\n"
+        "default_kind: item\n"
+        "include_kinds: [item]\n"
+        "report_kinds: [item]\n"
+        "routing:\n  item: [skill]\n"
+    )
+    project = tmp_path / "project"
+    project.mkdir()
+    (project / "tag.yaml").write_text(f"base_profile: {custom}\ninclude_kinds: [item, extra]\n")
+    profile = load_profile(project_dir=project)
+    assert profile.name == "base"
+    assert profile.include_kinds == ["item", "extra"]

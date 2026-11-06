@@ -9,6 +9,7 @@ from talent_angels.llm.protocol import LLMError, LLMResult, LLMUsage, Message
 from talent_angels.tagging.keys import REWRITE_VERSION
 from talent_angels.tagging.ledger import Ledger
 from talent_angels.tagging.models import TagUnit
+from talent_angels.tagging.prompts import rewrite_system
 from talent_angels.tagging.rewrite import Rewrite, rewrite_cache_key, rewrite_group
 from talent_angels.tagging.runner import _needs_rewrite, _rewrite_phase
 
@@ -53,6 +54,10 @@ def _unit(unit_key: str, text: str, **overrides: object) -> TagUnit:
     return TagUnit(**base)  # type: ignore[arg-type]
 
 
+_SYSTEM = rewrite_system("competency standard", ["ESCO", "O*NET"])
+_LABEL = "Standard"
+
+
 def test_rewrite_group_maps_local_ids_to_units_in_order() -> None:
     units = [_unit("k1", "define criteria"), _unit("k2", "run tests")]
     client = ScriptedLLMClient(
@@ -61,7 +66,7 @@ def test_rewrite_group_maps_local_ids_to_units_in_order() -> None:
             '"r2": {"labels": ["run tests"], "description": "runs it"}}}'
         ]
     )
-    rewrites, stages = rewrite_group(client, units, [])
+    rewrites, stages = rewrite_group(client, units, [], system=_SYSTEM, document_label=_LABEL)
     assert rewrites["k1"].labels == ["define criteria"]
     assert rewrites["k2"].labels == ["run tests"]
     assert len(stages) == 1
@@ -73,7 +78,7 @@ def test_missing_id_falls_back_to_empty_rewrite() -> None:
     client = ScriptedLLMClient(
         ['{"rows": {"r1": {"labels": ["define criteria"], "description": "defines it"}}}']
     )
-    rewrites, _stages = rewrite_group(client, units, [])
+    rewrites, _stages = rewrite_group(client, units, [], system=_SYSTEM, document_label=_LABEL)
     assert rewrites["k1"].labels == ["define criteria"]
     assert rewrites["k2"] == Rewrite()
 
@@ -86,7 +91,7 @@ def test_extra_ids_in_reply_are_ignored() -> None:
             '"r2": {"labels": ["bogus"], "description": "d"}}}'
         ]
     )
-    rewrites, _stages = rewrite_group(client, units, [])
+    rewrites, _stages = rewrite_group(client, units, [], system=_SYSTEM, document_label=_LABEL)
     assert list(rewrites) == ["k1"]
 
 
@@ -99,7 +104,7 @@ def test_bad_json_splits_group_and_retries_each_half_once() -> None:
             '{"rows": {"r1": {"labels": ["run tests"], "description": "d"}}}',  # k2 half
         ]
     )
-    rewrites, stages = rewrite_group(client, units, [])
+    rewrites, stages = rewrite_group(client, units, [], system=_SYSTEM, document_label=_LABEL)
     assert rewrites["k1"].labels == ["define criteria"]
     assert rewrites["k2"].labels == ["run tests"]
     assert len(client.calls) == 3
@@ -109,7 +114,7 @@ def test_bad_json_splits_group_and_retries_each_half_once() -> None:
 def test_llm_error_with_single_unit_falls_back_without_split() -> None:
     units = [_unit("k1", "define criteria")]
     client = ScriptedLLMClient([LLMError("boom")])
-    rewrites, stages = rewrite_group(client, units, [])
+    rewrites, stages = rewrite_group(client, units, [], system=_SYSTEM, document_label=_LABEL)
     assert rewrites["k1"] == Rewrite()
     assert stages == []
     assert len(client.calls) == 1
@@ -118,7 +123,7 @@ def test_llm_error_with_single_unit_falls_back_without_split() -> None:
 def test_bad_json_still_failing_after_split_falls_back_per_unit() -> None:
     units = [_unit("k1", "define criteria"), _unit("k2", "run tests")]
     client = ScriptedLLMClient(["garbage", "garbage again", "garbage once more"])
-    rewrites, _stages = rewrite_group(client, units, [])
+    rewrites, _stages = rewrite_group(client, units, [], system=_SYSTEM, document_label=_LABEL)
     assert rewrites["k1"] == Rewrite()
     assert rewrites["k2"] == Rewrite()
     assert len(client.calls) == 3
@@ -152,7 +157,13 @@ def test_rewrite_phase_skips_seed_phrase_rows_entirely(tmp_path: Path) -> None:
     ledger = Ledger(tmp_path / ".ta-tag")
 
     rewrites, stages = _rewrite_phase(
-        client, [occupation_unit, leaf_unit], [], ledger, "test-model"
+        client,
+        [occupation_unit, leaf_unit],
+        [],
+        ledger,
+        "test-model",
+        system=_SYSTEM,
+        document_label=_LABEL,
     )
 
     assert "k1" not in rewrites
@@ -167,7 +178,9 @@ def test_rewrite_phase_cache_hit_makes_zero_model_calls(tmp_path: Path) -> None:
     ledger.rewrite_append(key, Rewrite(labels=["cached label"], description="cached"))
 
     client = ScriptedLLMClient([])  # any call would raise IndexError
-    rewrites, stages = _rewrite_phase(client, [unit], [], ledger, "test-model")
+    rewrites, stages = _rewrite_phase(
+        client, [unit], [], ledger, "test-model", system=_SYSTEM, document_label=_LABEL
+    )
 
     assert rewrites["k1"].labels == ["cached label"]
     assert stages == []

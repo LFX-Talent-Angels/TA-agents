@@ -2,9 +2,11 @@
 
 `n` is the child, `m` the parent; labels (Document/Section/Element/Block/Item)
 describe shape only — `select.py` decides a row's tagging kind from heading
-*text*, never from these. Rows whose relationship isn't `rel_type` are counted
-and ignored rather than treated as an error: a tree export can carry other
-relationship kinds alongside the one that defines parentage.
+*text*, never from these. Rows whose relationship isn't `rel_type` are ignored
+rather than treated as an error: a tree export can carry other relationship
+kinds alongside the one that defines parentage. Their endpoints are not
+registered as tree nodes — a cross-reference to a node outside the tree would
+otherwise show up as a phantom second root.
 """
 
 from __future__ import annotations
@@ -90,6 +92,11 @@ class Neo4jTreeReader:
             if not isinstance(row, dict) or not _REQUIRED_KEYS <= row.keys():
                 raise ReaderError(f"{path}: row {i} is not a valid {{n, r, m}} object")
             n, r, m = row["n"], row.get("r") or {}, row["m"]
+            if r.get("type") != self.rel_type:
+                # A different relationship kind: not parentage, not an error —
+                # and its endpoints are not part of this tree, so they are not
+                # registered (`implicit` would make an outside node a 2nd root).
+                continue
             try:
                 for node in (n, m):
                     nodes.setdefault(node["identity"], node)
@@ -100,8 +107,6 @@ class Neo4jTreeReader:
                 order[child_id] = next_order
                 next_order += 1
 
-            if r.get("type") != self.rel_type:
-                continue  # a different relationship kind: not parentage, not an error
             # `r.start`/`r.end` are the edge's own endpoints — the authoritative
             # parentage, even if a corrupted export's embedded `n`/`m` payload
             # disagrees with them.

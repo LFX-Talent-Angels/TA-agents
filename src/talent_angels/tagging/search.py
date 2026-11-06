@@ -98,7 +98,7 @@ class Router:
         return list(routed)
 
 
-def _keep_by_routed_kind(ref_kind: str, routed_kind: str) -> bool:
+def keep_by_routed_kind(ref_kind: str, routed_kind: str) -> bool:
     has_occupation = "occupation" in ref_kind.casefold()
     return has_occupation if routed_kind.casefold() == "occupation" else not has_occupation
 
@@ -143,7 +143,7 @@ def search_unit(
             refs = [
                 (node_ref(candidate.node, suite_name), candidate.method) for candidate in candidates
             ]
-            refs = [(ref, method) for ref, method in refs if _keep_by_routed_kind(ref.kind, kind)]
+            refs = [(ref, method) for ref, method in refs if keep_by_routed_kind(ref.kind, kind)]
             if top_method is not None and top_method != "hybrid_rrf":
                 refs = sorted(refs, key=lambda item: lexical_rank(query, item[0]))
 

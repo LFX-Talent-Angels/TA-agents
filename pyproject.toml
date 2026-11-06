@@ -26,7 +26,8 @@ dependencies = [
   "litellm",
   "python-dotenv",
   "pyyaml",
-  # Excel output of `ta-agent tag`; offline CI installs only `.[dev]`.
+  # Excel output of `ta-agent tag` (imported by the workbook writer, so it is
+  # needed even for `--no-llm`); also repeated in the `taxonomies`/`app` extras.
   "openpyxl",
   "rich>=13",
 ]

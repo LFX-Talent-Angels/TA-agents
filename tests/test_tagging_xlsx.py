@@ -309,3 +309,13 @@ def test_review_sheet_shows_best_matches_first_and_failures_on_top(
         "🔴 gap",
         "✔ gap (confirmed)",
     ]
+
+
+def test_attribution_names_every_shipped_suite() -> None:
+    """A suite without a hardcoded default must not fall back to a vague line."""
+    from talent_angels.tagging.writers.xlsx import _attribution_lines
+
+    lines = _attribution_lines(["esco", "onet", "sfia", "bls"])
+
+    assert all("see the suite's license" not in line for line in lines)
+    assert any("SFIA" in line and "structure" in line for line in lines)

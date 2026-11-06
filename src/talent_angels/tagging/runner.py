@@ -62,9 +62,11 @@ from talent_angels.tagging.review import (
     RetryRequest,
     ReviewOutcome,
     apply_decisions,
+    decision_cells,
+    kept_cells,
+    pending_retries,
     read_decisions,
     review_stats,
-    unrecognised_decisions,
 )
 from talent_angels.tagging.rewrite import Rewrite, rewrite_cache_key, rewrite_group
 from talent_angels.tagging.search import Router, queries_for, search_unit
@@ -100,6 +102,21 @@ def _newer_numbers_copy(out_path: Path) -> Path | None:
     return None
 
 
+def _other_newer_workbooks(out_path: Path) -> list[Path]:
+    """Other `.xlsx` files in `out/` saved after the workbook: likely an export that
+    missed it (Numbers' "tagged 2.xlsx", a "copy"), whose decisions won't be read."""
+    if not out_path.is_file():
+        return []
+    xlsx_mtime = out_path.stat().st_mtime
+    return [
+        candidate
+        for candidate in sorted(out_path.parent.glob("*.xlsx"))
+        if candidate != out_path
+        and not _system_file(candidate.name)
+        and candidate.stat().st_mtime > xlsx_mtime
+    ]
+
+
 @dataclass
 class _Pending:
     """One unit x suite not reused from the ledger: everything needed to decide."""
@@ -118,18 +135,51 @@ class _Pending:
     is_retry: bool = False
 
 
+#: Documents a client may hand over alongside the export (the Word original,
+#: notes): kept as reference, never read as rows to tag.
+_REFERENCE_SUFFIXES = frozenset({".docx", ".doc", ".pdf", ".md", ".txt", ".rtf", ".pptx", ".key"})
+
+
+def _system_file(name: str) -> bool:
+    """Files the OS or an office app puts in a folder on its own (Finder's
+    `.DS_Store`, `._*` AppleDouble files, the custom-folder-icon `Icon\r`,
+    Office's `~$*` lock files): never input, never worth a warning."""
+    return name.startswith((".", "~$")) or name == "Icon\r"
+
+
+def _numbers_hint(name: str) -> str:
+    return (
+        f"{name}: an Apple Numbers file, which this tool cannot read. In Numbers choose "
+        "File > Export To > Excel (or CSV) and put the exported file in this folder"
+    )
+
+
 def _scan(folder: Path) -> tuple[list[Path], list[str]]:
     """Readable files directly under `folder` (not recursive): candidates + warnings."""
     files: list[Path] = []
     warnings: list[str] = []
     if not folder.is_dir():
         return files, warnings
-    for entry in sorted(p for p in folder.iterdir() if p.is_file()):
+    for entry in sorted(folder.iterdir()):
+        if _system_file(entry.name):
+            continue
+        if entry.suffix.lower() == ".numbers":  # a file, or a package folder on older Macs
+            warnings.append(_numbers_hint(entry.name))
+            continue
+        if not entry.is_file():
+            continue
         if entry.suffix.lower() == ".csv" and entry.with_suffix(".json").exists():
             warnings.append(describe_csv_twin(entry, entry.with_suffix(".json")))
             continue
         if not any(reader.can_read(entry) for reader in READERS):
-            warnings.append(f"{entry.name}: no reader recognizes this file")
+            if entry.suffix.lower() in _REFERENCE_SUFFIXES:
+                warnings.append(
+                    f"{entry.name}: a reference document, not tagged (only structured exports "
+                    "and tables are); move it to inputs/context/ to keep it with the project "
+                    "without this note"
+                )
+            else:
+                warnings.append(f"{entry.name}: no reader recognizes this file")
             continue
         files.append(entry)
     return files, warnings
@@ -141,11 +191,13 @@ def _search_routed(
     unit: TagUnit,
     queries: list[str],
     routed_kinds: list[str],
+    *,
+    priority: list[str] | None = None,
 ) -> SearchOutcome:
     """No routable kind means the suite has no such concept (`n/a`), not a gap."""
     if not routed_kinds:
         return SearchOutcome(suite=suite_name, status="n/a", routed_kind=None)
-    return search_unit(search, suite_name, unit, queries, routed_kinds)
+    return search_unit(search, suite_name, unit, queries, routed_kinds, priority=priority or ())
 
 
 def _document_title(doc: Document, profile: Profile) -> str:
@@ -181,6 +233,29 @@ def _search_by_suite(
             return _measured.search_nodes(text, kind=kind)
 
         return _search
+
+    return _get
+
+
+def _lookup_by_suite(
+    suites: dict[str, MeasuredSuite | None],
+) -> Callable[[str], Callable[[str], object | None] | None]:
+    """`review.apply_decisions`'s `lookup_by_suite`: one node by its id, or `None`."""
+
+    def _get(suite_name: str) -> Callable[[str], object | None] | None:
+        measured = suites.get(suite_name)
+        if measured is None:
+            return None
+
+        def _lookup(node_id: str, _measured: MeasuredSuite = measured) -> object | None:
+            try:
+                result = _measured.get_neighbors(node_id)
+            except Exception:  # noqa: BLE001 - an unknown id is "not found", not a crash
+                return None
+            nodes = getattr(result, "nodes", None) or []
+            return next((node for node in nodes if getattr(node, "id", None) == node_id), None)
+
+        return _lookup
 
     return _get
 
@@ -295,9 +370,10 @@ def run(
     llm_on = not opts.no_llm and llm_client is not None
 
     project, input_files = discover(path)
-    if not input_files:
-        raise ReaderError(f"no readable input files under {path}")
     run_warnings = _input_warnings(path)
+    if not input_files:
+        reasons = "".join(f"\n  {warning}" for warning in run_warnings)
+        raise ReaderError(f"no readable input files under {path}{reasons}")
 
     def say(message: str) -> None:
         if progress is not None:
@@ -327,6 +403,12 @@ def run(
     choose_sys = choose_system(profile.document_type)
 
     ledger = Ledger(project / ".ta-tag")
+    corrupt = ledger.corrupt_lines + ledger.corrupt_rewrite_lines + ledger.corrupt_review_lines
+    if corrupt:
+        run_warnings.append(
+            f".ta-tag: {corrupt} unreadable line(s) skipped (an earlier run was probably cut off "
+            "while writing)"
+        )
     documents: list[str] = []
     outputs: list[str] = []
     overall_counts: dict[str, dict[str, int]] = {}
@@ -364,15 +446,27 @@ def run(
                 "to ignore it)."
             )
 
+        for stray in _other_newer_workbooks(out_path):
+            run_warnings.append(
+                f"{stray.name} in out/ is newer than {out_path.name}, but only {out_path.name} "
+                "is read: if your decisions are in it, save or export it over "
+                f"{out_path.name} and re-run"
+            )
+
         # Read the expert's Decision/Hint off the *previous* workbook before any
         # search or model spend happens for this doc (PILOT-PLAN.md "Review loop").
         review_decisions, decision_warnings = read_decisions(out_path)
-        kept_decisions = unrecognised_decisions(out_path)
+        review_cells = decision_cells(out_path)
         run_warnings.extend(decision_warnings)
 
         say(f"tagging {doc.key}…")
         units, skipped = select_units(doc, profile, rows=opts.rows, limit=opts.limit)
         total_units += len(units)
+        doc_unit_keys = (
+            {unit.unit_key for unit in select_units(doc, profile)[0]}
+            if opts.rows is not None or opts.limit is not None
+            else {unit.unit_key for unit in units}
+        )
 
         results: dict[tuple[str, str], TagRecord] = {}
         reused = 0
@@ -396,14 +490,35 @@ def run(
                 review_decisions,
                 ledger,
                 search_by_suite=_search_by_suite(suites),
+                lookup_by_suite=_lookup_by_suite(suites),
                 run_id=run_id,
+                max_retries=profile.max_retries,
             )
             run_warnings.extend(review_outcome.warnings)
-            review_retries: dict[tuple[str, str], RetryRequest] = review_outcome.retries
+            kept_decisions = kept_cells(review_cells, review_outcome.unapplied)
+            # This run's retries plus any earlier one that never produced an
+            # answer (stopped run, model error, row outside --rows/--limit).
+            review_retries: dict[tuple[str, str], RetryRequest] = pending_retries(ledger)
+            selected = {(unit.unit_key, name) for unit in units for name in suite_names}
+            waiting = sorted(
+                key for key in review_retries if key not in selected and key[0] in doc_unit_keys
+            )
+            if waiting:
+                run_warnings.append(
+                    f"{len(waiting)} retried row(s) are outside this run's selection; "
+                    "they run when those rows are included"
+                )
 
             rewrites: dict[str, Rewrite] = {}
             if llm_on and llm_client is not None:
                 say(f"{doc.key}: step 1/4 skill phrases for {len(units)} rows…")
+                rw_cached = sum(
+                    1
+                    for unit in units
+                    if _needs_rewrite(unit)
+                    and ledger.rewrite_lookup(rewrite_cache_key(unit, model, REWRITE_VERSION))
+                    is not None
+                )
                 rw_map, rw_stages = _rewrite_phase(
                     llm_client,
                     units,
@@ -417,14 +532,13 @@ def run(
                 )
                 rewrites = rw_map
                 doc_stages.extend(rw_stages)
-                say(
-                    f"{doc.key}: step 1/4 done "
-                    + (
-                        f"({len(rw_stages)} model calls, the rest reused)"
-                        if rw_stages
-                        else "(all reused, no model calls)"
-                    )
-                )
+                if not rw_stages:
+                    rw_note = "all reused, no model calls"
+                elif rw_cached:
+                    rw_note = f"{len(rw_stages)} model calls, {rw_cached} rows reused"
+                else:
+                    rw_note = f"{len(rw_stages)} model calls"
+                say(f"{doc.key}: step 1/4 done ({rw_note})")
 
             pending: dict[tuple[str, str], _Pending] = {}
 
@@ -448,12 +562,27 @@ def run(
                         # not by `--refresh`, not by `--fresh`.
                         reusable = True
                     else:
-                        existing = None if opts.fresh else latest
+                        # Neither does a row the reviewer already retried: a
+                        # blanket --refresh/--fresh would redo it without the hint.
+                        reviewed = ledger.latest_review_for(*key_pair) is not None
+                        existing = None if (opts.fresh and not reviewed) else latest
                         reusable = (
                             existing is not None
                             and existing.versions == pinned_versions
+                            and existing.fingerprint
+                            == fingerprint(
+                                unit,
+                                suite_name,
+                                pinned_versions,
+                                hint=existing.hint,
+                                attempt=existing.attempt,
+                            )
                             and existing.verdict not in _NOT_CACHED
-                            and not (opts.refresh and existing.verdict in _RETRY_ON_REFRESH)
+                            and not (
+                                opts.refresh
+                                and not reviewed
+                                and existing.verdict in _RETRY_ON_REFRESH
+                            )
                         )
                     if reusable and latest is not None:
                         results[key_pair] = latest
@@ -461,6 +590,7 @@ def run(
                         continue
 
                     queries = base_queries
+                    priority: list[str] = []
                     hint = ""
                     attempt = 0
                     is_retry = False
@@ -468,10 +598,14 @@ def run(
                         attempt = retry_req.attempt
                         is_retry = True
                         retried += 1
-                        extra = retry_context.extra_queries_for(unit, rw, profile, attempt)
-                        queries = [*base_queries, *extra]
+                        extra = retry_context.extra_queries_for(unit, rw, profile, retry_req.level)
+                        hint_q = retry_context.hint_query(retry_req.hint)
+                        priority = [hint_q] if hint_q else []
+                        queries = [*base_queries, *extra, *priority]
                         siblings = retry_context.siblings_for(unit, units)
-                        hint = retry_context.choose_hint_for(retry_req.hint, attempt, siblings)
+                        hint = retry_context.choose_hint_for(
+                            retry_req.hint, retry_req.level, siblings
+                        )
 
                     measured = suites.get(suite_name)
                     if measured is None:
@@ -503,7 +637,12 @@ def run(
                             )
                         else:
                             outcome = _search_routed(
-                                bound_search, suite_name, unit, queries, routed_kinds
+                                bound_search,
+                                suite_name,
+                                unit,
+                                queries,
+                                routed_kinds,
+                                priority=priority,
                             )
 
                     searched += 1
@@ -552,6 +691,7 @@ def run(
                 pinned_versions=pinned_versions,
                 system=choose_sys,
                 document_label=profile.document_label,
+                progress=counter(f"{doc.key}: step 4/4 second look with wider context"),
             )
             doc_stages.extend(widened_stages)
 
@@ -632,7 +772,10 @@ def run(
             for key in results
             if (payload := ledger.latest_review_for(*key)) is not None
         }
-        stats = review_stats(ledger, units)
+        for key, note in review_outcome.notes.items():
+            if key in results:
+                previous_decisions[key] = {"note": note}
+        stats = review_stats(ledger, units, suite_names)
 
         out_dir.mkdir(parents=True, exist_ok=True)
         if review_outcome.applied:
@@ -836,6 +979,7 @@ def _widen_pending(
     pinned_versions: Versions,
     system: str,
     document_label: str,
+    progress: Callable[[int, int], None] | None = None,
 ) -> tuple[dict[tuple[str, str], str], list[StageUsage]]:
     """The widened re-attempt (rule 6) for every unit x suite that asked for one.
 
@@ -844,6 +988,8 @@ def _widen_pending(
     """
     stages: list[StageUsage] = []
     fps: dict[tuple[str, str], str] = {}
+    to_widen = sum(1 for verdict in verdicts.values() if verdict.needs_widening) if llm_on else 0
+    widened_done = 0
 
     for key, p in pending.items():
         verdict_result = verdicts.get(key)
@@ -853,6 +999,9 @@ def _widen_pending(
             and verdict_result is not None
             and verdict_result.needs_widening
         )
+        if widen and progress is not None:
+            widened_done += 1
+            progress(widened_done, to_widen)
         if not widen:
             fps[key] = fingerprint(
                 p.unit, p.suite_name, pinned_versions, hint=p.hint, attempt=p.attempt

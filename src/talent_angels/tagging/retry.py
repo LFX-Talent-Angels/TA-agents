@@ -1,7 +1,7 @@
 """Context-widening helpers for a reviewer-triggered retry (`review.RetryRequest`).
 
 A retry climbs the *standard's own tree* for more context instead of just
-re-asking the same question: attempt 1 adds the parent heading, attempt 2
+re-asking the same question: retry 1 adds the parent heading, retry 2
 also adds the grandparent and the unit's sibling lines — the same ladder the
 pilot's automatic widened attempt uses (`runner._widen_pending`), just driven
 by the reviewer instead of a `none` fit.
@@ -14,6 +14,7 @@ from talent_angels.tagging.profile import Profile
 from talent_angels.tagging.rewrite import Rewrite
 
 _MAX_SIBLINGS = 4
+_MAX_HINT_QUERY = 200
 
 
 def siblings_for(unit: TagUnit, units: list[TagUnit]) -> list[str]:
@@ -26,11 +27,12 @@ def siblings_for(unit: TagUnit, units: list[TagUnit]) -> list[str]:
     return out[:_MAX_SIBLINGS]
 
 
-def extra_queries_for(unit: TagUnit, rewrite: Rewrite, profile: Profile, attempt: int) -> list[str]:
+def extra_queries_for(unit: TagUnit, rewrite: Rewrite, profile: Profile, level: int) -> list[str]:
     """Context-climbing queries a retry adds on top of the unit's own ones.
 
-    Attempt 1: description + parent heading (same shape as the automatic
-    widened attempt). Attempt 2: also description + grandparent heading.
+    `level` is the reviewer's retry number. Level 1: description + parent
+    heading (same shape as the automatic widened attempt). Level 2: also
+    description + grandparent heading.
     """
     description = rewrite.description or unit.clean_text
     path = unit.context_path
@@ -39,16 +41,27 @@ def extra_queries_for(unit: TagUnit, rewrite: Rewrite, profile: Profile, attempt
         parent = profile.clean(path[-1])
         if parent:
             extra.append(f"{description} {parent}".strip())
-    if attempt >= 2 and len(path) >= 2:
+    if level >= 2 and len(path) >= 2:
         grandparent = profile.clean(path[-2])
         if grandparent:
             extra.append(f"{description} {grandparent}".strip())
     return extra
 
 
-def choose_hint_for(review_hint: str, attempt: int, siblings: list[str]) -> str:
-    """The `choose` hint for a retry: the reviewer's hint, plus sibling lines at attempt >= 2."""
+def hint_query(review_hint: str) -> str | None:
+    """The reviewer's hint as a search query of its own.
+
+    The hint names what the line is really about ("this is about software
+    testing"), so it must reach the search, not only the `choose` prompt —
+    otherwise the retry re-reads the same candidates the reviewer rejected.
+    """
+    text = " ".join(review_hint.split())[:_MAX_HINT_QUERY]
+    return text or None
+
+
+def choose_hint_for(review_hint: str, level: int, siblings: list[str]) -> str:
+    """The `choose` hint for a retry: the reviewer's hint, plus sibling lines at level >= 2."""
     lines = [review_hint] if review_hint else []
-    if attempt >= 2 and siblings:
+    if level >= 2 and siblings:
         lines.append("Sibling lines: " + "; ".join(siblings))
     return "\n".join(lines)

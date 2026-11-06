@@ -45,11 +45,13 @@ def test_no_llm_run_produces_all_four_sheets_with_real_suites(tmp_path: Path) ->
     workbook = openpyxl.load_workbook(output)
     assert workbook.sheetnames == ["Summary", "Review", "Standard", "Gaps"]
 
-    # At least one unit got >= 1 candidate in every suite this registry has
-    # attached: a `--no-llm` run only ever verdicts `review` on a hit (`gap`
-    # means zero candidates), so some `review` rules out a false "n/a" or
-    # "unavailable" for the whole run.
+    # Every attached suite answered (`review` on a hit, `gap` on zero
+    # candidates) instead of being "unavailable" or "n/a" for the whole run.
+    # A suite may honestly find nothing — SFIA has no bakery skills — so a hit
+    # is only required somewhere, which rules out a search that never matches.
     for suite_name, counts in summary.counts.items():
-        assert counts.get("review", 0) > 0, (
-            f"{suite_name}: no candidates found for any unit in a --no-llm run"
-        )
+        answered = counts.get("review", 0) + counts.get("gap", 0)
+        assert answered > 0, f"{suite_name}: no unit was searched in a --no-llm run"
+    assert any(counts.get("review", 0) > 0 for counts in summary.counts.values()), (
+        "no suite found a candidate for any unit in a --no-llm run"
+    )

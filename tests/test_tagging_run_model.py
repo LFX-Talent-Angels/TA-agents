@@ -426,3 +426,32 @@ def test_without_a_terminal_progress_is_plain_lines(capsys: pytest.CaptureFixtur
         view.message("doc: step 1/4 skill phrases for 3 rows…")
         view.step("doc: step 2/4 searching taxonomies", 1, 3)  # ignored without a bar
     assert capsys.readouterr().err == "doc: step 1/4 skill phrases for 3 rows…\n"
+
+
+def test_a_new_step_starts_a_fresh_bar_and_the_bar_leaves_no_trace() -> None:
+    """Step 4 used to inherit step 3's total and sit at "0/16" after the run."""
+    from talent_angels.tagging.cli import _ProgressView
+
+    with _ProgressView(live=True) as view:
+        view.step("doc: step 3/4 model choosing among candidates", 16, 16)
+        view.message("doc: step 4/4 second look with wider context for 3 answers…")
+        assert view._progress is not None
+        [task] = view._progress.tasks
+        assert task.description.startswith("step 4/4")
+        assert (task.total, task.completed) == (None, 0)
+        assert view._progress.live.transient
+
+
+def test_step_one_does_not_claim_reuse_when_nothing_was_reused(project: Path) -> None:
+    registry, _ = _registry()
+    messages: list[str] = []
+    run(
+        project,
+        registry=registry,  # type: ignore[arg-type]
+        opts=RunOptions(no_llm=False),
+        llm_client=ContentScriptedClient(),
+        progress=messages.append,
+    )
+    [done_line] = [m for m in messages if "step 1/4 done" in m]
+    assert "model calls" in done_line
+    assert "reused" not in done_line

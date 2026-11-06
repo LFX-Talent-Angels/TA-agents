@@ -237,3 +237,62 @@ def test_a_newer_numbers_save_stops_the_run_before_any_work(project: Path) -> No
     os.utime(out_path, None)
     os.utime(numbers_copy, (0, 0))
     run(project, registry=_registry(), opts=RunOptions())
+
+
+# --- macOS + Numbers ---------------------------------------------------------------
+
+
+def test_mac_system_files_in_inputs_are_ignored_quietly(project: Path) -> None:
+    inputs = project / "inputs"
+    (inputs / ".DS_Store").write_bytes(b"\x00\x00\x00\x01Bud1")
+    (inputs / "._standard.json").write_bytes(b"\x00\x05\x16\x07")
+    (inputs / "Icon\r").write_bytes(b"")
+    (inputs / "~$standard.xlsx").write_bytes(b"lock")
+
+    summary = run(project, registry=_registry(), opts=RunOptions())
+
+    assert summary.units > 0
+    assert not any("recognizes" in w for w in summary.warnings)
+
+
+@pytest.mark.parametrize("as_package", [False, True])
+def test_a_numbers_input_says_how_to_export_it(tmp_path: Path, as_package: bool) -> None:
+    from talent_angels.tagging.readers.base import ReaderError
+
+    inputs = tmp_path / "project" / "inputs"
+    inputs.mkdir(parents=True)
+    target = inputs / "course.numbers"
+    if as_package:  # older Numbers saves a folder that Finder shows as one file
+        (target / "Index").mkdir(parents=True)
+    else:
+        target.write_bytes(b"PK\x03\x04")
+
+    with pytest.raises(ReaderError, match="Export To > Excel"):
+        run(tmp_path / "project", registry=_registry(), opts=RunOptions())
+
+
+def test_an_export_saved_under_another_name_is_pointed_out(project: Path) -> None:
+    import time
+
+    run(project, registry=_registry(), opts=RunOptions())
+    doc = read_document(project / "inputs" / "standard.json")
+    out_path = project / "out" / f"{doc.key}-tagged.xlsx"
+    time.sleep(0.01)
+    stray = out_path.with_name(f"{out_path.stem} 2.xlsx")
+    shutil.copy(out_path, stray)
+
+    summary = run(project, registry=_registry(), opts=RunOptions())
+
+    assert any(stray.name in w and "only" in w for w in summary.warnings)
+
+
+def test_a_reference_document_in_inputs_gets_a_plain_note(project: Path) -> None:
+    (project / "inputs" / "Standard original.docx").write_bytes(b"PK\x03\x04")
+    (project / "inputs" / "context").mkdir()
+    (project / "inputs" / "context" / "notes.pdf").write_bytes(b"%PDF")
+
+    summary = run(project, registry=_registry(), opts=RunOptions())
+
+    notes = [w for w in summary.warnings if "Standard original.docx" in w]
+    assert notes and "reference document, not tagged" in notes[0]
+    assert not any("notes.pdf" in w for w in summary.warnings)  # context/ is never scanned

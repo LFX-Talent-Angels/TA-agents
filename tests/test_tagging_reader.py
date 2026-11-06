@@ -105,9 +105,10 @@ def test_ignores_rows_with_a_different_relationship_type() -> None:
 
 
 def test_two_roots_is_a_reader_error(tmp_path: Path) -> None:
+    # Two independent IS_PART_OF trees in one file: roots 0 and 99.
     rows = [
         {"n": _node(1, "A"), "r": _rel(1, 1, 0), "m": _node(0, "Root")},
-        {"n": _node(2, "B"), "r": _rel(2, 2, 0, "OTHER"), "m": _node(0, "Root")},
+        {"n": _node(2, "B"), "r": _rel(2, 2, 99), "m": _node(99, "Another root")},
     ]
     path = _write(tmp_path, rows)
     with pytest.raises(ReaderError):
@@ -163,3 +164,19 @@ def test_a_row_without_identity_is_a_reader_error(tmp_path) -> None:
     bad.write_text(json.dumps([{"n": {"labels": []}, "r": {"type": "IS_PART_OF"}, "m": {}}]))
     with pytest.raises(ReaderError, match="without an identity"):
         Neo4jTreeReader().read(bad)
+
+
+def test_cross_reference_to_a_node_outside_the_tree_is_ignored(tmp_path: Path) -> None:
+    """A non-parentage edge must not register its endpoint: that node would be
+    a phantom second root (the export can reference skills outside the doc)."""
+    root = _node(0, "Root", labels=("Document",))
+    child = _node(1, "A performance row")
+    outside = _node(99, "Something outside the tree", labels=("Skill",))
+    rows = [
+        {"n": child, "r": _rel(1, 1, 0), "m": root},
+        {"n": child, "r": _rel(2, 1, 99, "REFERS_TO"), "m": outside},
+    ]
+    doc = read_document(_write(tmp_path, rows))
+
+    assert {row.row_id for row in doc.rows} == {"0", "1"}
+    assert doc.by_id()["1"].parent_id == "0"

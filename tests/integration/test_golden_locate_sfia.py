@@ -54,6 +54,8 @@ def test_golden_locate_sfia_case(case: dict) -> None:
         "truncated",
         "match_count_capped",
         "ambiguous",
+        # SFIA has no embedding job yet; set whenever a query model is installed.
+        "vector_index_missing",
     }
     if case["expected_top_id"] is None:
         assert outcome.nodes == []

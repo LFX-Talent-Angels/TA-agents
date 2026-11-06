@@ -30,7 +30,7 @@ from talent_angels.tagging.models import (
     TagUnit,
     Verdict,
 )
-from talent_angels.tagging.review import ReviewStats
+from talent_angels.tagging.review import ReviewStats, tag_reference
 
 _MAX_CELL_LEN = 32_767
 _FORMULA_PREFIXES = ("=", "+", "-", "@")
@@ -68,16 +68,19 @@ _VERDICT_ICON = {
     Verdict.HUMAN_GAP: "✔ gap (confirmed)",
 }
 
-#: Review sheet sort order (PR4 "Review loop"): rows still needing a look
-#: first, then policy-accepted, then anything the reviewer already settled.
+#: Review sheet sort order: best match first, so the sheet opens on what
+#: worked, down to the gaps. Rows whose run failed (`error`, `unavailable`)
+#: stay above everything: rare, and easy to miss at the bottom. Ties keep
+#: document order. Rows are matched by key, so re-sorting in Excel/Numbers is safe.
 _SORT_TIER = {
-    Verdict.REVIEW: 0,
-    Verdict.ADJACENT: 0,
-    Verdict.GAP: 0,
     Verdict.ERROR: 0,
-    Verdict.ACCEPTED: 1,
-    Verdict.HUMAN_ACCEPTED: 2,
-    Verdict.HUMAN_GAP: 2,
+    Verdict.UNAVAILABLE: 0,
+    Verdict.HUMAN_ACCEPTED: 1,
+    Verdict.ACCEPTED: 2,
+    Verdict.REVIEW: 3,
+    Verdict.ADJACENT: 4,
+    Verdict.GAP: 5,
+    Verdict.HUMAN_GAP: 6,
 }
 
 _PREVIOUS_DECISION_LABELS = {
@@ -102,7 +105,16 @@ _REASON_SENTENCES = {
     "model_partial": "No exact match; the model found skills that partially cover this line.",
     "needs_widening": "No match nearby; retried with a wider context, still inconclusive.",
     "model_none": "No taxonomy entry covers this line, even after widening the search.",
+    "human_approved": "Approved by the reviewer.",
+    "human_alternative": "The reviewer chose this alternative.",
+    "human_tag": "The reviewer chose this tag.",
+    "human_gap": "The reviewer confirmed that no taxonomy entry fits.",
+    # Written before a retry past the limit was refused instead (older ledgers).
+    "retries_exhausted": "Still no fit after two reviewer retries; recorded as a confirmed gap.",
 }
+
+#: The model's reasoning was about tags the reviewer has since replaced.
+_DROP_MODEL_REASON = frozenset({"human_alternative", "human_tag"})
 
 #: Rows re-run with a model (PR3) still land in one of these two buckets.
 _NEEDS_REVIEW = {Verdict.REVIEW, Verdict.ADJACENT, Verdict.GAP, Verdict.ERROR}
@@ -117,6 +129,11 @@ _DISPLAY_NAMES = {"esco": "ESCO", "onet": "O*NET"}
 _DEFAULT_ATTRIBUTION = {
     "esco": "ESCO © European Union, CC BY 4.0",
     "onet": "O*NET 31.0 Database, U.S. Department of Labor, CC BY 4.0",
+    "sfia": (
+        "SFIA — skill codes, names, levels and structure only (ADR-0006); "
+        "SFIA descriptive text is not reproduced."
+    ),
+    "bls": "BLS/SOC — U.S. Bureau of Labor Statistics (public domain).",
 }
 
 
@@ -182,7 +199,9 @@ def _package_attribution(suite: str) -> str | None:
 def _attribution_lines(suites: list[str]) -> list[str]:
     lines = []
     for suite in suites:
-        text = _package_attribution(suite) if suite in _DEFAULT_ATTRIBUTION else None
+        # Try the installed package's own NOTES.md for *any* suite: a suite's
+        # attribution should not need a hardcoded default to be picked up.
+        text = _package_attribution(suite)
         lines.append(
             text or _DEFAULT_ATTRIBUTION.get(suite, f"{suite.upper()}: see the suite's license.")
         )
@@ -237,10 +256,21 @@ def _format_previous_decision(payload: dict[str, object] | None) -> str:
     """ "Retry with hint 'x' (applied 2026-10-12)" from one `reviews.jsonl` line."""
     if payload is None:
         return ""
-    template = _PREVIOUS_DECISION_LABELS.get(str(payload.get("action", "")))
-    if template is None:
-        return ""
-    text = template.format(hint=str(payload.get("hint") or ""), alt_index=payload.get("alt_index"))
+    if "note" in payload:  # this run's message about a decision it could not apply
+        return str(payload["note"])
+    action = str(payload.get("action", ""))
+    hint = str(payload.get("hint") or "")
+    if payload.get("result") == "retries_exhausted":
+        text = "Retries used up; marked as gap"
+    elif action in ("retry", "reject") and payload.get("result") == "retry" and not hint:
+        text = "Rejected; retried" if action == "reject" else "Retried (no hint)"
+    else:
+        template = _PREVIOUS_DECISION_LABELS.get(action)
+        if template is None:
+            return ""
+        if action == "use_my_tag":
+            hint = tag_reference(hint)
+        text = template.format(hint=hint, alt_index=payload.get("alt_index"))
     date = str(payload.get("ts") or "")[:10]
     return f"{text} (applied {date})" if date else text
 
@@ -275,7 +305,7 @@ def _review_rows(
             )
             icon = _VERDICT_ICON.get(record.verdict, str(record.verdict.value))
             why = _REASON_SENTENCES.get(record.reason_code, record.reason_code)
-            if record.model_reason:
+            if record.model_reason and record.reason_code not in _DROP_MODEL_REASON:
                 why = f"{why}\nModel: {record.model_reason}"
             alt_ids = json.dumps([alt.id for alt in record.alternatives])
             previous = _format_previous_decision(previous_decisions.get((unit.unit_key, suite)))
@@ -298,7 +328,7 @@ def _review_rows(
                 alt_ids,
                 record.fingerprint,
             ]
-            priority = _SORT_TIER.get(record.verdict, 1)
+            priority = _SORT_TIER.get(record.verdict, len(_SORT_TIER))
             collected.append((priority, row, _VERDICT_FILL.get(record.verdict.value)))
     # Stable sort: ties (same priority) keep the document order they were
     # appended in (unit, then suite within unit).
@@ -609,7 +639,7 @@ def _write_summary(
         row += 1
     row += 1
 
-    _set(ws, row, 1, f"Reviewed: {stats.reviewed} of {stats.total}").font = Font(bold=True)
+    _set(ws, row, 1, f"Reviewed: {stats.reviewed} of {stats.total} answers").font = Font(bold=True)
     row += 2
     _set(ws, row, 1, "Accepted precision (human-checked)").font = Font(bold=True)
     row += 1

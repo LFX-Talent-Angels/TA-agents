@@ -38,23 +38,31 @@ def select_units(
 
     ancestor_kind: dict[str, str | None] = {}
 
-    def nearest_kind(row: SourceRow) -> str | None:
+    def nearest_kind(row: SourceRow, _seen: frozenset[str] = frozenset()) -> str | None:
         """The kind of the nearest ancestor (not `row` itself) whose text matches."""
         if row.row_id in ancestor_kind:
             return ancestor_kind[row.row_id]
+        if row.row_id in _seen:
+            # A cycle in the parent chain (a hand-built Document, or a reader
+            # that let one through) can't name a kind. Stop instead of recursing.
+            return None
         result: str | None = None
         if row.parent_id is not None:
             parent = by_id.get(row.parent_id)
             if parent is not None:
-                result = profile.kind_of_heading(parent.text) or nearest_kind(parent)
+                result = profile.kind_of_heading(parent.text) or nearest_kind(
+                    parent, _seen | {row.row_id}
+                )
         ancestor_kind[row.row_id] = result
         return result
 
     def context_path_for(row: SourceRow) -> list[str]:
         """Ancestor texts from top (excluding the root) down to the parent."""
         path: list[str] = []
+        seen: set[str] = set()
         current = by_id.get(row.parent_id) if row.parent_id is not None else None
-        while current is not None and current.row_id != root_id:
+        while current is not None and current.row_id != root_id and current.row_id not in seen:
+            seen.add(current.row_id)
             path.append(current.text.strip())
             current = by_id.get(current.parent_id) if current.parent_id is not None else None
         path.reverse()

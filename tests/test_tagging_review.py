@@ -341,18 +341,75 @@ def test_reject_retries_with_an_empty_hint(tmp_path: Path) -> None:
     assert outcome.retries == {("u1", "esco"): RetryRequest(hint="", attempt=1)}
 
 
-def test_reject_after_two_retries_becomes_human_gap_exhausted(tmp_path: Path) -> None:
+def _log_reviewer_retry(ledger: Ledger, n: int) -> None:
+    ledger.review_append(
+        {"review_key": f"earlier-{n}", "unit_key": "u1", "suite": "esco", "result": "retry"}
+    )
+
+
+def test_a_retry_past_the_limit_is_refused_not_turned_into_a_gap(tmp_path: Path) -> None:
+    """ "Still wrong" is not "nothing fits": the tool must not decide that for the reviewer."""
     ledger = Ledger(tmp_path / ".ta-tag")
-    ledger.append(_record(attempt=2))
+    ledger.append(_record(attempt=2, verdict=Verdict.ADJACENT))
+    _log_reviewer_retry(ledger, 1)
+    _log_reviewer_retry(ledger, 2)
 
     outcome = apply_decisions(
         [_decision(action=ReviewAction.REJECT)], ledger, search_by_suite=_no_search, run_id="r1"
     )
 
     assert outcome.retries == {}
-    [record] = outcome.human_records
-    assert record.verdict == Verdict.HUMAN_GAP
-    assert record.reason_code == "retries_exhausted"
+    assert outcome.human_records == []
+    assert outcome.applied == 0
+    assert outcome.unapplied == {("u1", "esco")}  # the decision stays in its cell
+    assert any("not retried again" in w for w in outcome.warnings)
+    note = outcome.notes[("u1", "esco")]
+    assert "Use my tag" in note and "Mark as gap" in note
+    assert ledger.latest_for("u1", "esco").verdict == Verdict.ADJACENT  # type: ignore[union-attr]
+
+
+def test_the_retry_limit_is_a_setting(tmp_path: Path) -> None:
+    ledger = Ledger(tmp_path / ".ta-tag")
+    ledger.append(_record(attempt=2, verdict=Verdict.ADJACENT))
+    _log_reviewer_retry(ledger, 1)
+    _log_reviewer_retry(ledger, 2)
+
+    allowed = apply_decisions(
+        [_decision(action=ReviewAction.RETRY, hint="third try")],
+        ledger,
+        search_by_suite=_no_search,
+        run_id="r1",
+        max_retries=3,
+    )
+    assert allowed.retries == {("u1", "esco"): RetryRequest(hint="third try", attempt=3, level=3)}
+
+    ledger_none = Ledger(tmp_path / "other")
+    ledger_none.append(_record(verdict=Verdict.ADJACENT))
+    refused = apply_decisions(
+        [_decision(action=ReviewAction.RETRY, hint="x")],
+        ledger_none,
+        search_by_suite=_no_search,
+        run_id="r1",
+        max_retries=0,
+    )
+    assert refused.retries == {}
+
+
+def test_automatic_second_look_does_not_use_up_a_reviewer_retry(tmp_path: Path) -> None:
+    """Second look (attempt 1) + one reviewer retry (attempt 2): one reviewer retry is left."""
+    ledger = Ledger(tmp_path / ".ta-tag")
+    ledger.append(_record(attempt=2))
+    _log_reviewer_retry(ledger, 1)
+
+    outcome = apply_decisions(
+        [_decision(action=ReviewAction.RETRY, hint="second try")],
+        ledger,
+        search_by_suite=_no_search,
+        run_id="r1",
+    )
+
+    assert outcome.retries == {("u1", "esco"): RetryRequest(hint="second try", attempt=3, level=2)}
+    assert outcome.human_records == []
 
 
 def test_stale_fingerprint_is_ignored_with_a_warning(tmp_path: Path) -> None:
@@ -441,7 +498,12 @@ def test_use_my_tag_not_found_warns_with_candidates(tmp_path: Path) -> None:
     )
 
     assert outcome.human_records == []
-    assert any("not found exactly" in w for w in outcome.warnings)
+    assert outcome.unapplied == {("u1", "esco")}
+    assert any("did you mean" in w and "esco:skill:x" in w for w in outcome.warnings)
+    # The suggestions, with ids to paste, also go into the row in the workbook.
+    note = outcome.notes[("u1", "esco")]
+    assert "nothing was applied" in note
+    assert "contains hit 1 (esco:skill:x)" in note
 
 
 def test_applying_the_same_decision_twice_is_a_no_op(tmp_path: Path) -> None:
@@ -463,3 +525,448 @@ def test_review_key_is_stable_for_the_same_decision() -> None:
     b = _decision()
     assert review_key(a) == review_key(b)
     assert review_key(a) != review_key(_decision(hint="different"))
+
+
+def test_approving_a_policy_accepted_answer_counts_toward_precision(tmp_path: Path) -> None:
+    """The human copy shares the reviewed answer's fingerprint; precision must still
+    find what the *policy* said (this read 0 approved after a real approval)."""
+    from talent_angels.tagging.models import TagUnit
+    from talent_angels.tagging.review import review_stats
+
+    ledger = Ledger(tmp_path / ".ta-tag")
+    ledger.append(_record("u1", "esco", fingerprint="fp1", verdict=Verdict.ACCEPTED))
+    ledger.append(_record("u2", "esco", fingerprint="fp2", verdict=Verdict.ACCEPTED))
+    ledger.append(_record("u2", "onet", fingerprint="fp3", verdict=Verdict.ADJACENT))
+    apply_decisions(
+        [
+            _decision(unit_key="u1", base_fp="fp1", action=ReviewAction.APPROVE),
+            _decision(unit_key="u2", base_fp="fp2", action=ReviewAction.REJECT),
+            _decision(unit_key="u2", suite="onet", base_fp="fp3", action=ReviewAction.APPROVE),
+        ],
+        Ledger(tmp_path / ".ta-tag"),
+        search_by_suite=lambda _suite: None,
+        run_id="run-1",
+    )
+    units = [
+        TagUnit(
+            unit_key=key,
+            doc_key="doc",
+            row_id=key,
+            kind="performance",
+            role="leaf",
+            text="t",
+            clean_text="t",
+            context_path=[],
+            group_key="0",
+        )
+        for key in ("u1", "u2")
+    ]
+    stats = review_stats(Ledger(tmp_path / ".ta-tag"), units, ["esco", "onet"])
+    assert (stats.approved_total, stats.rejected_total) == (1, 1)  # adjacent approve excluded
+    assert (stats.reviewed, stats.total) == (3, 4)  # per answer: 2 lines x 2 taxonomies
+
+
+# --- no silent wrong outcome ---------------------------------------------------
+
+
+def _gap_record(**overrides: object) -> TagRecord:
+    base = _record(verdict=Verdict.GAP, missing_skill="assign role to language model")
+    return base.model_copy(update={"tags": [], "reason_code": "model_none", **overrides})
+
+
+def test_approve_on_a_gap_confirms_the_gap(tmp_path: Path) -> None:
+    """ "Yes, this is right" on a gap row means the gap is right, not an empty approval."""
+    ledger = Ledger(tmp_path / ".ta-tag")
+    ledger.append(_gap_record())
+
+    outcome = apply_decisions(
+        [_decision(action=ReviewAction.APPROVE)], ledger, search_by_suite=_no_search, run_id="r1"
+    )
+
+    [record] = outcome.human_records
+    assert record.verdict == Verdict.HUMAN_GAP
+    assert record.missing_skill == "assign role to language model"
+
+
+def test_approve_on_an_error_row_is_refused_and_kept(tmp_path: Path) -> None:
+    ledger = Ledger(tmp_path / ".ta-tag")
+    ledger.append(_gap_record(verdict=Verdict.ERROR, missing_skill=None))
+
+    outcome = apply_decisions(
+        [_decision(action=ReviewAction.APPROVE)], ledger, search_by_suite=_no_search, run_id="r1"
+    )
+
+    assert outcome.human_records == []
+    assert outcome.applied == 0
+    assert outcome.unapplied == {("u1", "esco")}
+    assert any("nothing to approve" in w for w in outcome.warnings)
+
+
+def test_two_different_decisions_for_one_answer_apply_neither(tmp_path: Path) -> None:
+    ledger = Ledger(tmp_path / ".ta-tag")
+    ledger.append(_gap_record())
+    on_review = _decision(action=ReviewAction.RETRY, hint="software testing")
+    on_gaps = on_review.model_copy(
+        update={"hint": "reviewer says an existing skill fits", "from_gaps": True}
+    )
+
+    outcome = apply_decisions([on_review, on_gaps], ledger, search_by_suite=_no_search, run_id="r")
+
+    assert outcome.applied == 0
+    assert outcome.retries == {}
+    assert outcome.unapplied == {("u1", "esco")}
+    assert any("two different decisions" in w for w in outcome.warnings)
+    assert ledger.reviews() == []
+
+
+def test_the_same_decision_on_both_sheets_applies_once(tmp_path: Path) -> None:
+    ledger = Ledger(tmp_path / ".ta-tag")
+    ledger.append(_gap_record())
+    on_review = _decision(action=ReviewAction.MARK_GAP)
+    on_gaps = on_review.model_copy(update={"from_gaps": True})
+
+    outcome = apply_decisions([on_review, on_gaps], ledger, search_by_suite=_no_search, run_id="r")
+
+    assert outcome.applied == 1
+    assert outcome.warnings == []
+
+
+def test_gaps_sheet_yes_on_an_adjacent_row_keeps_its_partial_tags(tmp_path: Path) -> None:
+    ledger = Ledger(tmp_path / ".ta-tag")
+    ledger.append(_record(verdict=Verdict.ADJACENT, missing_skill="the missing part"))
+    yes = _decision(action=ReviewAction.MARK_GAP).model_copy(update={"from_gaps": True})
+
+    outcome = apply_decisions([yes], ledger, search_by_suite=_no_search, run_id="r1")
+
+    [record] = outcome.human_records
+    assert record.verdict == Verdict.HUMAN_GAP
+    assert [tag.id for tag in record.tags] == ["esco:skill:a"]
+
+
+def test_gaps_sheet_understands_spanish_and_short_answers(tmp_path: Path) -> None:
+    path = tmp_path / "out.xlsx"
+    workbook = openpyxl.Workbook()
+    workbook.active.title = "Review"
+    gaps = workbook.create_sheet("Gaps")
+    gaps.append(["Row ID", "Reviewer confirms gap? ▼", "key", "suite", "fp"])
+    for index, answer in enumerate(["Sí", "si", "S", "y", "N", " NO "]):
+        gaps.append([str(index), answer, f"u{index}", "esco", "fp"])
+    workbook.save(path)
+
+    decisions, warnings = read_decisions(path)
+
+    assert warnings == []
+    actions = [d.action for d in sorted(decisions, key=lambda d: d.unit_key)]
+    assert actions == [ReviewAction.MARK_GAP] * 4 + [ReviewAction.RETRY] * 2
+
+
+def test_a_hint_without_a_decision_warns_and_is_kept(tmp_path: Path) -> None:
+    from talent_angels.tagging.review import decision_cells, kept_cells
+
+    path = tmp_path / "out.xlsx"
+    _review_sheet(
+        path,
+        [
+            _row("3", "u1", "esco", "", hint="this is about testing"),
+            _row("4", "u2", "esco", "Approve"),
+            _row("5", "u3", "esco", "Use alternative 4"),
+            _row("6", "u4", "esco", "Aprove"),
+        ],
+    )
+
+    _decisions, warnings = read_decisions(path)
+    assert any("Hint without a Decision" in w for w in warnings)
+
+    kept = kept_cells(decision_cells(path), unapplied={("u3", "esco")})
+    assert kept == {
+        ("u1", "esco"): ("", "this is about testing"),
+        ("u3", "esco"): ("Use alternative 4", ""),
+        ("u4", "esco"): ("Aprove", ""),
+    }
+
+
+def test_use_my_tag_accepts_a_node_id(tmp_path: Path) -> None:
+    ledger = Ledger(tmp_path / ".ta-tag")
+    ledger.append(_record())
+    node = _FakeNode("esco:skill:987a", "maintain test equipment")
+
+    def search_by_suite(_suite: str) -> Callable[[str, str | None], object] | None:
+        return lambda text, kind: _FakeResult([])
+
+    def lookup_by_suite(_suite: str) -> Callable[[str], object | None] | None:
+        return lambda node_id: node if node_id == node.id else None
+
+    outcome = apply_decisions(
+        [_decision(action=ReviewAction.USE_MY_TAG, hint="esco:skill:987a")],
+        ledger,
+        search_by_suite=search_by_suite,
+        lookup_by_suite=lookup_by_suite,
+        run_id="r1",
+    )
+
+    [record] = outcome.human_records
+    assert record.tags[0].id == "esco:skill:987a"
+    assert record.tags[0].label == "maintain test equipment"
+
+
+# --- precision -------------------------------------------------------------------
+
+
+def _units(*keys: str) -> list[object]:
+    from talent_angels.tagging.models import TagUnit
+
+    return [
+        TagUnit(
+            unit_key=key,
+            doc_key="doc",
+            row_id=key,
+            kind="performance",
+            role="leaf",
+            text="t",
+            clean_text="t",
+            context_path=[],
+            group_key="0",
+        )
+        for key in keys
+    ]
+
+
+def test_precision_counts_corrections_as_wrong(tmp_path: Path) -> None:
+    from talent_angels.tagging.review import review_stats
+
+    ledger = Ledger(tmp_path / ".ta-tag")
+    alt = _candidate("esco:skill:b")
+    ledger.append(_record("u1", fingerprint="fp1"))
+    ledger.append(_record("u2", fingerprint="fp2", alternatives=[alt]))
+    ledger.append(_record("u3", fingerprint="fp3"))
+    apply_decisions(
+        [
+            _decision(unit_key="u1", base_fp="fp1", action=ReviewAction.APPROVE),
+            _decision(
+                unit_key="u2",
+                base_fp="fp2",
+                action=ReviewAction.USE_ALT,
+                alt_index=2,
+                alt_ids=["esco:skill:b"],
+            ),
+            _decision(unit_key="u3", base_fp="fp3", action=ReviewAction.MARK_GAP),
+        ],
+        ledger,
+        search_by_suite=_no_search,
+        run_id="r1",
+    )
+
+    stats = review_stats(ledger, _units("u1", "u2", "u3"), ["esco"])  # type: ignore[arg-type]
+    assert (stats.approved_total, stats.rejected_total) == (1, 2)
+
+
+def test_precision_counts_only_the_latest_decision_per_answer(tmp_path: Path) -> None:
+    from talent_angels.tagging.review import review_stats
+
+    ledger = Ledger(tmp_path / ".ta-tag")
+    ledger.append(_record("u1", fingerprint="fp1"))
+    apply_decisions(
+        [_decision(base_fp="fp1", action=ReviewAction.APPROVE)],
+        ledger,
+        search_by_suite=_no_search,
+        run_id="r1",
+    )
+    apply_decisions(  # the reviewer changes their mind on the same answer
+        [_decision(base_fp="fp1", action=ReviewAction.REJECT)],
+        ledger,
+        search_by_suite=_no_search,
+        run_id="r2",
+    )
+
+    stats = review_stats(ledger, _units("u1"), ["esco"])  # type: ignore[arg-type]
+    assert (stats.approved_total, stats.rejected_total) == (0, 1)
+
+
+# --- pending retries ---------------------------------------------------------------
+
+
+def test_a_retry_stays_pending_until_it_has_an_answer(tmp_path: Path) -> None:
+    from talent_angels.tagging.review import pending_retries
+
+    ledger = Ledger(tmp_path / ".ta-tag")
+    ledger.append(_record(verdict=Verdict.ADJACENT))
+    apply_decisions(
+        [_decision(action=ReviewAction.RETRY, hint="software testing")],
+        ledger,
+        search_by_suite=_no_search,
+        run_id="r1",
+    )
+
+    # The run stopped before the retry ran: still pending, hint intact.
+    expected = RetryRequest(hint="software testing", attempt=1, level=1)
+    assert pending_retries(Ledger(tmp_path / ".ta-tag")) == {("u1", "esco"): expected}
+
+    # The retry ran but the model call failed: still pending.
+    failed = _record(verdict=Verdict.ERROR, fingerprint="fp-err", attempt=1)
+    ledger.append(failed.model_copy(update={"ts": "2999-01-01T00:00:00+00:00"}))
+    assert pending_retries(Ledger(tmp_path / ".ta-tag")) == {("u1", "esco"): expected}
+
+    # It produced an answer: done.
+    answered = _record(verdict=Verdict.ADJACENT, fingerprint="fp-new", attempt=1)
+    ledger.append(answered.model_copy(update={"ts": "2999-01-02T00:00:00+00:00"}))
+    assert pending_retries(Ledger(tmp_path / ".ta-tag")) == {}
+
+
+def test_a_later_decision_cancels_a_pending_retry(tmp_path: Path) -> None:
+    from talent_angels.tagging.review import pending_retries
+
+    ledger = Ledger(tmp_path / ".ta-tag")
+    ledger.append(_record(verdict=Verdict.ADJACENT))
+    apply_decisions(
+        [_decision(action=ReviewAction.RETRY, hint="x")],
+        ledger,
+        search_by_suite=_no_search,
+        run_id="r1",
+    )
+    apply_decisions(
+        [_decision(action=ReviewAction.APPROVE)], ledger, search_by_suite=_no_search, run_id="r2"
+    )
+
+    assert pending_retries(Ledger(tmp_path / ".ta-tag")) == {}
+
+
+# --- a sheet sorted in Apple Numbers -------------------------------------------------
+
+
+def test_decisions_are_read_after_the_sheet_was_sorted_with_its_header(tmp_path: Path) -> None:
+    """Numbers imports the sheet with no header rows, so a sort moves the title and
+    header rows in among the data; every decision must still be read."""
+    path = tmp_path / "out.xlsx"
+    _review_sheet(path, [], banner=False)
+    workbook = openpyxl.load_workbook(path)
+    ws = workbook["Review"]
+    header = [cell.value for cell in ws[1]]
+    ws.delete_rows(1)
+    ws.append(_row("3", "u1", "esco", "Approve"))
+    ws.append(["Review — set a Decision on any row, save, and re-run the same command"])
+    ws.append(header)
+    ws.append(_row("4", "u2", "esco", "Mark as gap"))
+    workbook.save(path)
+
+    decisions, warnings = read_decisions(path)
+
+    assert warnings == []
+    assert {(d.unit_key, d.action) for d in decisions} == {
+        ("u1", ReviewAction.APPROVE),
+        ("u2", ReviewAction.MARK_GAP),
+    }
+
+
+def test_a_sheet_whose_header_row_was_deleted_says_so(tmp_path: Path) -> None:
+    path = tmp_path / "out.xlsx"
+    _review_sheet(path, [_row("3", "u1", "esco", "Approve")])
+    workbook = openpyxl.load_workbook(path)
+    workbook["Review"].delete_rows(1)
+    workbook.save(path)
+
+    decisions, warnings = read_decisions(path)
+
+    assert decisions == []
+    assert any("header row" in w for w in warnings)
+
+
+# --- "Use my tag" with text pasted from a tag cell ------------------------------------
+
+
+def _id_lookup(*nodes: _FakeNode) -> Callable[[str], Callable[[str], object | None] | None]:
+    by_id = {node.id: node for node in nodes}
+    return lambda _suite: lambda node_id: by_id.get(node_id)
+
+
+def _no_name_search(_suite: str) -> Callable[[str, str | None], object] | None:
+    return lambda text, kind: _FakeResult([])
+
+
+def _onet_record() -> TagRecord:
+    return _record(suite="onet").model_copy(update={"verdict": Verdict.ADJACENT})
+
+
+def test_use_my_tag_reads_the_id_out_of_a_pasted_tag_cell(tmp_path: Path) -> None:
+    """The expert copies the whole tag cell (label → covers, then the id) into Hint."""
+    ledger = Ledger(tmp_path / ".ta-tag")
+    ledger.append(_onet_record())
+    pasted = (
+        "Software Developers → Prompt Engineer / Generative AI Instruction Engineering "
+        "Specialist\nonet:occupation:15-1252.00"
+    )
+
+    outcome = apply_decisions(
+        [_decision(suite="onet", action=ReviewAction.USE_MY_TAG, hint=pasted)],
+        ledger,
+        search_by_suite=_no_name_search,
+        lookup_by_suite=_id_lookup(_FakeNode("onet:occupation:15-1252.00", "Software Developers")),
+        run_id="r1",
+    )
+
+    [record] = outcome.human_records
+    assert [tag.label for tag in record.tags] == ["Software Developers"]
+
+
+def test_use_my_tag_keeps_every_id_listed(tmp_path: Path) -> None:
+    ledger = Ledger(tmp_path / ".ta-tag")
+    ledger.append(_onet_record())
+
+    outcome = apply_decisions(
+        [
+            _decision(
+                suite="onet",
+                action=ReviewAction.USE_MY_TAG,
+                hint="onet:task:3967, onet:occupation:15-1252.00",
+            )
+        ],
+        ledger,
+        search_by_suite=_no_name_search,
+        lookup_by_suite=_id_lookup(
+            _FakeNode("onet:task:3967", "Maintain records"),
+            _FakeNode("onet:occupation:15-1252.00", "Software Developers"),
+        ),
+        run_id="r1",
+    )
+
+    [record] = outcome.human_records
+    assert [tag.id for tag in record.tags] == ["onet:task:3967", "onet:occupation:15-1252.00"]
+
+
+def test_use_my_tag_refuses_an_id_from_another_taxonomy(tmp_path: Path) -> None:
+    ledger = Ledger(tmp_path / ".ta-tag")
+    ledger.append(_onet_record())
+
+    outcome = apply_decisions(
+        [_decision(suite="onet", action=ReviewAction.USE_MY_TAG, hint="esco:skill:abc")],
+        ledger,
+        search_by_suite=_no_name_search,
+        lookup_by_suite=_id_lookup(),
+        run_id="r1",
+    )
+
+    assert outcome.human_records == []
+    assert outcome.unapplied == {("u1", "onet")}
+    assert any("not a ONET id" in w for w in outcome.warnings)
+
+
+def test_use_my_tag_takes_the_name_before_the_arrow(tmp_path: Path) -> None:
+    ledger = Ledger(tmp_path / ".ta-tag")
+    ledger.append(_record())
+    searched: list[str] = []
+
+    def search_by_suite(_suite: str) -> Callable[[str, str | None], object] | None:
+        def _search(text: str, kind: str | None) -> object:
+            searched.append(text)
+            return _FakeResult([_FakeCandidate(_FakeNode("esco:skill:x", text), "exact_pref")])
+
+        return _search
+
+    outcome = apply_decisions(
+        [_decision(action=ReviewAction.USE_MY_TAG, hint="write specifications → documenting")],
+        ledger,
+        search_by_suite=search_by_suite,
+        run_id="r1",
+    )
+
+    assert searched == ["write specifications"]
+    assert outcome.human_records[0].tags[0].id == "esco:skill:x"

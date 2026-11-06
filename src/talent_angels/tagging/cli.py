@@ -131,6 +131,9 @@ class _ProgressView:
                 MofNCompleteColumn(),
                 TimeElapsedColumn(),
                 console=Console(stderr=True),
+                # The bar is only for while it runs; the printed lines and the
+                # summary stay. A finished run must not leave a stale bar behind.
+                transient=True,
             )
             self._progress.start()
             self._task = self._progress.add_task("starting…", total=None)
@@ -147,8 +150,10 @@ class _ProgressView:
         self._progress.console.print(text)
         _, _, step = text.partition(": ")
         if step.startswith("step") and text.endswith("…"):
-            # A step without a count yet: show it, with a pulsing bar.
-            self._progress.update(self._task, description=step.rstrip("…"), total=None, completed=0)
+            # A new step without a count yet: a fresh pulsing bar. (A rich task
+            # can't go back to "no total", so the last step's would linger.)
+            self._progress.remove_task(self._task)
+            self._task = self._progress.add_task(step.rstrip("…"), total=None)
 
     def step(self, label: str, done: int, total: int) -> None:
         if self._progress is None or self._task is None:

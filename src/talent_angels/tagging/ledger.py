@@ -33,10 +33,10 @@ class Ledger:
 
         self._by_fingerprint: dict[str, TagRecord] = {}
         self._by_unit_suite: dict[tuple[str, str], TagRecord] = {}
+        self._policy_by_fingerprint: dict[str, TagRecord] = {}
         self.corrupt_lines = 0
         for record in self._read_ledger():
-            self._by_fingerprint[record.fingerprint] = record
-            self._by_unit_suite[(record.unit_key, record.suite)] = record
+            self._index(record)
 
         self._rewrites: dict[str, Rewrite] = {}
         self.corrupt_rewrite_lines = 0
@@ -77,6 +77,14 @@ class Ledger:
         """The latest record written for this exact fingerprint, if any."""
         return self._by_fingerprint.get(fingerprint)
 
+    def policy_record(self, fingerprint: str) -> TagRecord | None:
+        """What the policy itself decided for this fingerprint, ignoring human copies.
+
+        A human decision is stored under the same fingerprint as the answer it
+        reviewed, so `lookup` returns the human copy; precision needs the original.
+        """
+        return self._policy_by_fingerprint.get(fingerprint)
+
     def latest_for(self, unit_key: str, suite: str) -> TagRecord | None:
         """The latest record for this unit x suite, across any attempt/hint."""
         return self._by_unit_suite.get((unit_key, suite))
@@ -87,8 +95,13 @@ class Ledger:
             handle.write(record.model_dump_json())
             handle.write("\n")
             handle.flush()
+        self._index(record)
+
+    def _index(self, record: TagRecord) -> None:
         self._by_fingerprint[record.fingerprint] = record
         self._by_unit_suite[(record.unit_key, record.suite)] = record
+        if record.decided_by == "policy":
+            self._policy_by_fingerprint[record.fingerprint] = record
 
     def _read_rewrites(self) -> list[tuple[str, Rewrite]]:
         if not self.rewrites_path.is_file():

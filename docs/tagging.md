@@ -149,6 +149,11 @@ overrides use.
   main [README](../README.md) §§1–2).
 - `.env` with `LLM_PROVIDER` and the matching API key, unless you're running
   `--no-llm`.
+- **Client data leaves the machine on a model run.** The rewrite and choose
+  steps send the client's own lines, the headings above them and any review
+  hint to the configured provider. Use `--no-llm` for material you may not
+  share, and check the client's data-processing terms before the first model
+  run.
 
 ## Commands
 
@@ -181,29 +186,46 @@ uv run ta-agent tag data/local/sprint7/pilot-run --fresh
 | `--depth leaves\|headings\|all` | Which rows count as taggable (overrides the profile). |
 | `--profile NAME\|PATH` | Built-in profile name (e.g. `generic`) or a path to a `.yaml` profile file (see "Profiles"). |
 | `--workers N` | Concurrent `choose` model calls. |
-| `--refresh` | Re-run `review`/`adjacent`/`gap` rows; reuse `accepted` and every human decision. |
-| `--fresh` | Ignore the ledger completely (still never overwrites a human decision). |
+| `--refresh` | Re-run `review`/`adjacent`/`gap` rows; reuse `accepted`, every human decision, and every row the reviewer already retried. |
+| `--fresh` | Ignore the ledger (still never overwrites a human decision or redoes a reviewer's retry). |
 
 ## The review loop
 
 1. Open `out/<doc>-tagged.xlsx`, sheet **Review**. Each row needing a look has
    a **Decision ▼** dropdown and a **Hint** cell.
 2. Pick one:
-   - **Approve** — the suggested tag is correct.
+   - **Approve** — the suggested tag is correct. On a `gap` row it confirms
+     the gap (same as Mark as gap); on an `error`/`unavailable` row there is
+     nothing to approve, so it is refused with a warning.
    - **Reject** — it's wrong; the next run retries with more context (same
      as "No" on the Gaps sheet).
    - **Use alternative 2/3/4** — one of the listed alternatives is the right
      one instead.
    - **Mark as gap** — no taxonomy entry fits; record it as a confirmed gap.
-   - **Retry with hint** — give the model a hint (e.g. "this is about
-     software testing") and ask again with more of the standard's own
-     context (parent heading, then grandparent + sibling lines on a second
-     retry). Up to 2 retries; a 3rd becomes a confirmed gap automatically.
-   - **Use my tag** — type the taxonomy's own label or id in Hint; accepted
-     only if it matches **exactly** one entry in that suite.
+   - **Retry with hint** — give a hint (e.g. "this is about software
+     testing"). The hint is searched as well, and its best matches head the
+     candidate list; the model is asked again with the hint and more of the
+     standard's own context (parent heading, then grandparent + sibling lines
+     on a second retry). Up to 2 retries per answer (`max_retries` in
+     `tag.yaml`); one more is refused, not guessed: the decision stays in its
+     cell, and the row asks you to choose Use my tag or Mark as gap instead.
+     The pilot's own second look doesn't count as a retry.
+     A retry is only done once it has produced an answer: if the run is
+     stopped, the model call fails, or the row isn't part of this run
+     (`--rows`, `--limit`, `--suites`), the next run does it, hint included.
+   - **Use my tag** — put the taxonomy's own id (e.g. `esco:skill:…`,
+     `onet:task:3967`) or exact label in Hint. Pasting a whole tag cell works
+     too: the id in it is used. Several ids keep exactly those tags, e.g. to
+     keep only the first of two suggested tags, paste just its id. A partial
+     or misspelt name is never guessed: nothing is applied, the decision stays,
+     and the row's Previous decision cell lists the closest tags with their
+     ids; paste one into Hint and re-run.
 3. On the **Gaps** sheet, one row per confirmed-or-likely gap: answer
-   **Yes** ("really is a gap") or **No** ("an existing skill fits" — same
-   effect as Retry).
+   **Yes** ("really is a gap"; `Sí`/`si`/`y` work too) or **No** ("an existing
+   skill fits" — same effect as Retry). Yes on an `adjacent` row keeps its
+   partial tags and confirms only the missing part. A different decision for
+   the same row on the Review sheet is a conflict: neither is applied, and the
+   run says so.
 4. Save the file and run the exact same `ta-agent tag` command again. Only
    the rows you decided on are touched; everything else is reused untouched.
    When decisions were applied, the previous workbook is copied to
@@ -212,6 +234,9 @@ uv run ta-agent tag data/local/sprint7/pilot-run --fresh
    and when.
 5. Decisions only ever apply once: re-saving without changing anything is a
    0-model-call, sub-second no-op.
+6. Anything that could not be applied — a misspelt decision, a Hint with no
+   Decision, an alternative number that doesn't exist, a tag not found — is
+   reported as a warning and stays in its cell in the new workbook to fix.
 
 ### What each verdict means
 
@@ -233,13 +258,18 @@ over `out/<doc>-tagged.xlsx`, replacing it. If a `.numbers` file in `out/` is
 newer than the workbook, the run stops before doing anything and says so. The
 exported file keeps everything the tool needs (an extra "Export Summary" sheet
 that Numbers adds is ignored); the dropdown may disappear, but typing the
-decision works the same.
+decision works the same. Sorting or filtering the sheets in Numbers is fine:
+rows are matched by their hidden `key` column (Numbers shows it), never by
+position, so leave the `key`, `suite`, `alt_ids` and `fp` columns as they are.
+If the export lands in `out/` under another name, the run points it out.
+Finder's `.DS_Store` and other macOS system files in `inputs/` are ignored; a
+`.numbers` input must be exported to Excel or CSV first.
 
 ### Known limitations
 
 - If the model call itself fails during a retry, that row shows `error`
-  (sorted to the top of the Review sheet) and the retry is not repeated on
-  its own: set the decision again and re-run.
+  (failed rows sit at the top of the Review sheet, above the best matches) until the next run repeats the
+  retry with the same hint.
 - Most rows of an emerging-field standard come back `adjacent`: the
   taxonomies (ESCO v1.2.1, O*NET 31.0) have no prompt-engineering entries.
   No precision figure exists until an expert has reviewed the tags.

@@ -45,6 +45,10 @@ class Profile(BaseModel):
     #: Also tag each heading *as a group*: its own text plus its direct
     #: children's, one request — the group-level answer next to the steps'.
     groups: bool = True
+    #: How many times a reviewer may "Retry with hint"/"Reject" one answer.
+    #: Each retry adds more of the document's own context (parent, then
+    #: grandparent + siblings), so a third rarely finds anything new.
+    max_retries: int = Field(default=2, ge=0)
     kinds: dict[str, list[str]] = Field(default_factory=dict)
     row_rules: list[RowRule] = Field(default_factory=list)
     #: A row with no kind heading above it (and no row rule) gets this kind

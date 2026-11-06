@@ -380,3 +380,49 @@ def test_isolation_memory_home_and_runlog_untouched(project: Path) -> None:
     assert snapshot() == before
     assert not runlog_path.exists()
     assert (project / ".ta-tag" / "runlog.jsonl").is_file()
+
+
+def test_progress_names_every_phase_and_counts_the_model_step(project: Path) -> None:
+    """The model step is most of a real run; it must report progress, not go silent."""
+    registry, _ = _registry()
+    messages: list[str] = []
+    run(
+        project,
+        registry=registry,  # type: ignore[arg-type]
+        opts=RunOptions(no_llm=False, workers=2),
+        llm_client=ContentScriptedClient(),
+        progress=messages.append,
+    )
+    text = "\n".join(messages)
+    assert "step 1/4 skill phrases" in text
+    assert "step 1/4 skill phrases, batch" in text  # step 1 counts its batches too
+    assert "step 2/4 rows" in text
+    assert "step 3/4 model choosing among candidates" in text
+
+
+def test_a_live_bar_gets_every_tick_of_each_counted_step(project: Path) -> None:
+    registry, _ = _registry()
+    ticks: list[tuple[str, int, int]] = []
+    run(
+        project,
+        registry=registry,  # type: ignore[arg-type]
+        opts=RunOptions(no_llm=False, workers=2),
+        llm_client=ContentScriptedClient(),
+        progress=lambda _message: None,
+        step_progress=lambda label, done, total: ticks.append((label, done, total)),
+    )
+    for step in ("step 1/4", "step 2/4", "step 3/4"):
+        counts = [(done, total) for label, done, total in ticks if step in label]
+        assert counts, step
+        assert counts[-1][0] == counts[-1][1]  # each counted step ends full
+    searched = [done for label, done, _ in ticks if "step 2/4" in label]
+    assert searched == list(range(1, len(searched) + 1))  # one tick per row
+
+
+def test_without_a_terminal_progress_is_plain_lines(capsys: pytest.CaptureFixture[str]) -> None:
+    from talent_angels.tagging.cli import _ProgressView
+
+    with _ProgressView(live=False) as view:
+        view.message("doc: step 1/4 skill phrases for 3 rows…")
+        view.step("doc: step 2/4 searching taxonomies", 1, 3)  # ignored without a bar
+    assert capsys.readouterr().err == "doc: step 1/4 skill phrases for 3 rows…\n"

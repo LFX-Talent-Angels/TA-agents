@@ -54,6 +54,10 @@ one did.
 - **Neo4j tree JSON** (`neo4j_tree.py`, CONOCER's export shape): a JSON array
   of `{n, r, m}` Cypher rows (child, relationship, parent) forming one
   `IS_PART_OF` tree per file.
+- **A CSV next to a JSON of the same name** (Neo4j exports both) is not tagged:
+  it has no node ids, so it cannot rebuild the tree. The run checks it anyway
+  and says either "same N rows as the JSON, nothing lost" or which rows or
+  columns it has that the JSON lacks ("NOT used yet").
 - **CSV / XLSX table** (`table.py`): a flat spreadsheet with one row per line
   to tag. Columns are matched by header name, case-insensitively, in English
   or Spanish:
@@ -220,6 +224,16 @@ uv run ta-agent tag data/local/sprint7/pilot-run --fresh
 | `human_accepted` / `human_gap` | The reviewer's own decision; never overwritten automatically. |
 | `unavailable` | The suite was down this run (not cached — retried every run until it's back). |
 | `n/a` | This suite has no concept of this row's kind (e.g. no "occupation" node type) — not a gap. |
+
+### Editing on a Mac without Excel (Apple Numbers)
+
+Numbers saves your edits as a separate `.numbers` file, which this tool cannot
+read. After setting decisions, choose **File > Export To > Excel** and save it
+over `out/<doc>-tagged.xlsx`, replacing it. If a `.numbers` file in `out/` is
+newer than the workbook, the run stops before doing anything and says so. The
+exported file keeps everything the tool needs (an extra "Export Summary" sheet
+that Numbers adds is ignored); the dropdown may disappear, but typing the
+decision works the same.
 
 ### Known limitations
 

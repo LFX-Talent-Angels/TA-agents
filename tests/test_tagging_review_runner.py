@@ -308,9 +308,12 @@ def test_review_loop_applies_each_decision_once_and_retries_only_those_units(
     row_id_col = _header_index(second_review, "Row ID")
     decision_col = _header_index(second_review, "Decision ▼")
     previous_col = _header_index(second_review, "Previous decision")
-    for row_id in ("11", "12", "13", "14", "15", "18"):
+    for row_id in ("11", "12", "13", "14", "18"):
         row = _row_by_id(second_review, row_id, row_id_col)
         assert second_review.cell(row=row, column=decision_col).value in (None, "")
+    # The unrecognised "banana" stays visible so the reviewer can fix it.
+    banana_row = _row_by_id(second_review, "15", row_id_col)
+    assert second_review.cell(row=banana_row, column=decision_col).value == "banana"
     approve_row = _row_by_id(second_review, "11", row_id_col)
     assert "Approved" in str(second_review.cell(row=approve_row, column=previous_col).value)
 
@@ -349,3 +352,35 @@ def test_locked_workbook_raises_before_any_decision_is_read(project: Path) -> No
     with pytest.raises(WorkbookOpenError):
         run(project, registry=_registry()[0], opts=RunOptions(no_llm=False), llm_client=client2)
     assert client2.calls == []
+
+
+def test_an_unrecognised_decision_stays_in_its_cell(project: Path) -> None:
+    """A typo must not vanish with the consumed decisions: it stays visible to fix."""
+    registry, _ = _registry()
+    first = run(
+        project,
+        registry=registry,
+        opts=RunOptions(no_llm=False, fresh=True),
+        llm_client=ReviewScriptedClient(),
+    )
+    out_path = Path(first.outputs[0])
+    workbook, ws = _open_review(out_path)
+    _set_decision(ws, "15", "maybe later", hint="ask Alejandro")
+    _set_decision(ws, "11", "Approve")
+    workbook.save(out_path)
+
+    second = run(
+        project,
+        registry=_registry()[0],
+        opts=RunOptions(no_llm=False),
+        llm_client=ReviewScriptedClient(),
+    )
+    assert any("unknown decision 'maybe later'" in w for w in second.warnings)
+
+    _, ws = _open_review(out_path)
+    decision_col, hint_col = _header_index(ws, "Decision ▼"), _header_index(ws, "Hint")
+    typo_row = _row_by_id(ws, "15", _header_index(ws, "Row ID"))
+    approved_row = _row_by_id(ws, "11", _header_index(ws, "Row ID"))
+    assert ws.cell(row=typo_row, column=decision_col).value == "maybe later"  # type: ignore[attr-defined]
+    assert ws.cell(row=typo_row, column=hint_col).value == "ask Alejandro"  # type: ignore[attr-defined]
+    assert not ws.cell(row=approved_row, column=decision_col).value  # type: ignore[attr-defined]

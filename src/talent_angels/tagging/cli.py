@@ -14,6 +14,17 @@ import sys
 from collections.abc import Sequence
 from pathlib import Path
 
+from rich.console import Console
+from rich.progress import (
+    BarColumn,
+    MofNCompleteColumn,
+    Progress,
+    SpinnerColumn,
+    TaskID,
+    TextColumn,
+    TimeElapsedColumn,
+)
+
 from talent_angels.env import load_local_dotenv
 from talent_angels.llm.factory import get_llm_client
 from talent_angels.llm.protocol import LLMClient
@@ -99,6 +110,53 @@ def _print_summary(summary: RunSummary) -> None:
         print(output)
 
 
+class _ProgressView:
+    """A live spinner + bar + elapsed time in a terminal; plain lines otherwise.
+
+    Model calls take seconds each, so a step can sit on one number for a while:
+    the spinner and the clock keep moving to show the run is alive.
+    """
+
+    def __init__(self, *, live: bool) -> None:
+        self.live = live
+        self._progress: Progress | None = None
+        self._task: TaskID | None = None
+
+    def __enter__(self) -> _ProgressView:
+        if self.live:
+            self._progress = Progress(
+                SpinnerColumn(),
+                TextColumn("{task.description}"),
+                BarColumn(),
+                MofNCompleteColumn(),
+                TimeElapsedColumn(),
+                console=Console(stderr=True),
+            )
+            self._progress.start()
+            self._task = self._progress.add_task("starting…", total=None)
+        return self
+
+    def __exit__(self, *_exc: object) -> None:
+        if self._progress is not None:
+            self._progress.stop()
+
+    def message(self, text: str) -> None:
+        if self._progress is None or self._task is None:
+            print(text, file=sys.stderr)
+            return
+        self._progress.console.print(text)
+        _, _, step = text.partition(": ")
+        if step.startswith("step") and text.endswith("…"):
+            # A step without a count yet: show it, with a pulsing bar.
+            self._progress.update(self._task, description=step.rstrip("…"), total=None, completed=0)
+
+    def step(self, label: str, done: int, total: int) -> None:
+        if self._progress is None or self._task is None:
+            return
+        _, _, short = label.partition(": ")
+        self._progress.update(self._task, description=short or label, completed=done, total=total)
+
+
 def main(
     argv: Sequence[str] | None = None,
     *,
@@ -147,17 +205,16 @@ def main(
         registry if registry is not None else default_suite_registry(neighbor_cache=False)
     )
 
-    def progress(message: str) -> None:
-        print(message, file=sys.stderr)
-
     try:
-        summary = run(
-            path,
-            registry=selected_registry,
-            opts=opts,
-            llm_client=None if no_llm else client,
-            progress=progress,
-        )
+        with _ProgressView(live=sys.stderr.isatty()) as view:
+            summary = run(
+                path,
+                registry=selected_registry,
+                opts=opts,
+                llm_client=None if no_llm else client,
+                progress=view.message,
+                step_progress=view.step if view.live else None,
+            )
     except (ReaderError, WorkbookOpenError, UnknownSuiteError) as exc:
         print(str(exc), file=sys.stderr)
         return 2

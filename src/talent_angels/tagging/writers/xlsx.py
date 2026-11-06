@@ -250,6 +250,7 @@ def _review_rows(
     results: dict[tuple[str, str], TagRecord],
     suites: list[str],
     previous_decisions: dict[tuple[str, str], dict[str, object]],
+    kept_decisions: dict[tuple[str, str], tuple[str, str]] | None = None,
 ) -> tuple[list[list[object]], list[str | None]]:
     collected: list[tuple[int, list[object], str | None]] = []
     for unit in units:
@@ -278,6 +279,7 @@ def _review_rows(
                 why = f"{why}\nModel: {record.model_reason}"
             alt_ids = json.dumps([alt.id for alt in record.alternatives])
             previous = _format_previous_decision(previous_decisions.get((unit.unit_key, suite)))
+            kept_decision, kept_hint = (kept_decisions or {}).get((unit.unit_key, suite), ("", ""))
             row: list[object] = [
                 unit.row_id,
                 where,
@@ -289,8 +291,8 @@ def _review_rows(
                 why,
                 alt_text,
                 previous,
-                "",
-                "",
+                kept_decision,
+                kept_hint,
                 unit.unit_key,
                 suite,
                 alt_ids,
@@ -312,6 +314,7 @@ def _write_review(
     results: dict[tuple[str, str], TagRecord],
     suites: list[str],
     previous_decisions: dict[tuple[str, str], dict[str, object]],
+    kept_decisions: dict[tuple[str, str], tuple[str, str]] | None = None,
 ) -> None:
     headers = [
         "Row ID",
@@ -331,7 +334,7 @@ def _write_review(
         "alt_ids",
         "fp",
     ]
-    rows, fills = _review_rows(units, results, suites, previous_decisions)
+    rows, fills = _review_rows(units, results, suites, previous_decisions, kept_decisions)
     widths = [8, 24, 44, 12, 10, 36, 14, 38, 32, 26, 20, 26, 10, 8, 12, 14]
     _write_table(
         ws,
@@ -668,6 +671,7 @@ def write_workbook(
     *,
     report_kinds: frozenset[str] = frozenset(),
     previous_decisions: dict[tuple[str, str], dict[str, object]] | None = None,
+    kept_decisions: dict[tuple[str, str], tuple[str, str]] | None = None,
     stats: ReviewStats | None = None,
     document_label: str = "Standard",
 ) -> Path:
@@ -684,7 +688,14 @@ def write_workbook(
     assert summary_ws is not None
     summary_ws.title = "Summary"
     _write_summary(summary_ws, doc, units, results, suites, summary, stats)
-    _write_review(workbook.create_sheet("Review"), units, results, suites, previous_decisions)
+    _write_review(
+        workbook.create_sheet("Review"),
+        units,
+        results,
+        suites,
+        previous_decisions,
+        kept_decisions,
+    )
     _write_standard(
         workbook.create_sheet(document_label), doc, units, skipped, results, suites, document_label
     )

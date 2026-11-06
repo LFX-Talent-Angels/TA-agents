@@ -280,6 +280,33 @@ def _read_gaps_sheet(ws: Any, source_sha: str, warnings: list[str]) -> list[Revi
     return decisions
 
 
+def unrecognised_decisions(path: Path) -> dict[tuple[str, str], tuple[str, str]]:
+    """(unit_key, suite) -> (decision text, hint) for Review rows whose word wasn't understood.
+
+    The rewritten workbook puts these back in their cells, so a typo stays
+    visible to fix instead of silently disappearing with the consumed ones.
+    """
+    if not path.is_file():
+        return {}
+    workbook = load_workbook(path, data_only=True)
+    if "Review" not in workbook.sheetnames:
+        return {}
+    ws = workbook["Review"]
+    header = _find_header(ws, required="key", decision_prefix="decision")
+    if header is None:
+        return {}
+    header_row, columns = header
+    col_key, col_suite = _col(columns, "key"), _col(columns, "suite")
+    col_decision, col_hint = _col(columns, "decision"), _col(columns, "hint")
+    kept: dict[tuple[str, str], tuple[str, str]] = {}
+    for row_idx in range(header_row + 1, ws.max_row + 1):
+        text = _cell_text(ws, row_idx, col_decision)
+        unit_key, suite = _cell_text(ws, row_idx, col_key), _cell_text(ws, row_idx, col_suite)
+        if text and unit_key and suite and _parse_action(text) is None:
+            kept[(unit_key, suite)] = (text, _cell_text(ws, row_idx, col_hint))
+    return kept
+
+
 def read_decisions(path: Path) -> tuple[list[ReviewDecision], list[str]]:
     """Every non-blank Decision on the Review + Gaps sheets of `path`, and warnings.
 

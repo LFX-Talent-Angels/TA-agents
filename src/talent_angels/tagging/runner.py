@@ -22,7 +22,7 @@ import time
 import uuid
 from collections import defaultdict
 from collections.abc import Callable
-from concurrent.futures import ThreadPoolExecutor
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from contextlib import ExitStack
 from dataclasses import dataclass
 from datetime import UTC, datetime
@@ -64,10 +64,12 @@ from talent_angels.tagging.review import (
     apply_decisions,
     read_decisions,
     review_stats,
+    unrecognised_decisions,
 )
 from talent_angels.tagging.rewrite import Rewrite, rewrite_cache_key, rewrite_group
 from talent_angels.tagging.search import Router, queries_for, search_unit
 from talent_angels.tagging.select import document_context, select_units
+from talent_angels.tagging.twins import describe_csv_twin
 from talent_angels.tagging.verdict import decide
 from talent_angels.tagging.writers.csv import write_gaps_csv
 from talent_angels.tagging.writers.xlsx import build_gap_rows, display_name, write_workbook
@@ -80,7 +82,22 @@ _REWRITE_CHUNK = 6
 
 
 class WorkbookOpenError(RuntimeError):
-    """A previous `out/<doc>-tagged.xlsx` is still open (Excel's `~$` lock file)."""
+    """The previous workbook can't be read safely: still open in Excel, or edited in Numbers."""
+
+
+def _newer_numbers_copy(out_path: Path) -> Path | None:
+    """A `.numbers` save of the workbook newer than the `.xlsx`, if any.
+
+    Apple Numbers saves edits of an `.xlsx` as a separate `.numbers` file, so
+    the reviewer's decisions would be silently ignored: stop and say so.
+    """
+    if not out_path.is_file():
+        return None
+    xlsx_mtime = out_path.stat().st_mtime
+    for candidate in sorted(out_path.parent.glob(f"{out_path.stem}*.numbers")):
+        if candidate.stat().st_mtime > xlsx_mtime:
+            return candidate
+    return None
 
 
 @dataclass
@@ -109,7 +126,7 @@ def _scan(folder: Path) -> tuple[list[Path], list[str]]:
         return files, warnings
     for entry in sorted(p for p in folder.iterdir() if p.is_file()):
         if entry.suffix.lower() == ".csv" and entry.with_suffix(".json").exists():
-            warnings.append(f"{entry.name}: CSV twin has no node ids; using the JSON")
+            warnings.append(describe_csv_twin(entry, entry.with_suffix(".json")))
             continue
         if not any(reader.can_read(entry) for reader in READERS):
             warnings.append(f"{entry.name}: no reader recognizes this file")
@@ -202,8 +219,14 @@ def _rewrite_phase(
     *,
     system: str,
     document_label: str,
+    workers: int = 1,
+    progress: Callable[[int, int], None] | None = None,
 ) -> tuple[dict[str, Rewrite], list[StageUsage]]:
-    """Fill in a `Rewrite` for every unit that needs one, cache-first, grouped by parent."""
+    """Fill in a `Rewrite` for every unit that needs one, cache-first, grouped by parent.
+
+    Batches never depend on each other, so they run `workers` at a time; the
+    cache is written from this thread only, as each batch comes back.
+    """
     rewrites: dict[str, Rewrite] = {}
     stages: list[StageUsage] = []
     pending_by_group: dict[str, list[TagUnit]] = defaultdict(list)
@@ -217,17 +240,43 @@ def _rewrite_phase(
             continue
         pending_by_group[unit.group_key].append(unit)
 
-    for group_units in pending_by_group.values():
-        for start in range(0, len(group_units), _REWRITE_CHUNK):
-            chunk = group_units[start : start + _REWRITE_CHUNK]
-            chunk_map, chunk_stages = rewrite_group(
-                client, chunk, doc_context, system=system, document_label=document_label
-            )
-            stages.extend(chunk_stages)
-            for unit in chunk:
-                rw = chunk_map.get(unit.unit_key, Rewrite())
-                rewrites[unit.unit_key] = rw
-                ledger.rewrite_append(rewrite_cache_key(unit, model, REWRITE_VERSION), rw)
+    chunks = [
+        group_units[start : start + _REWRITE_CHUNK]
+        for group_units in pending_by_group.values()
+        for start in range(0, len(group_units), _REWRITE_CHUNK)
+    ]
+
+    def _one(chunk: list[TagUnit]) -> tuple[dict[str, Rewrite], list[StageUsage]]:
+        return rewrite_group(
+            client, chunk, doc_context, system=system, document_label=document_label
+        )
+
+    def _store(chunk: list[TagUnit], result: tuple[dict[str, Rewrite], list[StageUsage]]) -> None:
+        chunk_map, chunk_stages = result
+        stages.extend(chunk_stages)
+        for unit in chunk:
+            rw = chunk_map.get(unit.unit_key, Rewrite())
+            rewrites[unit.unit_key] = rw
+            ledger.rewrite_append(rewrite_cache_key(unit, model, REWRITE_VERSION), rw)
+
+    done = 0
+    if workers > 1 and len(chunks) > 1:
+        with ThreadPoolExecutor(max_workers=workers) as executor:
+            futures = {
+                executor.submit(contextvars.copy_context().run, _one, chunk): index
+                for index, chunk in enumerate(chunks)
+            }
+            for future in as_completed(futures):
+                _store(chunks[futures[future]], future.result())
+                done += 1
+                if progress is not None:
+                    progress(done, len(chunks))
+    else:
+        for chunk in chunks:
+            _store(chunk, _one(chunk))
+            done += 1
+            if progress is not None:
+                progress(done, len(chunks))
     return rewrites, stages
 
 
@@ -238,7 +287,9 @@ def run(
     opts: RunOptions,
     llm_client: LLMClient | None = None,
     progress: Callable[[str], None] | None = None,
+    step_progress: Callable[[str, int, int], None] | None = None,
 ) -> RunSummary:
+    """`progress` gets readable lines; `step_progress` (label, done, total) feeds a live bar."""
     start = time.perf_counter()
     run_id = str(uuid.uuid4())
     llm_on = not opts.no_llm and llm_client is not None
@@ -251,6 +302,9 @@ def run(
     def say(message: str) -> None:
         if progress is not None:
             progress(message)
+
+    def counter(label: str) -> Callable[[int, int], None]:
+        return _step_counter(say, label, step_progress)
 
     profile = load_profile(project, name=opts.profile)
     if opts.depth is not None:
@@ -301,10 +355,19 @@ def run(
         if lock_path.exists():
             raise WorkbookOpenError(f"close {lock_path} in Excel and re-run")
         out_path = out_dir / f"{doc.key}-tagged.xlsx"
+        numbers_copy = _newer_numbers_copy(out_path)
+        if numbers_copy is not None:
+            raise WorkbookOpenError(
+                f"{numbers_copy.name} is newer than {out_path.name}: your decisions are in the "
+                "Numbers file, which this tool cannot read. In Numbers choose File > Export To > "
+                f"Excel and save it over {out_path}, then re-run (or delete {numbers_copy.name} "
+                "to ignore it)."
+            )
 
         # Read the expert's Decision/Hint off the *previous* workbook before any
         # search or model spend happens for this doc (PILOT-PLAN.md "Review loop").
         review_decisions, decision_warnings = read_decisions(out_path)
+        kept_decisions = unrecognised_decisions(out_path)
         run_warnings.extend(decision_warnings)
 
         say(f"tagging {doc.key}…")
@@ -340,6 +403,7 @@ def run(
 
             rewrites: dict[str, Rewrite] = {}
             if llm_on and llm_client is not None:
+                say(f"{doc.key}: step 1/4 skill phrases for {len(units)} rows…")
                 rw_map, rw_stages = _rewrite_phase(
                     llm_client,
                     units,
@@ -348,16 +412,23 @@ def run(
                     model,
                     system=rewrite_sys,
                     document_label=profile.document_label,
+                    workers=opts.workers,
+                    progress=counter(f"{doc.key}: step 1/4 skill phrases, batch"),
                 )
                 rewrites = rw_map
                 doc_stages.extend(rw_stages)
+                say(
+                    f"{doc.key}: step 1/4 done "
+                    + (
+                        f"({len(rw_stages)} model calls, the rest reused)"
+                        if rw_stages
+                        else "(all reused, no model calls)"
+                    )
+                )
 
             pending: dict[tuple[str, str], _Pending] = {}
 
             for index, unit in enumerate(units, start=1):
-                if progress is not None and index % 10 == 0:
-                    say(f"{doc.key}: {index}/{len(units)} units")
-
                 rw = rewrites.get(unit.unit_key, Rewrite())
                 base_queries = queries_for(unit, rw.labels, rw.description)
                 routing_kinds = profile.routing.get(unit.kind, [])
@@ -447,16 +518,29 @@ def run(
                         is_retry=is_retry,
                     )
 
+                # After the row, so the counts include it (the last line adds up).
+                if step_progress is not None:
+                    step_progress(f"{doc.key}: step 2/4 searching taxonomies", index, len(units))
+                elif progress is not None and (index % 10 == 0 or index == len(units)):
+                    say(
+                        f"{doc.key}: step 2/4 rows {index}/{len(units)} "
+                        f"({searched} answers searched, {reused} reused)"
+                    )
+
             verdicts, choose_stages = _decide_pending(
                 pending,
                 llm_client=llm_client,
                 llm_on=llm_on,
+                progress=counter(f"{doc.key}: step 3/4 model choosing among candidates"),
                 workers=opts.workers,
                 system=choose_sys,
                 document_label=profile.document_label,
             )
             doc_stages.extend(choose_stages)
 
+            to_widen = sum(1 for verdict in verdicts.values() if verdict.needs_widening)
+            if to_widen:
+                say(f"{doc.key}: step 4/4 second look with wider context for {to_widen} answers…")
             fps, widened_stages = _widen_pending(
                 pending,
                 verdicts,
@@ -579,6 +663,7 @@ def run(
             },
             report_kinds=frozenset(profile.report_kinds),
             previous_decisions=previous_decisions,
+            kept_decisions=kept_decisions,
             stats=stats,
             document_label=profile.document_label,
         )
@@ -645,6 +730,22 @@ def run(
     )
 
 
+def _step_counter(
+    say: Callable[[str], None],
+    label: str,
+    step_progress: Callable[[str, int, int], None] | None = None,
+) -> Callable[[int, int], None]:
+    """A `done/total` reporter: every tick to a live bar, else a line every 10."""
+
+    def report(done: int, total: int) -> None:
+        if step_progress is not None:
+            step_progress(label, done, total)
+        elif done % 10 == 0 or done == total:
+            say(f"{label} {done}/{total}")
+
+    return report
+
+
 def _decide_pending(
     pending: dict[tuple[str, str], _Pending],
     *,
@@ -653,6 +754,7 @@ def _decide_pending(
     workers: int,
     system: str,
     document_label: str,
+    progress: Callable[[int, int], None] | None = None,
 ) -> tuple[dict[tuple[str, str], VerdictResult], list[StageUsage]]:
     """First decide pass: immediate for non-`ok`/no-candidate outcomes, modelled for the rest."""
     verdicts: dict[tuple[str, str], VerdictResult] = {}
@@ -685,17 +787,27 @@ def _decide_pending(
         return ctx.run(_choose_one, key)
 
     choose_results: dict[tuple[str, str], tuple[Choice | None, list[StageUsage]]] = {}
+    total = len(needs_choose)
+
+    def _tick() -> None:
+        # The longest phase of a run: without a counter it looks frozen.
+        if progress is not None:
+            progress(len(choose_results), total)
+
     if needs_choose:
         if workers > 1:
             with ThreadPoolExecutor(max_workers=workers) as executor:
                 futures = {
-                    key: executor.submit(_choose_one_in_context, key) for key in needs_choose
+                    executor.submit(_choose_one_in_context, key): key for key in needs_choose
                 }
-                for key in needs_choose:
-                    choose_results[key] = futures[key].result()
+                # Results are keyed, so finishing order never changes the output.
+                for future in as_completed(futures):
+                    choose_results[futures[future]] = future.result()
+                    _tick()
         else:
             for key in needs_choose:
                 choose_results[key] = _choose_one(key)
+                _tick()
 
     for key in needs_choose:
         p = pending[key]

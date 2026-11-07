@@ -3,8 +3,10 @@ name: CI
 on:
   push:
     branches: [main, dev]
+  # Every pull request, whatever its base. Sprint work lands as stacked PRs
+  # (each based on the previous branch); filtering on main/dev meant only the
+  # bottom of a stack was ever checked.
   pull_request:
-    branches: [main, dev]
 
 jobs:
   test:
@@ -44,9 +46,7 @@ jobs:
             exit 0
           fi
           exit "$status"
-      - name: Install merged taxonomy contract
-        run: >-
-          pip install
-          "ta-taxonomies @ git+https://github.com/LFX-Talent-Angels/TA-taxonomies.git@8fbf5e489379cf761345d6ec3cdefb68d1578c78"
+      - name: Install pinned taxonomy contract
+        run: pip install -e ".[taxonomies]"
       - name: Verify taxonomy contract compatibility
         run: pytest -q tests/integration/test_taxonomy_contract.py

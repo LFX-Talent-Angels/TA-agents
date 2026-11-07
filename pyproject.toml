@@ -11,13 +11,30 @@ dependencies = [
   # Stack per TA-workspace ADR-0005 (versions pinned as code lands).
   "pydantic>=2",
   "langgraph",
+  # Durable checkpointer for the API's per-session threads. The graph state a
+  # `thread_id` enables has to outlive the process, and langgraph's own
+  # MemorySaver (what this replaced) is a dict that dies with the interpreter.
+  "langgraph-checkpoint-sqlite",
+  # Vector episode recall stores embeddings in memory.db (memory/vector_index.py).
+  "sqlite-vec",
   "anthropic",
   "fastapi",
+  "uvicorn",
+  # MCP stdio edge. Pinned to the major: 2.0 renamed FastMCP -> MCPServer,
+  # so a different major breaks `talent_angels.mcp` at import time.
+  "mcp>=2,<3",
+  "litellm",
   "python-dotenv",
   "pyyaml",
-  # "ta-taxonomies" — the suite-contract library (sibling repo), added once
-  # its first version is published/installable (ADR-0004).
+  # Excel output of `ta-agent tag` (imported by the workbook writer, so it is
+  # needed even for `--no-llm`); also repeated in the `taxonomies`/`app` extras.
+  "openpyxl",
+  "rich>=13",
 ]
+
+[project.scripts]
+ta-agent = "talent_angels.tui.app:main"
+ta-mcp = "talent_angels.mcp.server:main"
 
 [project.optional-dependencies]
 dev = [
@@ -25,6 +42,33 @@ dev = [
   "ruff>=0.6",
   "mypy>=1.10",
 ]
+# The suite-contract library (sibling repo, ADR-0004) plus what the concrete
+# ESCO/O*NET adapters need. Pinned to the commit this runtime is tested
+# against: the head of TA-taxonomies PR #19 (shared Locate engine, groups, code
+# lookup). Bump to the merge commit when the TA-taxonomies stack lands in `dev`.
+# Keep in step with the `app` dependency group below.
+taxonomies = [
+  "ta-taxonomies @ git+https://github.com/LFX-Talent-Angels/TA-taxonomies.git@db54b4ec3e0ee7014d94cf954e4cc376413abc6d",
+  "openpyxl",
+]
+# Free, local embeddings (all-MiniLM-L6-v2, CPU): the same model the suites use
+# for their vector indexes, and the no-cost backend for vector episode recall.
+local-embed = [
+  "sentence-transformers>=3",
+]
+
+# What `uv run ta-agent` needs, installed by default so a fresh clone works
+# with no flags: the taxonomy suites (same pin as the `taxonomies` extra) and
+# the local embedding model. pip users keep using the extras.
+[dependency-groups]
+app = [
+  "ta-taxonomies @ git+https://github.com/LFX-Talent-Angels/TA-taxonomies.git@db54b4ec3e0ee7014d94cf954e4cc376413abc6d",
+  "openpyxl",
+  "sentence-transformers>=3",
+]
+
+[tool.uv]
+default-groups = ["app"]
 
 [project.urls]
 Homepage = "https://github.com/LFX-Talent-Angels"
@@ -33,6 +77,9 @@ Workspace = "https://github.com/LFX-Talent-Angels/TA-workspace"
 [build-system]
 requires = ["hatchling"]
 build-backend = "hatchling.build"
+
+[tool.hatch.metadata]
+allow-direct-references = true
 
 [tool.hatch.build.targets.wheel]
 packages = ["src/talent_angels"]
@@ -48,6 +95,13 @@ select = ["E", "F", "I", "UP", "B"]
 python_version = "3.11"
 packages = ["talent_angels"]
 ignore_missing_imports = true
+
+# Heavy optional ML stacks: their stubs use 3.12-only syntax, which mypy rejects
+# under python_version=3.11. We only call them through narrow typed seams.
+[[tool.mypy.overrides]]
+module = ["numpy", "numpy.*", "torch", "torch.*", "sentence_transformers", "sentence_transformers.*", "transformers", "transformers.*"]
+follow_imports = "skip"
+follow_imports_for_stubs = true
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]

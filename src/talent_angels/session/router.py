@@ -1,0 +1,174 @@
+"""Line router — classify user input before the model (rails)."""
+
+from __future__ import annotations
+
+import re
+from dataclasses import dataclass
+from typing import Literal
+
+LineKind = Literal[
+    "command",
+    "greet",
+    "help_plain",
+    "advice",
+    "catalogue",
+    "pick",
+    "show_suite",
+    "chat",
+    "recall",
+    "map",
+]
+
+_GREET_RE = re.compile(
+    r"^\s*(hi|hello|hey|thanks|thank you|"
+    r"good\s+(morning|afternoon|evening))\s*[!.?]?\s*$"
+    # "thanks, that was helpful", "thank you so much!": thanks plus polite filler
+    # only. "thanks! my goal is nurse" or "thanks, 3" carry a request.
+    r"|^\s*(?:thanks|thank\s+you)(?:\s+(?:so|very)\s+much|\s+a\s+lot|\s+again)?"
+    r"[\s,!.]*(?:(?:that|this|it)(?:'s|\s+(?:was|is|helped))"
+    r"(?:\s+(?:very|really|so|super))?(?:\s+(?:helpful|great|useful|nice|perfect))?)?"
+    r"[\s!.]*$",
+    re.IGNORECASE,
+)
+
+_HELP_PLAIN_RE = re.compile(
+    r"^\s*("
+    r"what\s+can\s+you\s+do|"
+    r"how\s+can\s+you\s+help(\s+me)?|"
+    r"how\s+do\s+you\s+help|"
+    r"what\s+do\s+you\s+do|"
+    r"help"
+    r")\s*[?.!]?\s*$",
+    re.IGNORECASE,
+)
+
+_PICK_NUM_RE = re.compile(r"^\s*(\d+)\s*[.)]?\s*$")
+#: One pick per list in one reply: "1 11", "1, 11", "1 and 11", "1 y 11".
+_PICK_MANY_RE = re.compile(
+    r"^\s*\d+(?:(?:\s*(?:,|&|\band\b|\by\b)\s*|\s+)\d+)+\s*[.!]?\s*$", re.IGNORECASE
+)
+#: "actually I meant 5", "no, number 3", "make it #2": a correction is a pick.
+_PICK_CORRECTION_RE = re.compile(
+    r"^\s*(?:(?:actually|sorry|oops|no)[,.!]?\s+)*"
+    r"(?:i\s+meant|i\s+mean|make\s+it|pick|choose|number)?\s*"
+    r"(?:number\s+|no\.\s*|#\s*)?(\d+)\s*[.!)]?\s*$",
+    re.IGNORECASE,
+)
+_PICK_FIRST_RE = re.compile(
+    r"^\s*(the\s+)?first(\s+one)?\s*[.!]?\s*$",
+    re.IGNORECASE,
+)
+
+_ADVICE_PHRASES = (
+    "should i",
+    "is this a good career",
+    "what should i do with my life",
+)
+
+_CATALOGUE_RE = re.compile(
+    r"^\s*(?:please\s+)?(?:list|show|give(?:\s+me)?|what\s+are)\s+"
+    r"(?:me\s+)?(?:all|every|the\s+full\s+list\s+of)\s+"
+    r"(?:the\s+)?(?:jobs?|occupations?|roles?|titles?|careers?)\b",
+    re.IGNORECASE,
+)
+
+
+_SHOW_RE = re.compile(
+    r"^\s*show(?:\s+me)?\s+([^\s]+)\s*$",
+    re.IGNORECASE,
+)
+
+# First-person meta/self queries answer from the user profile (USER.md), not the map.
+_META_SELF_RE = re.compile(
+    r"^\s*("
+    r"what(?:\s+else)?\s+do\s+you\s+know(\s+about\s+me)?|"
+    r"what\s+have\s+you\s+(?:learned|noted)(\s+about\s+me)?|"
+    r"tell\s+me\s+about\s+myself|"
+    r"what(?:'?s|\s+is)\s+my\s+goal|"
+    r"who\s+am\s+i|"
+    r"what\s+do\s+you\s+remember(\s+about\s+me)?|"
+    r"(?:describe|show)\s+(?:(?:me\s+)?my\s+profile|me)|"
+    r"what\s+is\s+my\s+profile|"
+    r"what\s+about\s+me"
+    r")\s*[?.!]?\s*$",
+    re.IGNORECASE,
+)
+
+
+# What this conversation (or an earlier one) looked at: answered from memory.
+_RECALL_RE = re.compile(
+    r"^\s*(?:can\s+you\s+)?(?:remind\s+me\s+)?(?:"
+    r"what\s+(?:(?:did|have)\s+)?we\s+(?:talk(?:ed)?\s+about|discuss(?:ed)?|look(?:ed)?\s+at)|"
+    r"what\s+(?:jobs?|occupations?|titles?)\s+(?:did|have)\s+i\s+"
+    r"(?:look(?:ed)?\s+at|ask(?:ed)?\s+about)|"
+    r"what\s+was\s+the\s+(?:first|last|previous)\s+(?:job|occupation|title|thing)\s+"
+    r"(?:i|we)\s+(?:looked\s+at|asked\s+about)"
+    r")\b",
+    re.IGNORECASE,
+)
+
+
+@dataclass(frozen=True, slots=True)
+class RoutedLine:
+    kind: LineKind
+    text: str
+    pick: int | None = None
+    #: Several numbers in one reply, one per list ("1 11").
+    picks: tuple[int, ...] = ()
+    show_token: str | None = None
+
+
+def _is_advice(lowered: str) -> bool:
+    if any(phrase in lowered for phrase in _ADVICE_PHRASES):
+        return True
+    if "learn" in lowered and "first" in lowered:
+        return True
+    if "my goal" in lowered and ("missing" in lowered or "gap" in lowered):
+        return True
+    return False
+
+
+def route_line(text: str) -> RoutedLine:
+    stripped = text.strip()
+    if stripped.startswith("/"):
+        return RoutedLine(kind="command", text=stripped)
+
+    if _GREET_RE.match(stripped):
+        return RoutedLine(kind="greet", text=stripped)
+
+    if _HELP_PLAIN_RE.match(stripped):
+        return RoutedLine(kind="help_plain", text=stripped)
+
+    if _PICK_MANY_RE.match(stripped):
+        numbers = tuple(int(n) for n in re.findall(r"\d+", stripped))
+        return RoutedLine(kind="pick", text=stripped, pick=numbers[0], picks=numbers)
+
+    m = _PICK_NUM_RE.match(stripped)
+    if m:
+        return RoutedLine(kind="pick", text=stripped, pick=int(m.group(1)))
+
+    m = _PICK_CORRECTION_RE.match(stripped)
+    if m:
+        return RoutedLine(kind="pick", text=stripped, pick=int(m.group(1)))
+
+    if _PICK_FIRST_RE.match(stripped):
+        return RoutedLine(kind="pick", text=stripped, pick=1)
+
+    lowered = stripped.lower()
+    if _is_advice(lowered):
+        return RoutedLine(kind="advice", text=stripped)
+
+    if _CATALOGUE_RE.search(stripped):
+        return RoutedLine(kind="catalogue", text=stripped)
+
+    show = _SHOW_RE.match(stripped)
+    if show:
+        return RoutedLine(kind="show_suite", text=stripped, show_token=show.group(1).strip())
+
+    if _META_SELF_RE.match(stripped):
+        return RoutedLine(kind="chat", text=stripped)
+
+    if _RECALL_RE.match(stripped):
+        return RoutedLine(kind="recall", text=stripped)
+
+    return RoutedLine(kind="map", text=stripped)

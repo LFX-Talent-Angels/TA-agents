@@ -28,7 +28,8 @@ src/talent_angels/
 ├── skills/         # locate/ connect/ pathfind/ evaluate/ — skills + tools
 ├── contracts/      # AgentResult + typed refs (Pydantic v2)
 ├── runlog/         # one structured record per turn
-└── api/            # FastAPI edge — thin, no reasoning
+├── api/            # FastAPI edge — thin, no reasoning
+└── mcp/            # MCP stdio edge — suite contract for an external client
 tests/              # pytest; offline by default, live cases in tests/integration/
 ```
 

@@ -27,6 +27,7 @@ class NodeRef(BaseModel):
     kind: str  # Occupation | Skill | ISCOGroup | SkillGroup | ...
     pref_label: str
     alt_labels: list[str] = Field(default_factory=list)
+    description: str | None = None  # official suite text when the tool returned it
 
 
 class EdgeRef(BaseModel):
@@ -47,9 +48,9 @@ class EvidencePointer(BaseModel):
 
 
 class AgentResult(BaseModel):
-    """Returned by every skill dispatch (locate/connect/pathfind/evaluate)."""
+    """Returned by every skill dispatch (locate/connect)."""
 
-    capability: str  # locate | connect | pathfind | evaluate
+    capability: str  # locate | connect
     suite: str  # esco | onet | sfia | bls | ...
     nodes: list[NodeRef] = Field(default_factory=list)
     edges: list[EdgeRef] = Field(default_factory=list)

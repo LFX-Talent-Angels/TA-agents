@@ -42,6 +42,12 @@ class SearchCandidate(Protocol):
     @property
     def confidence(self) -> float: ...
 
+    # The match rule the confidence stands for (exact_pref, contains, ...).
+    # Locate folds it away into a single turn-level confidence; the MCP edge
+    # hands it to the client, which has no other way to read the number.
+    @property
+    def method(self) -> str: ...
+
 
 class SearchResult(Protocol):
     @property
@@ -60,8 +66,10 @@ class SearchableSuite(Protocol):
     def search_nodes(self, text: str, kind: str | None = None) -> SearchResult: ...
 
 
-def _node_ref(node: TaxonomyNode, suite: str) -> NodeRef:
+def node_ref(node: TaxonomyNode, suite: str) -> NodeRef:
     alt_labels = cast(Sequence[str], node.properties.get("alt_labels") or ())
+    raw_description = node.properties.get("description")
+    description = raw_description.strip() if isinstance(raw_description, str) else None
     return NodeRef(
         id=node.id,
         suite=suite,
@@ -70,7 +78,12 @@ def _node_ref(node: TaxonomyNode, suite: str) -> NodeRef:
         kind=node.kind,
         pref_label=node.label,
         alt_labels=list(alt_labels),
+        description=description or None,
     )
+
+
+#: Back-compat alias — `rank.py` and `connect/reveal.py` import this name.
+_node_ref = node_ref
 
 
 def locate(

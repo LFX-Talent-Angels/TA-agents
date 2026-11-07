@@ -27,7 +27,10 @@ def _occupation_node(node_id: str = "esco:occupation:fixture-1") -> FakeNode:
         label="software developer",
         source="esco",
         source_id="http://data.europa.eu/esco/occupation/fixture-1",
-        properties={"alt_labels": ["developer", "programmer"]},
+        properties={
+            "alt_labels": ["developer", "programmer"],
+            "description": "Designs and implements software applications.",
+        },
     )
 
 
@@ -50,6 +53,7 @@ def test_locate_maps_exact_match_candidate_to_agent_result() -> None:
     assert outcome.nodes[0].id == node.id
     assert outcome.nodes[0].pref_label == "software developer"
     assert outcome.nodes[0].alt_labels == ["developer", "programmer"]
+    assert outcome.nodes[0].description == "Designs and implements software applications."
     assert outcome.evidence[0].pointer == "esco:search:exact_pref:software developer"
 
 

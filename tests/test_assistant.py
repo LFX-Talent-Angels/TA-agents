@@ -2,23 +2,97 @@
 
 from __future__ import annotations
 
+import json
+
 import pytest
 
 from talent_angels.assistant import (  # noqa: E402
     CAPABILITY_LOCATE,
+    ResultCache,
     build_graph,
     classify_capability,
+    extract_locate_subject,
+    run_turn,
 )
+from talent_angels.assistant.agent_loop import LOOP_SYSTEM
+from talent_angels.assistant.llm_plan import PLAN_SYSTEM
+from talent_angels.llm.protocol import LLMResult, LLMUsage, Message
 from talent_angels.llm.stub_client import StubLLMClient  # noqa: E402
-from tests.fakes.taxonomy import FakeCandidate, FakeNode, FakeToolResult  # noqa: E402
+from talent_angels.memory.episodes import recent_episodes
+from talent_angels.suites.schema import SuiteSchema
+from tests.fakes.taxonomy import (  # noqa: E402
+    FakeCandidate,
+    FakeEdge,
+    FakeNode,
+    FakeToolResult,
+)
+
+_DEFAULT_SCHEMA = SuiteSchema(
+    skill_rel_types=("HAS_SKILL", "USES_SOFTWARE"),
+    optional_rel_values=frozenset({"optional", "transferable"}),
+    group_rel_type=None,
+    group_node_kinds=frozenset(),
+)
+
+
+class ScriptedPlanClient:
+    provider = "litellm"
+    model = "azure_ai/claude-sonnet-4-6"
+
+    def __init__(self, text: str) -> None:
+        self.text = text
+        self.calls: list[list[Message]] = []
+
+    def complete(self, messages: list[Message]) -> LLMResult:
+        self.calls.append(messages)
+        return LLMResult(
+            text=self.text,
+            provider=self.provider,
+            model=self.model,
+            usage=LLMUsage(input_tokens=8, output_tokens=4),
+        )
+
+
+class _MultiReplyClient:
+    """LLM client that returns a pre-scripted reply per call in order."""
+
+    provider = "litellm"
+    model = "azure_ai/claude-sonnet-4-6"
+
+    def __init__(self, replies: list[str]) -> None:
+        self._replies = list(replies)
+        self.calls: list[list[Message]] = []
+
+    def complete(self, messages: list[Message], *, tools=None) -> LLMResult:
+        self.calls.append(messages)
+        return LLMResult(
+            text=self._replies.pop(0),
+            provider=self.provider,
+            model=self.model,
+            usage=LLMUsage(input_tokens=8, output_tokens=4),
+        )
 
 
 class FakeSuite:
-    def __init__(self, result: FakeToolResult) -> None:
+    def __init__(
+        self, result: FakeToolResult, neighbor_result: FakeToolResult | None = None
+    ) -> None:
         self._result = result
+        self._neighbor_result = neighbor_result or FakeToolResult(warnings=["no_neighbors"])
+        self.search_calls: list[tuple[str, str | None]] = []
+        self.neighbor_calls: list[tuple[str, list[str] | None]] = []
+
+    @property
+    def suite_schema(self) -> SuiteSchema:
+        return _DEFAULT_SCHEMA
 
     def search_nodes(self, text: str, kind: str | None = None) -> FakeToolResult:
+        self.search_calls.append((text, kind))
         return self._result
+
+    def get_neighbors(self, node_id: str, rel_types: list[str] | None = None) -> FakeToolResult:
+        self.neighbor_calls.append((node_id, rel_types))
+        return self._neighbor_result
 
 
 def _occupation_node() -> FakeNode:
@@ -37,11 +111,37 @@ def _occupation_node() -> FakeNode:
     [
         ("Where is software developer in ESCO?", "locate"),
         ("What essential skills does a software developer need?", "connect"),
-        ("What is the skill gap from data analyst to data scientist?", "pathfind"),
+        ("what skills I need to become a nurse", "connect"),
+        ("software engineer vs web developer", "locate"),
+        ("web developer AND plumber", "locate"),
     ],
 )
 def test_classify_capability_heuristics(question: str, expected: str) -> None:
     assert classify_capability(question) == expected
+
+
+@pytest.mark.parametrize(
+    ("question", "expected"),
+    [
+        ("Where is nurse in ESCO?", "nurse"),
+        ("Where is firefighter in O*NET?", "firefighter"),
+        ("What does Urologists do?", "Urologists"),
+        ("software developer", "software developer"),
+        ("Find accountant", "accountant"),
+        (
+            "What essential skills does a nurse responsible for general care need?",
+            "nurse responsible for general care",
+        ),
+        ("what skills I need to become a nurse", "nurse"),
+        ("what skills I need to be a software developer", "software developer"),
+        ("skills I need to be a software developer", "software developer"),
+        ("skills I need to become a software developer", "software developer"),
+        ("I want to become a nurse", "nurse"),
+        ("I want to be a software developer", "software developer"),
+    ],
+)
+def test_extract_locate_subject(question: str, expected: str) -> None:
+    assert extract_locate_subject(question) == expected
 
 
 def test_graph_answers_locate_question_structured() -> None:
@@ -57,13 +157,41 @@ def test_graph_answers_locate_question_structured() -> None:
     final_state = graph.invoke({"question": "software developer"})
 
     assert final_state["capability"] == CAPABILITY_LOCATE
+    assert final_state["plan"].capabilities == ("locate",)
     assert final_state["result"].confidence == 0.95
     assert "software developer" in final_state["answer"]
     assert "95%" in final_state["answer"]
 
 
-def test_graph_reports_unimplemented_capability_honestly() -> None:
-    suite = FakeSuite(FakeToolResult(warnings=["not_found"]))
+def test_graph_executes_locate_then_connect_for_skill_question() -> None:
+    occupation = _occupation_node()
+    skill = FakeNode(
+        id="esco:skill:fixture-2",
+        kind="Skill",
+        label="computer programming",
+        source="esco",
+        source_id="http://data.europa.eu/esco/skill/fixture-2",
+        properties={},
+    )
+    suite = FakeSuite(
+        FakeToolResult(
+            candidates=[FakeCandidate(node=occupation, confidence=0.95, method="exact_pref")],
+            nodes=[occupation],
+            evidence=["esco:search:exact_pref:software developer"],
+        ),
+        FakeToolResult(
+            nodes=[occupation, skill],
+            edges=[
+                FakeEdge(
+                    type="HAS_SKILL",
+                    from_id=occupation.id,
+                    to_id=skill.id,
+                    properties={"relation_type": "essential"},
+                )
+            ],
+            evidence=[f"esco:neighbors:{occupation.id}"],
+        ),
+    )
     graph = build_graph(suite=suite, llm_client=StubLLMClient(), answer_mode="structured")
 
     final_state = graph.invoke(
@@ -71,6 +199,403 @@ def test_graph_reports_unimplemented_capability_honestly() -> None:
     )
 
     assert final_state["capability"] == "connect"
-    assert final_state["result"].nodes == []
-    assert "capability_not_implemented:connect" in final_state["result"].warnings
-    assert "no match found" in final_state["answer"].lower()
+    assert final_state["plan"].capabilities == ("locate", "connect")
+    assert suite.search_calls == [("software developer", "occupation")]
+    assert suite.neighbor_calls == [(occupation.id, ["HAS_SKILL", "USES_SOFTWARE"])]
+    assert [node.pref_label for node in final_state["result"].nodes] == [
+        "software developer",
+        "computer programming",
+    ]
+    assert final_state["result"].edges[0].properties["relation_type"] == "essential"
+    assert [tool.name for tool in final_state["tool_calls"]] == [
+        "search_nodes",
+        "get_neighbors",
+    ]
+    assert "computer programming" in final_state["answer"]
+
+
+def test_graph_does_not_connect_an_ambiguous_subject() -> None:
+    first = _occupation_node()
+    second = FakeNode(
+        id="esco:occupation:fixture-2",
+        kind="Occupation",
+        label="web developer",
+        source="esco",
+        source_id="http://data.europa.eu/esco/occupation/fixture-2",
+        properties={},
+    )
+    suite = FakeSuite(
+        FakeToolResult(
+            candidates=[
+                FakeCandidate(node=first, confidence=0.7, method="contains"),
+                FakeCandidate(node=second, confidence=0.7, method="contains"),
+            ],
+            nodes=[first, second],
+            warnings=["ambiguous"],
+        )
+    )
+    graph = build_graph(suite=suite, llm_client=StubLLMClient(), answer_mode="structured")
+
+    final_state = graph.invoke({"question": "Show skills for developer"})
+
+    assert final_state["result"].capability == "connect"
+    assert "ambiguous" in final_state["result"].warnings
+    assert all(rel == ["CLASSIFIED_UNDER"] for _node, rel in suite.neighbor_calls)
+    assert not any(rel == ["HAS_SKILL"] for _node, rel in suite.neighbor_calls)
+    assert "search_nodes" in [tool.name for tool in final_state["tool_calls"]]
+    assert "please clarify" in final_state["answer"].lower()
+
+
+def test_graph_planner_owns_subject_before_search() -> None:
+    node = _occupation_node()
+    skill = FakeNode(
+        id="esco:skill:fixture-2",
+        kind="Skill",
+        label="computer programming",
+        source="esco",
+        source_id="http://data.europa.eu/esco/skill/fixture-2",
+        properties={},
+    )
+    suite = FakeSuite(
+        FakeToolResult(
+            candidates=[FakeCandidate(node=node, confidence=0.95, method="exact_pref")],
+            nodes=[node],
+            evidence=["esco:search:exact_pref:software developer"],
+        ),
+        FakeToolResult(
+            nodes=[node, skill],
+            edges=[
+                FakeEdge(
+                    type="HAS_SKILL",
+                    from_id=node.id,
+                    to_id=skill.id,
+                    properties={"relation_type": "essential"},
+                )
+            ],
+            evidence=[f"esco:neighbors:{node.id}"],
+        ),
+    )
+    # interpret_intent call → plan JSON; dispatch_plan tool loop calls → tool calls + final answer
+    client = _MultiReplyClient(
+        [
+            '{"target":"connect","subject":"software developer","kind":"occupation"}',
+            '{"tool":"search_nodes","text":"software developer","kind":"occupation"}',
+            f'{{"tool":"get_neighbors","node_id":"{node.id}","relation_filter":"essential"}}',
+            '{"final":"A software developer needs computer programming."}',
+        ]
+    )
+    graph = build_graph(suite=suite, llm_client=client, answer_mode="structured")
+
+    final_state = graph.invoke({"question": "what skills I need to be a software developer"})
+
+    assert final_state["capability"] == "connect"
+    assert suite.search_calls == [("software developer", "occupation")]
+    # Tool loop omits rel_types → falls back to suite schema ("HAS_SKILL", "USES_SOFTWARE").
+    assert suite.neighbor_calls == [(node.id, ["HAS_SKILL", "USES_SOFTWARE"])]
+    # interpret_intent uses PLAN_SYSTEM; dispatch_plan tool loop uses LOOP_SYSTEM
+    assert PLAN_SYSTEM in client.calls[0][0].content
+    assert LOOP_SYSTEM in client.calls[1][0].content
+
+
+def test_graph_planner_locate_does_not_fetch_neighbors() -> None:
+    node = FakeNode(
+        id="esco:occupation:firefighter",
+        kind="Occupation",
+        label="firefighter",
+        source="esco",
+        source_id="firefighter",
+        properties={},
+    )
+    suite = FakeSuite(
+        FakeToolResult(
+            candidates=[FakeCandidate(node=node, confidence=0.95, method="exact_pref")],
+            nodes=[node],
+        )
+    )
+    # interpret_intent call → plan JSON; dispatch_plan tool loop → search then final (no neighbors)
+    client = _MultiReplyClient(
+        [
+            '{"target":"locate","subject":"firefighter","kind":"occupation"}',
+            '{"tool":"search_nodes","text":"firefighter","kind":"occupation"}',
+            '{"final":"Firefighter occupation found."}',
+        ]
+    )
+    graph = build_graph(suite=suite, llm_client=client, answer_mode="structured")
+
+    final_state = graph.invoke({"question": "what does a firefighter do"})
+
+    assert final_state["capability"] == "locate"
+    assert suite.search_calls == [("firefighter", "occupation")]
+    assert suite.neighbor_calls == []
+
+
+def test_graph_propagates_selected_suite_name() -> None:
+    suite = FakeSuite(FakeToolResult(warnings=["not_found"]))
+    graph = build_graph(
+        suite=suite,
+        suite_name="onet",
+        llm_client=StubLLMClient(),
+        answer_mode="structured",
+    )
+
+    locate_state = graph.invoke({"question": "accountant"})
+    connect_state = graph.invoke({"question": "What skills does an accountant need?"})
+
+    assert locate_state["result"].suite == "onet"
+    assert connect_state["result"].suite == "onet"
+
+
+def test_turn_separates_cache_and_runlog_by_suite(
+    monkeypatch: pytest.MonkeyPatch, tmp_path
+) -> None:
+    runlog_path = tmp_path / "runlog.jsonl"
+    monkeypatch.setenv("RUNLOG_PATH", str(runlog_path))
+    monkeypatch.setenv("LLM_PROVIDER", "none")
+    suite = FakeSuite(FakeToolResult(warnings=["not_found"]))
+    cache = ResultCache()
+
+    onet_first = run_turn(
+        suite=suite,
+        suite_name="onet",
+        llm_client=StubLLMClient(),
+        question="accountant",
+        force_locate=True,
+        cache=cache,
+    )
+    esco_first = run_turn(
+        suite=suite,
+        suite_name="esco",
+        llm_client=StubLLMClient(),
+        question="accountant",
+        force_locate=True,
+        cache=cache,
+    )
+    onet_cached = run_turn(
+        suite=suite,
+        suite_name="onet",
+        llm_client=StubLLMClient(),
+        question="accountant",
+        force_locate=True,
+        cache=cache,
+    )
+
+    assert onet_first.result.suite == "onet"
+    assert esco_first.result.suite == "esco"
+    assert onet_first.record.efficiency.result_cache_hit is False
+    assert esco_first.record.efficiency.result_cache_hit is False
+    assert onet_cached.record.efficiency.result_cache_hit is True
+    records = [json.loads(line) for line in runlog_path.read_text().splitlines()]
+    assert [record["suite"] for record in records] == ["onet", "esco", "onet"]
+
+
+def test_run_turn_persists_an_episode(monkeypatch: pytest.MonkeyPatch, tmp_path) -> None:
+    monkeypatch.setenv("RUNLOG_PATH", str(tmp_path / "runlog.jsonl"))
+    monkeypatch.setenv("LLM_PROVIDER", "none")
+    memory_db = tmp_path / "memory.db"
+    monkeypatch.setattr("talent_angels.memory.episodes.db_path", lambda: memory_db)
+
+    run_turn(
+        suite=FakeSuite(FakeToolResult(nodes=[_occupation_node()])),
+        suite_name="esco",
+        llm_client=StubLLMClient(),
+        question="software developer",
+        force_locate=True,
+    )
+
+    recorded = recent_episodes(db_path=memory_db)
+    assert len(recorded) == 1
+    assert recorded[0].question == "software developer"
+    assert recorded[0].suite == "esco"
+
+
+@pytest.mark.parametrize(
+    ("question", "expected_plan"),
+    [
+        (
+            "What essential skills does a software developer need?",
+            ("locate", "connect"),
+        ),
+    ],
+)
+def test_turn_records_cumulative_plan(
+    question: str,
+    expected_plan: tuple[str, ...],
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path,
+) -> None:
+    monkeypatch.setenv("RUNLOG_PATH", str(tmp_path / "runlog.jsonl"))
+    monkeypatch.setenv("LLM_PROVIDER", "none")
+
+    outcome = run_turn(
+        suite=FakeSuite(FakeToolResult()),
+        suite_name="esco",
+        llm_client=StubLLMClient(),
+        question=question,
+    )
+
+    assert outcome.plan.capabilities == expected_plan
+    assert tuple(outcome.record.plan) == expected_plan
+
+
+def test_route_line_show_suite_with_me_and_on():
+    # "show me skills for web developer on O*NET" has multiple words after "show me"
+    # so it falls through to the LLM path (suite_override), not the regex show_suite route.
+    from talent_angels.session.router import route_line
+
+    result = route_line("show me skills for web developer on O*NET")
+    assert result.kind != "show_suite"
+
+
+def test_route_line_show_suite_simple():
+    from talent_angels.session.router import route_line
+
+    result = route_line("show ESCO")
+    assert result.kind == "show_suite"
+    assert result.show_token is not None
+    assert result.show_token.lower() == "esco"
+
+
+def test_route_line_show_me_suite():
+    from talent_angels.session.router import route_line
+
+    result = route_line("show me ESCO")
+    assert result.kind == "show_suite"
+    assert result.show_token is not None
+    assert result.show_token.lower() == "esco"
+
+
+def test_pathfind_redirect_constant_exists():
+    from talent_angels.session.copy import PATHFIND_REDIRECT
+
+    assert "path" in PATHFIND_REDIRECT.lower() or "coming" in PATHFIND_REDIRECT.lower()
+    assert len(PATHFIND_REDIRECT) > 20
+
+
+def test_plan_draft_has_profile_intent_field():
+    from talent_angels.assistant.llm_plan import PlanDraft
+
+    draft = PlanDraft(target="locate", subject="nurse")
+    assert draft.profile_intent is None
+
+
+def test_plan_draft_profile_intent_goal():
+    from talent_angels.assistant.llm_plan import PlanDraft
+
+    draft = PlanDraft(target="connect", subject="data scientist", profile_intent="goal")
+    assert draft.profile_intent == "goal"
+
+
+def test_plan_draft_profile_intent_reject():
+    from talent_angels.assistant.llm_plan import PlanDraft
+
+    draft = PlanDraft(target="locate", subject="web developer", profile_intent="reject")
+    assert draft.profile_intent == "reject"
+
+
+def test_plan_draft_has_suite_override_field():
+    from talent_angels.assistant.llm_plan import PlanDraft
+
+    draft = PlanDraft(target="locate", subject="nurse")
+    assert draft.suite_override is None
+
+
+def test_plan_draft_suite_override_is_set():
+    from talent_angels.assistant.llm_plan import PlanDraft
+
+    draft = PlanDraft(target="locate", subject="nurse", suite_override="esco")
+    assert draft.suite_override == "esco"
+
+
+def test_multisuite_turn_does_not_double_count_llm_stages() -> None:
+    """Each suite's dispatch appends only its own stages — never earlier suites'."""
+    from contextlib import contextmanager
+
+    from talent_angels.suites import SuiteRegistry, SuiteRuntime
+
+    occupation = FakeNode(
+        id="esco:occupation:fixture-1",
+        kind="Occupation",
+        label="software developer",
+        source="esco",
+        source_id="http://data.europa.eu/esco/occupation/fixture-1",
+        properties={},
+    )
+
+    class MonoSuite:
+        invoice: list[tuple[str, str | None]] = []
+
+        @property
+        def suite_schema(self) -> SuiteSchema:
+            return SuiteSchema(
+                skill_rel_types=("HAS_SKILL", "USES_SOFTWARE"),
+                optional_rel_values=frozenset(),
+                group_rel_type=None,
+                group_node_kinds=frozenset(),
+            )
+
+        def search_nodes(self, text: str, kind: str | None = None) -> FakeToolResult:
+            MonoSuite.invoice.append((text, kind))
+            return FakeToolResult(
+                candidates=[FakeCandidate(node=occupation, confidence=0.9, method="exact_pref")],
+                nodes=[occupation],
+                evidence=[f"{self.name}:search:exact_pref:{text}"],
+            )
+
+        def get_neighbors(self, node_id: str, rel_types: list[str] | None = None) -> FakeToolResult:
+            return FakeToolResult(warnings=["node_not_found"])
+
+    class SuiteA(MonoSuite):
+        name = "suite_a"
+
+    class SuiteB(MonoSuite):
+        name = "suite_b"
+
+    def factory(suite):
+        @contextmanager
+        def open_runtime():
+            yield SuiteRuntime(name=suite.name, suite=suite, health_check=lambda: True)
+
+        return open_runtime
+
+    registry = SuiteRegistry(
+        {
+            "suite_a": factory(SuiteA()),
+            "suite_b": factory(SuiteB()),
+        },
+        default="suite_a",
+    )
+
+    # One interpret + one search act per suite. The multi-suite path writes the
+    # merged answer in code, so no per-suite "final" phrasing round is requested.
+    from tests.test_agent_loop import ScriptedToolClient
+
+    client = ScriptedToolClient(
+        [
+            # An unreadable plan is retried once, then the keyword plan runs.
+            LLMResult(text='{"kind":"occupation"}', provider="litellm", model="actual"),
+            LLMResult(text='{"kind":"occupation"}', provider="litellm", model="actual"),
+            LLMResult(
+                text='{"tool":"search_nodes","text":"software developer","kind":"occupation"}',
+                provider="litellm",
+                model="actual",
+            ),
+            LLMResult(
+                text='{"tool":"search_nodes","text":"software developer","kind":"occupation"}',
+                provider="litellm",
+                model="actual",
+            ),
+        ]
+    )
+
+    outcome = run_turn(
+        registry=registry,
+        question="what is a software developer",
+        llm_client=client,
+        kind="occupation",
+    )
+
+    stage_labels = [stage.stage for stage in outcome.record.gen_ai.stages]
+    # 3 scripted LLM replies => 3 stages, each counted exactly once. The buggy
+    # pre-fix code re-appended suite A's stages after suite B.
+    assert stage_labels == ["intent", "act", "act"]
+    assert outcome.record.gen_ai.calls == 3

@@ -1,0 +1,62 @@
+{
+  "suite": "sfia",
+  "note": "Expected values from the SFIA 9 live graph (147 skills, levels as SkillLevel nodes; no occupations, no aliases, no vector index). Additive truncated / match_count_capped / ambiguous warnings are allowed. Bare skill codes ('PROG') and skill-level codes ('PROG-4') resolve via exact_code. 'testing' is a contains-tier match over several skills; its top result is the shortest pref_label ('Process testing'), the Locate engine's deterministic tie order.",
+  "cases": [
+    {
+      "question": "PROG",
+      "kind": null,
+      "expected_top_id": "sfia:skill:PROG",
+      "expected_confidence": 0.95,
+      "expected_method": "exact_code",
+      "expected_warnings": []
+    },
+    {
+      "question": "Programming/software development",
+      "kind": null,
+      "expected_top_id": "sfia:skill:PROG",
+      "expected_confidence": 0.95,
+      "expected_method": "exact_pref",
+      "expected_warnings": []
+    },
+    {
+      "question": "functional testing",
+      "kind": null,
+      "expected_top_id": "sfia:skill:TEST",
+      "expected_confidence": 0.85,
+      "expected_method": "casefold_pref",
+      "expected_warnings": []
+    },
+    {
+      "question": "Strategic planning",
+      "kind": null,
+      "expected_top_id": "sfia:skill:ITSP",
+      "expected_confidence": 0.95,
+      "expected_method": "exact_pref",
+      "expected_warnings": []
+    },
+    {
+      "question": "PROG-4",
+      "kind": null,
+      "expected_top_id": "sfia:level:PROG:4",
+      "expected_confidence": 0.95,
+      "expected_method": "exact_code",
+      "expected_warnings": []
+    },
+    {
+      "question": "testing",
+      "kind": null,
+      "expected_top_id": "sfia:skill:PRTS",
+      "expected_confidence": 0.7,
+      "expected_method": "contains",
+      "expected_warnings": ["ambiguous"]
+    },
+    {
+      "question": "quantum basket weaving",
+      "kind": null,
+      "expected_top_id": null,
+      "expected_confidence": 0.0,
+      "expected_method": null,
+      "expected_warnings": ["not_found"]
+    }
+  ]
+}

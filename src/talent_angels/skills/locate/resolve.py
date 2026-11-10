@@ -66,6 +66,23 @@ class SearchableSuite(Protocol):
     def search_nodes(self, text: str, kind: str | None = None) -> SearchResult: ...
 
 
+#: Node properties carried onto ``NodeRef.facts``: the published facts a suite
+#: puts on a node (today BLS's Employment Projections), so a card can state
+#: pay or outlook from the graph instead of from the model's memory.
+FACT_KEYS: tuple[str, ...] = (
+    "median_wage_annual",
+    "wage_period",
+    "employment_change_pct",
+    "openings_annual",
+    "projection_cycle",
+    "projection_code",
+    "projection_aggregate",
+    "entry_education",
+    "work_experience",
+    "job_training",
+)
+
+
 def node_ref(node: TaxonomyNode, suite: str) -> NodeRef:
     alt_labels = cast(Sequence[str], node.properties.get("alt_labels") or ())
     raw_description = node.properties.get("description")
@@ -79,6 +96,11 @@ def node_ref(node: TaxonomyNode, suite: str) -> NodeRef:
         pref_label=node.label,
         alt_labels=list(alt_labels),
         description=description or None,
+        facts={
+            key: value
+            for key in FACT_KEYS
+            if isinstance(value := node.properties.get(key), (str, int, float, bool))
+        },
     )
 
 

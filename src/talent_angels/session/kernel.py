@@ -11,7 +11,11 @@ from pathlib import Path
 from typing import Literal, Protocol
 
 from talent_angels.assistant.answer import CONNECT_PREVIEW_CAP, summarize_result
-from talent_angels.assistant.connect_request import followup_connect_request, is_describe_followup
+from talent_angels.assistant.connect_request import (
+    followup_connect_request,
+    is_describe_followup,
+    is_facts_followup,
+)
 from talent_angels.assistant.intent import CAPABILITY_CONNECT
 from talent_angels.assistant.llm_plan import PlanDraft, denied_subject, is_statement
 from talent_angels.assistant.merge import suite_heading
@@ -89,6 +93,7 @@ from talent_angels.session.switch import SwitchError, apply, load_catalogue, res
 from talent_angels.session.working_set import pair_followup, refers_to_one, remember
 from talent_angels.skills.connect.compare import CAPABILITY_COMPARE
 from talent_angels.skills.locate.areas import AreaRequest
+from talent_angels.skills.locate.rank import published_facts
 
 _NO_PENDING = "There's no numbered list to pick from. Type a job title first."
 _BAD_PICK = "That number isn't in the list. Reply with a number from the options."
@@ -1380,6 +1385,28 @@ def _handle_expand(state: SessionState, text: str, *, runner: TurnRunner) -> Cha
     return _reply(state, message, source_note=_source_note_for(tuple(lists)))
 
 
+def _facts_bound(state: SessionState) -> ChatReply:
+    """Pay, outlook and education of the bound occupations, from the graph only.
+
+    Written in code, no model: these are figures, and a taxonomy that publishes
+    none (ESCO, O*NET here) says so instead of guessing.
+    """
+    blocks: list[str] = []
+    for suite, node in state.bindings.items():
+        heading = suite_heading(suite)
+        lines = published_facts(node)
+        body = (
+            "\n".join(f"- {line}" for line in lines)
+            if lines
+            else t("no_published_facts", suite=heading)
+        )
+        blocks.append(f"## {heading}\n\n**{node.pref_label}**\n\n{body}")
+    message = "\n\n---\n\n".join(blocks)
+    _record(state, "assistant", message)
+    names = [suite_heading(s) for s in state.bindings]
+    return _reply(state, message, source_note=" · ".join(names) if names else None)
+
+
 def _describe_bound(
     state: SessionState,
     text: str,
@@ -1443,6 +1470,13 @@ def _handle_map(
         )
         _record(state, "assistant", message)
         return _reply(state, message)
+    if (
+        pair is None
+        and bound_nodes
+        and is_facts_followup(text, bound_nodes)
+        and any(published_facts(node) for node in bound_nodes.values())
+    ):
+        return _facts_bound(state)
     if pair is None and bound_nodes and is_describe_followup(text, bound_nodes):
         return _describe_bound(state, text, llm_client=llm_client)
     question = pair or text
@@ -1460,7 +1494,10 @@ def _handle_map(
     # Semantic suite switch: LLM detected user wants to see cached results on a specific suite.
     # Re-render from state.last_results (previous turn) without running a new query.
     _draft = getattr(outcome, "plan_draft", None)
-    if _draft and _draft.suite_override and state.last_results:
+    # Only a bare "show me that on ESCO" re-renders the last answer. A message
+    # that names its own subject ("bagare i jobtech") was just searched: show
+    # that, not the previous turn's result for the same suite.
+    if _draft and _draft.suite_override and not _draft.subject and state.last_results:
         token = _draft.suite_override
         known = tuple(
             dict.fromkeys([item.suite for item in state.last_results] + list(state.bindings))

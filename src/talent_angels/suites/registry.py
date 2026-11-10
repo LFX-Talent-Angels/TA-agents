@@ -44,7 +44,14 @@ class SuiteRegistry:
 
     @property
     def available(self) -> tuple[str, ...]:
-        return tuple(sorted(self._factories))
+        """Suite names in registration order.
+
+        The order is what users see first: answers, pick lists, areas and the
+        first goal saved all follow it. It is the order suites were added
+        (ESCO, O*NET, SFIA, then BLS and JobTech), not alphabetical, so a new
+        suite never jumps ahead of the ones users know.
+        """
+        return tuple(self._factories)
 
     @property
     def default(self) -> str:

@@ -63,6 +63,9 @@ _EN: dict[str, str] = {
     # fixed messages
     "map_next": "You can ask for essential skills, optional skills, or pick another number.",
     "miss": "No node for that phrase with today's search. That's a miss, not a maybe.",
+    "no_published_facts": (
+        "{suite} publishes no pay, outlook or education figures for this occupation."
+    ),
     "no_subject": (
         "Which occupation or skill do you mean? For example: "
         "“What skills does a nurse need?” or “Where is data scientist?”"
@@ -153,6 +156,9 @@ _ES: dict[str, str] = {
     ),
     "map_next": "Puedes pedir las habilidades esenciales u opcionales, o elegir otro número.",
     "miss": "No encontré nada para esa frase con la búsqueda de hoy. Es un no, no un tal vez.",
+    "no_published_facts": (
+        "{suite} no publica cifras de salario, perspectivas ni formación para esta ocupación."
+    ),
     "no_subject": (
         "¿A qué ocupación o habilidad te refieres? Por ejemplo: "
         "“¿Qué habilidades necesita una enfermera?” o “¿Qué es un científico de datos?”"

@@ -63,11 +63,27 @@ class Narrowing:
     areas: list[str] = field(default_factory=list)
 
 
+#: Which suite's groups to offer as areas, best first.
+AREA_PREFERENCE: tuple[str, ...] = ("esco", "onet", "bls", "jobtech", "sfia")
+
+
 def area_choices(
     areas_by_suite: dict[str, list[Area]], *, query: str, kind: str | None
 ) -> list[AreaChoice]:
-    """Letter the areas of the first suite that reported any (one list, short)."""
-    for areas in areas_by_suite.values():
+    """Letter the areas of one suite (one list, short), the finest grouping first.
+
+    ESCO's ISCO unit groups ("Civil engineers") and O*NET's SOC major groups
+    are preferred over BLS's (the same SOC major groups) and JobTech's SSYK
+    majors (Swedish). Without the order, whichever suite sorts first
+    alphabetically decided, and BLS's coarse groups replaced ESCO's.
+    """
+    ordered = sorted(
+        areas_by_suite.items(),
+        key=lambda item: (
+            AREA_PREFERENCE.index(item[0]) if item[0] in AREA_PREFERENCE else len(AREA_PREFERENCE)
+        ),
+    )
+    for _suite, areas in ordered:
         if len(areas) >= 2:
             return [
                 AreaChoice(

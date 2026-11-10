@@ -158,6 +158,40 @@ def is_describe_followup(question: str, bindings: dict[str, NodeRef]) -> bool:
     return False
 
 
+_FACTS_RE = re.compile(
+    r"\b(earn|earns|earning|earnings|salary|salaries|wage|wages|pay|paid|income|"
+    r"outlook|growth|growing|demand|openings|"
+    r"education|degree|diploma|qualifications?|training|experience)\b",
+    re.IGNORECASE,
+)
+_FILLER = frozenset("a an the job its their this that what whats s is are for of".split())
+_PRONOUNS = (" they ", " them ", " this ", " that ", " it ", " the job ", " these ", " those ")
+
+
+def is_facts_followup(question: str, bindings: dict[str, NodeRef]) -> bool:
+    """True for "how much do they earn?" about an already-bound occupation.
+
+    Pay, outlook and education are published facts on the bound node (BLS);
+    a question that names another occupation is a new search, not this.
+    """
+    if not bindings or not _FACTS_RE.search(question):
+        return False
+    q = f" {question.casefold().strip(' ?!.')} "
+    if any(token in q for token in _PRONOUNS):
+        return True
+    from talent_angels.assistant.intent import extract_locate_subject
+
+    subject = (extract_locate_subject(question) or "").strip()
+    words = [w for w in re.findall(r"\w+", subject.casefold()) if w not in _FILLER]
+    if all(_FACTS_RE.fullmatch(w) for w in words):
+        # Nothing named but the fact itself ("what's the salary?").
+        return True
+    return any(
+        _close_label(subject, node.pref_label) or _close_label(question, node.pref_label)
+        for node in bindings.values()
+    )
+
+
 def followup_connect_request(
     question: str,
     bound: NodeRef,

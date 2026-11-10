@@ -59,6 +59,16 @@ def _names_subject(subject: str, node: NodeRef) -> bool:
     return any(pattern.search(name.casefold()) for name in (node.pref_label, *node.alt_labels))
 
 
+#: Below this, a lone match came from the word-start (contains) or meaning tier.
+_CLEAR_CONFIDENCE = 0.8
+
+
+def _clear_title(subject: str, located: AgentResult) -> bool:
+    """The one hit *is* the subject: its title or alias, or an exact/casefold match."""
+    top = located.nodes[0]
+    return _same_title(subject, top) or (located.confidence or 0.0) >= _CLEAR_CONFIDENCE
+
+
 def _is_short_word(subject: str) -> bool:
     """An abbreviation-sized word ("swe", "qa", "ux") rather than a title."""
     text = subject.strip()
@@ -104,8 +114,15 @@ def explore(
         group_node_kinds=group_node_kinds,
     )
     if located.nodes and "ambiguous" not in located.warnings:
-        if subject_is_users:
+        if subject_is_users and _clear_title(subject, located):
             return None
+        if subject_is_users:
+            # One title merely contains the word ("engineer" in "SQE Supplier
+            # Quality Engineer"): offer it, never bind it as the answer.
+            return (
+                located.model_copy(update={"warnings": [*located.warnings, "ambiguous"]}),
+                areas_from(recording.last, suite_name),
+            )
         candidates = [subject, *candidates]
     areas = areas_from(recording.last, suite_name)
 

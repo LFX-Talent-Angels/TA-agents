@@ -70,7 +70,13 @@ Do **not** run `docker compose down -v` — that deletes the volume.
 
 ---
 
-## 2. Install taxonomies and load **full** ESCO (once)
+## 2. Install taxonomies and load the **full** graphs (once)
+
+TA-agents attaches five taxonomies: ESCO, O*NET, SFIA, BLS and JobTech. Their
+data is not in git; each teammate loads it once. The commands for all five,
+the download links and the **expected counts** are in the TA-taxonomies
+README, section "Load the full taxonomies". ESCO is shown step by step below;
+the others follow the same pattern.
 
 The small **fixture** (61 nodes) is for CI only. `--mode fixture` **wipes**
 whatever is in this Neo4j. Do not run it against the demo database.
@@ -149,12 +155,15 @@ pip install sentence-transformers
 export NEO4J_URI=bolt://localhost:7687 NEO4J_USER=neo4j NEO4J_PASSWORD=taxonomies-dev
 python -m ta_taxonomies.suites.esco.embed
 python -m ta_taxonomies.suites.onet.embed
+python -m ta_taxonomies.suites.sfia.embed
+python -m ta_taxonomies.suites.bls.embed
+python -m ta_taxonomies.suites.jobtech.embed
 ```
 
-Check that every node is embedded (ESCO 18,237; O*NET 31,942):
-`MATCH (n:EscoNode) RETURN count(n), count(n.label_embedding)`. Taxonomies
-before the keyset-pagination fix embedded only about half — re-run to fill the
-gaps.
+Check the counts against the table in the TA-taxonomies README ("Check your
+load"), e.g. `MATCH (n:EscoNode) RETURN count(n), count(n.label_embedding)`
+gives 18,237 and 18,237. Taxonomies before the keyset-pagination fix embedded
+only about half — re-run to fill the gaps.
 
 **Keep the graph:** never `--mode fixture` and never `pytest tests/suites/esco`
 against this Bolt URL (those tests reload the fixture and wipe full data).
@@ -171,6 +180,12 @@ pip install -e ".[dev]"
 pip install -e ../TA-taxonomies
 cp .env.example .env
 ```
+
+`pyproject.toml` pins `ta-taxonomies` to a commit. `uv sync` and `uv run`
+reinstall that pin over your local checkout. If the app logs "ta-taxonomies
+has no bls, jobtech suite; not attached", your installed taxonomies predate
+those suites: re-run `pip install -e ../TA-taxonomies`, or move the pin to a
+newer `dev` commit.
 
 Edit `.env` (never commit it):
 

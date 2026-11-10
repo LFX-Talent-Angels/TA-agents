@@ -29,6 +29,17 @@ def test_suite_registry_imports_first_in_a_fresh_process() -> None:
     assert completed.returncode == 0, completed.stderr
 
 
+def test_a_suite_missing_from_ta_taxonomies_is_not_attached(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from talent_angels.suites import registry as registry_module
+
+    monkeypatch.setattr(
+        registry_module, "_suite_installed", lambda name: name not in {"bls", "jobtech"}
+    )
+    assert registry_module.default_suite_registry().available == ("esco", "onet", "sfia")
+
+
 class FakeSuite:
     def search_nodes(self, text: str, kind: str | None = None) -> FakeToolResult:
         return FakeToolResult()

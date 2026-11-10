@@ -85,6 +85,16 @@ _EN: dict[str, str] = {
     "shared_tool": "shared tool",
     "shared_tools_noun": "shared tools",
     "connect_head": "**{title}** — {counts} on the map:",
+    "transitions_head": "**{title}** — {count} jobs to move to ({suite}):",
+    "filtered_count": "{count} {kind} (of {total} in all)",
+    "transitions_foot": (
+        "The percentage is how far the taxonomy says the experience carries over. "
+        "This is the map, not career advice."
+    ),
+    "no_transitions": "{suite} publishes no job-to-job moves for **{title}**.",
+    "connect_foot_moves": (
+        "Related occupations as the taxonomy lists them. This is the map, not career advice."
+    ),
     "connect_more": "{count} more are in query details.",
     "connect_foot": "These are graph neighbors, not a study plan.",
     "compare_head": "**{first}** vs **{second}** — {shared}.",
@@ -177,6 +187,16 @@ _ES: dict[str, str] = {
     "shared_tool": "herramienta en común",
     "shared_tools_noun": "herramientas en común",
     "connect_head": "**{title}** — {counts} en el mapa:",
+    "transitions_head": "**{title}** — {count} empleos a los que pasar ({suite}):",
+    "filtered_count": "{count} {kind} (de {total} en total)",
+    "transitions_foot": (
+        "El porcentaje indica cuánto de la experiencia se aprovecha según la taxonomía. "
+        "Es el mapa, no un consejo profesional."
+    ),
+    "no_transitions": "{suite} no publica pasos de un empleo a otro para **{title}**.",
+    "connect_foot_moves": (
+        "Ocupaciones relacionadas según la taxonomía. Es el mapa, no un consejo profesional."
+    ),
     "connect_more": "Hay {count} más en los detalles de la consulta.",
     "connect_foot": "Son vecinos en el grafo, no un plan de estudio.",
     "compare_head": "**{first}** frente a **{second}** — {shared}.",

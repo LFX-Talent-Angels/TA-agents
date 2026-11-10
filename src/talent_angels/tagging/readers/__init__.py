@@ -6,10 +6,13 @@ from pathlib import Path
 
 from talent_angels.tagging.models import Document
 from talent_angels.tagging.readers.base import Reader, ReaderError
+from talent_angels.tagging.readers.graph import GraphReader
 from talent_angels.tagging.readers.neo4j_tree import Neo4jTreeReader
 from talent_angels.tagging.readers.table import TableReader
 
-READERS: tuple[Reader, ...] = (Neo4jTreeReader(), TableReader())
+# Graph before table: an edge table's CSV has id-like columns a flat table
+# could half-match; the tree reader only claims exports with an IS_PART_OF edge.
+READERS: tuple[Reader, ...] = (Neo4jTreeReader(), GraphReader(), TableReader())
 
 
 def read_document(path: Path) -> Document:

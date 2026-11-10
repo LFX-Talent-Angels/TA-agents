@@ -73,7 +73,14 @@ class Neo4jTreeReader:
         if not isinstance(data, list) or not data:
             return False
         first = data[0]
-        return isinstance(first, dict) and _REQUIRED_KEYS <= first.keys()
+        if not (isinstance(first, dict) and _REQUIRED_KEYS <= first.keys()):
+            return False
+        # Without one parentage edge this is a meaning graph, not a tree
+        # (`graph.py` reads those).
+        return any(
+            isinstance(row, dict) and (row.get("r") or {}).get("type") == self.rel_type
+            for row in data
+        )
 
     def read(self, path: Path) -> Document:
         try:

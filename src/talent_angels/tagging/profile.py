@@ -50,18 +50,26 @@ class Profile(BaseModel):
     #: grandparent + siblings), so a third rarely finds anything new.
     max_retries: int = Field(default=2, ge=0)
     kinds: dict[str, list[str]] = Field(default_factory=dict)
+    #: Graph exports: kind -> regexes searched (case-insensitive) in a row's
+    #: relationship to its parent, then in its node type ("PRODUCES_PRODUCT",
+    #: "WorkProduct" -> product). Tree and table exports carry no relationship.
+    relations: dict[str, list[str]] = Field(default_factory=dict)
     row_rules: list[RowRule] = Field(default_factory=list)
     #: A row with no kind heading above it (and no row rule) gets this kind
     #: instead of being skipped as metadata — `select.py`. `None` keeps the
     #: competency_standard behaviour: no ancestor kind means skip.
     default_kind: str | None = None
     include_kinds: list[str] = Field(default_factory=list)
+    #: Kinds whose line is itself a name to look up (a job title): searched by
+    #: its own cleaned text, with no model rewrite into skill phrases.
+    verbatim_kinds: list[str] = Field(default_factory=list)
     report_kinds: list[str] = Field(default_factory=list)
     cleaners: list[str] = Field(default_factory=list)
     routing: dict[str, list[str]] = Field(default_factory=dict)
     doc_context: list[str] = Field(default_factory=list)
 
     _kind_patterns: list[tuple[str, re.Pattern[str]]] = PrivateAttr(default_factory=list)
+    _relation_patterns: list[tuple[str, re.Pattern[str]]] = PrivateAttr(default_factory=list)
     _row_rule_patterns: list[tuple[re.Pattern[str], RowRule]] = PrivateAttr(default_factory=list)
     _cleaner_patterns: list[re.Pattern[str]] = PrivateAttr(default_factory=list)
     _doc_context_patterns: list[re.Pattern[str]] = PrivateAttr(default_factory=list)
@@ -71,6 +79,11 @@ class Profile(BaseModel):
             self._kind_patterns = [
                 (kind, _compile(pattern))
                 for kind, patterns in self.kinds.items()
+                for pattern in patterns
+            ]
+            self._relation_patterns = [
+                (kind, _compile(pattern))
+                for kind, patterns in self.relations.items()
                 for pattern in patterns
             ]
             self._row_rule_patterns = [(_compile(rule.pattern), rule) for rule in self.row_rules]
@@ -85,6 +98,20 @@ class Profile(BaseModel):
         for kind, pattern in self._kind_patterns:
             if pattern.fullmatch(stripped):
                 return kind
+        return None
+
+    def kind_of_relation(self, relation: str, node_type: str) -> str | None:
+        """The kind a graph row's relationship names, else its node type; None if neither.
+
+        Only graph rows carry a relationship. Without one (tree and table
+        exports) this is always None: their node labels never decide a kind.
+        """
+        if not relation:
+            return None
+        for value in (relation, node_type):
+            for kind, pattern in self._relation_patterns:
+                if pattern.search(value):
+                    return kind
         return None
 
     def rule_for(self, text: str) -> RowRule | None:

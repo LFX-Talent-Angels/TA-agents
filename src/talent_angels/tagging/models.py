@@ -24,6 +24,10 @@ class SourceRow(BaseModel):
     label: str
     text: str
     order: int
+    #: The relationship that links this row to its parent, in a graph export
+    #: where a line's kind is the edge (`REQUIRES_PERFORMANCE` ...), not a
+    #: heading above it. Empty for tree and table exports.
+    relation: str = ""
 
 
 class Document(BaseModel):

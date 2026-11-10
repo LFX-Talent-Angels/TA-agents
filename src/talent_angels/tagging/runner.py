@@ -283,8 +283,9 @@ def _input_warnings(path: Path) -> list[str]:
 
 
 def _needs_rewrite(unit: TagUnit) -> bool:
-    """Occupation rows with seed phrases use code-derived queries; no model call."""
-    return not (unit.role == "row_rule" and unit.seed_phrases)
+    """Units with seed phrases (split occupation lists, `verbatim_kinds`) are
+    searched as written; no model call."""
+    return not unit.seed_phrases
 
 
 def _rewrite_phase(

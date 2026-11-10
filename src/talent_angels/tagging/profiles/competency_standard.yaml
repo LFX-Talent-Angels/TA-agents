@@ -50,6 +50,31 @@ kinds:
     - "glossary\\b.*"
     - "glosario\\b.*"
 
+# Graph exports have no kind headings: each line is a node, and its kind is
+# the relationship from its parent (REQUIRES_PERFORMANCE, PRODUCES_PRODUCT,
+# COVERS_KNOWLEDGE ...) or, failing that, its node type (WorkProduct,
+# CognitiveKnowledge ...). Searched, case-insensitive, in this order. Nodes
+# that match none (the standard, its elements, phases, sectors) are metadata.
+relations:
+  performance:
+    - "performance"
+    - "desempe[nñ]o"
+  product:
+    - "product"
+    - "evidence"
+    - "evidencia"
+  knowledge:
+    - "knowledge"
+    - "conocimiento"
+  attitude:
+    - "attitude"
+    - "actitud"
+  emergent:
+    - "emergent"
+  occupation:
+    - "occupation"
+    - "ocupaci[oó]n"
+
 # A row's own text (checked at the start, case-insensitive) can assign a kind
 # directly, regardless of depth or ancestor heading — e.g. an "Associated
 # Occupations:" line is a row, not a heading, and always gets tagged.
@@ -72,6 +97,13 @@ include_kinds:
   - definition
   - summary
 
+# Kinds whose line is a name to look up, not a skill to describe: a job
+# title is searched as written ("Computer systems developers and analysts"),
+# never rewritten into skill phrases. An "Associated Occupations:" list is
+# already split into titles by its row rule above.
+verbatim_kinds:
+  - occupation
+
 # Kinds that count toward the gap list and precision stats. Definitions and
 # the standard's own summary are informational, not tagging targets.
 report_kinds:
@@ -87,6 +119,10 @@ report_kinds:
 # without eating a real final word such as "hand" (word-boundary on "and").
 cleaners:
   - "^\\d+[.)]\\s+"
+  # Graph exports prefix a line with its code: "D1691.1: ", "K-PR.1: ",
+  # "SINCO 2711: ". A code has a digit, so "Precision: ..." is kept.
+  - "^[A-Z]{1,5}(-[A-Z]{1,5})?[.-]?\\d+(\\.\\d+)*:\\s+"
+  - "^(SINCO|SCIAN)\\s+\\d+:\\s*"
   - "^subject area:\\s*"
   - "\\s*\\|\\s*competency level:.*$"
   - "^(emergent situation|expected response):\\s*"

@@ -169,6 +169,58 @@ def test_alias_confirms_a_candidate() -> None:
     assert explored is not None and explored[0].nodes[0].pref_label == "software developer"
 
 
+def test_a_combined_title_holding_every_word_confirms_a_candidate() -> None:
+    # BLS names several jobs in one title.
+    auto = _occ("Automotive Service Technicians and Mechanics")
+    rail = _occ("Rail Car Repairers", "Rail Car Mechanic")
+    drafters = _occ("Mechanical Drafters")
+    suite = _Suite(
+        {
+            "mechanic": _hits(drafters, auto, warnings=["truncated"]),
+            "car mechanic": _hits(rail, auto),
+            "automotive mechanic": _hits(auto),
+        }
+    )
+    explored = explore(
+        suite, "bls", "mechanic", ["car mechanic", "automotive mechanic"], kind="occupation"
+    )
+    assert explored is not None
+    labels = [n.pref_label for n in explored[0].nodes]
+    # An informal alias ("Rail Car Mechanic") confirms nothing.
+    assert labels[0] == "Automotive Service Technicians and Mechanics"
+    assert "Rail Car Repairers" not in labels
+    assert "guided" in explored[0].warnings
+
+
+def test_exact_titles_are_listed_before_every_word_matches() -> None:
+    auto = _occ("Automotive Service Technicians and Mechanics")
+    vehicle = _occ("vehicle technician")
+    suite = _Suite(
+        {
+            "automotive mechanic": _hits(auto),
+            "vehicle technician": _hits(vehicle, method="exact_pref"),
+        }
+    )
+    explored = explore(
+        suite,
+        "esco",
+        "repairs cars",
+        ["automotive mechanic", "vehicle technician"],
+        kind="occupation",
+    )
+    assert explored is not None
+    assert [n.pref_label for n in explored[0].nodes][:2] == [
+        "vehicle technician",
+        "Automotive Service Technicians and Mechanics",
+    ]
+
+
+def test_one_word_of_a_candidate_never_confirms_it() -> None:
+    suite = _Suite({"car mechanic": _hits(_occ("Rail Car Repairers"))})
+    explored = explore(suite, "bls", "repairs cars", ["car mechanic"], kind="occupation")
+    assert explored is not None and "guided" not in explored[0].warnings
+
+
 def test_a_title_the_planner_wrote_is_offered_not_bound() -> None:
     suite = _Suite({"civil engineer": _hits(CIVIL, method="exact_pref")})
     explored = explore(

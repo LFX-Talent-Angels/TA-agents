@@ -23,6 +23,7 @@ from openpyxl.utils import get_column_letter
 from openpyxl.worksheet.datavalidation import DataValidation
 from openpyxl.worksheet.worksheet import Worksheet
 
+from talent_angels.assistant.merge import suite_heading
 from talent_angels.tagging.models import (
     Document,
     SkippedRow,
@@ -124,8 +125,6 @@ _DECISION_OPTIONS = (
     "Mark as gap,Retry with hint,Use my tag"
 )
 
-_DISPLAY_NAMES = {"esco": "ESCO", "onet": "O*NET"}
-
 _DEFAULT_ATTRIBUTION = {
     "esco": "ESCO © European Union, CC BY 4.0",
     "onet": "O*NET 31.0 Database, U.S. Department of Labor, CC BY 4.0",
@@ -139,7 +138,7 @@ _DEFAULT_ATTRIBUTION = {
 
 def display_name(suite: str) -> str:
     """The suite's human name on the sheets (and in the `choose` prompt)."""
-    return _DISPLAY_NAMES.get(suite, suite.upper())
+    return suite_heading(suite)
 
 
 _display_name = display_name

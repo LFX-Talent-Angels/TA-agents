@@ -623,7 +623,7 @@ def _focus_skill(
         card=skill_card(skill, number=number, occupation=occupation, neighbors=neighbors),
     )
     _record(state, "assistant", message)
-    source = phrase_result.suite.upper() if phrase_result.suite else None
+    source = suite_heading(phrase_result.suite) if phrase_result.suite else None
     return _reply(state, message, source_note=source)
 
 
@@ -887,7 +887,7 @@ def _from_single_outcome(
         text = t("no_subject")
     else:
         text = _map_answer(outcome.answer)
-    source = result.suite.upper() if result.suite else None
+    source = suite_heading(result.suite) if result.suite else None
     return _reply(state, text, source_note=source)
 
 

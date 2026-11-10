@@ -17,11 +17,12 @@ from __future__ import annotations
 
 import contextvars
 import json
+import os
 import shutil
 import time
 import uuid
 from collections import defaultdict
-from collections.abc import Callable
+from collections.abc import Callable, Sequence
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from contextlib import ExitStack
 from dataclasses import dataclass
@@ -355,6 +356,27 @@ def _rewrite_phase(
     return rewrites, stages
 
 
+#: Taxonomies a tagging run leaves out unless asked (``--suites`` or
+#: ``TA_TAG_SUITES``). Each attached taxonomy costs one more model call per row,
+#: so registering one must not silently raise the cost of every run. The
+#: CONOCER pilot was measured on ESCO and O*NET.
+OPT_IN_TAG_SUITES = frozenset({"sfia", "bls", "jobtech"})
+TAG_SUITES_ENV = "TA_TAG_SUITES"
+
+
+def default_tag_suites(available: Sequence[str]) -> list[str]:
+    """``TA_TAG_SUITES`` (comma-separated), else every suite but the opt-in ones.
+
+    A registry holding only opt-in suites tags with all of them.
+    """
+    raw = os.environ.get(TAG_SUITES_ENV, "")
+    wanted = [name.strip() for name in raw.split(",") if name.strip()]
+    if wanted:
+        return wanted
+    chosen = [name for name in available if name not in OPT_IN_TAG_SUITES]
+    return chosen or list(available)
+
+
 def run(
     path: Path,
     *,
@@ -389,7 +411,9 @@ def run(
     model = str(getattr(llm_client, "model", "") or "none") if llm_on else "none"
     pinned_versions = versions(model)
 
-    suite_names = list(opts.suites) if opts.suites is not None else list(registry.available)
+    suite_names = (
+        list(opts.suites) if opts.suites is not None else default_tag_suites(registry.available)
+    )
     unknown = [name for name in suite_names if name not in registry.available]
     if unknown:
         available = ", ".join(registry.available)

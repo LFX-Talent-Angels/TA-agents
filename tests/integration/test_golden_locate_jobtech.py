@@ -63,6 +63,8 @@ def test_golden_locate_jobtech_case(case: dict) -> None:
         "ambiguous",
         # JobTech embeddings are not built yet; set whenever a query model is installed.
         "vector_index_missing",
+        # Swedish compounds: titles that contain the word are offered too.
+        "compound_part",
     }
     if case["expected_top_id"] is None:
         assert outcome.nodes == []

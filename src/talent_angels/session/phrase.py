@@ -274,4 +274,11 @@ def _looks_like_invented_miss(text: str) -> bool:
         return True
     if re.search(r"(?m)^\s*[-*]\s+\S", text):
         return True
-    return False
+    # A miss that names a title in bold, quotes a code, or blames "access":
+    # the model answering from memory ("**SSYK 7612 – Skorstensfejare**").
+    if "**" in text or _CODE_IN_TEXT.search(text):
+        return True
+    return any(marker in lowered for marker in ("access to", "real time", "real-time"))
+
+
+_CODE_IN_TEXT = re.compile(r"\b\d{2}-\d{4}\b|\bSSYK\s*\d|\bISCO[- ]?\d|\b\d{4}\b")

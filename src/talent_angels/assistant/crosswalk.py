@@ -13,6 +13,7 @@ no ``search_by_esco`` is never bridged.
 
 from __future__ import annotations
 
+import re
 from typing import Any
 
 from talent_angels.contracts import AgentResult, EvidencePointer
@@ -25,18 +26,35 @@ ESCO = "esco"
 #: How many of ESCO's records to follow. Only a clear (not ambiguous) ESCO
 #: answer is followed, so in practice this is its one title.
 MAX_ESCO_RECORDS = 3
-#: ESCO's word matches only; a meaning-only ESCO guess is too weak to follow.
+#: Tagging follows ESCO's word matches (the model and the reviewer then choose).
 MIN_CONFIDENCE = 0.70
+#: Chat follows only an ESCO answer that *is* the words (exact title, alias or
+#: casefold, 0.80+). A part-of-a-title hit ("gift" in "teacher of talented and
+#: gifted students") must not become a confident Swedish record.
+CHAT_MIN_CONFIDENCE = 0.80
+#: A suite's own hit at or above this is clear; below, its words only matched part
+#: of a title (contains 0.70, meaning 0.75) and a rescue may do better.
+CLEAR_CONFIDENCE = 0.85
 WARNING_PREFIX = "via_esco:"
 
 
 def wants_bridge(result: AgentResult) -> bool:
+    """The suite found nothing for the words (the bridge's original case)."""
     return (
         result.suite in BRIDGED_SUITES
-        and result.capability == "locate"
+        and result.capability in ("locate", "connect")
         and not result.nodes
         and "not_found" in result.warnings
     )
+
+
+def needs_rescue(result: AgentResult) -> bool:
+    """A Swedish-labelled suite without a clear answer: nothing, or only part-of-word hits."""
+    if result.suite not in BRIDGED_SUITES or result.capability not in ("locate", "connect"):
+        return False
+    if wants_bridge(result):
+        return True
+    return bool(result.nodes) and (result.confidence or 0.0) < CLEAR_CONFIDENCE
 
 
 class _ByEsco:
@@ -64,7 +82,7 @@ def bridge_via_esco(
     kind = kind if kind in ("occupation", "skill") else "occupation"
     with registry.open(ESCO) as esco_runtime:
         found = locate(esco_runtime.suite, ESCO, text, kind=kind)
-    if not found.nodes or (found.confidence or 0.0) < MIN_CONFIDENCE:
+    if not found.nodes or (found.confidence or 0.0) < CHAT_MIN_CONFIDENCE:
         return None
     if "ambiguous" in found.warnings:
         # ESCO itself needs the user to choose. Following its first records
@@ -156,3 +174,95 @@ def with_esco_bridge(name: str, suite: Any, esco: Any | None) -> Any:
     if esco is None or name not in BRIDGED_SUITES or not hasattr(suite, "search_by_esco"):
         return suite
     return EscoBridgedSuite(suite, esco)
+
+
+_WORD = re.compile(r"[^\W\d_]{5,}", re.UNICODE)
+#: Words that name a suite or a question, never a job ("arbetsförmedlingen").
+_NOT_TITLES = frozenset(
+    "jobtech swedish sweden arbetsförmedlingen taxonomy skills skill which vilka "
+    "yrken yrke kompetens behöver needs where there about could would should".split()
+)
+
+
+def own_words_hit(
+    registry: SuiteRegistry, suite_name: str, question: str, *, kind: str
+) -> AgentResult | None:
+    """A word of the user's own message that is exactly a title in the suite.
+
+    The planner rewrites subjects into English ("Elevassistent" became
+    "elevator operator"), so the suite's own exact Swedish title was never
+    searched. Each longer word of the message is tried; only an exact, alias
+    or casefold hit (0.85+) counts.
+    """
+    words = [w for w in _WORD.findall(question) if w.casefold() not in _NOT_TITLES]
+    if not words:
+        return None
+    with registry.open(suite_name) as runtime:
+        for word in dict.fromkeys(words):
+            found = locate(runtime.suite, suite_name, word, kind=kind)
+            if found.nodes and (found.confidence or 0.0) >= CLEAR_CONFIDENCE:
+                return found
+    return None
+
+
+def connect_after_rescue(registry: SuiteRegistry, rescued: AgentResult, draft: Any) -> AgentResult:
+    """The skills of a rescued record when the question asked for them."""
+    if len(rescued.nodes) != 1 or "ambiguous" in rescued.warnings:
+        return rescued
+    from talent_angels.assistant.llm_plan import connect_request_from_draft
+    from talent_angels.skills.connect import ConnectRequest, connect
+
+    center = rescued.nodes[0]
+    with registry.open(rescued.suite) as runtime:
+        schema = runtime.suite.suite_schema
+        request = (
+            connect_request_from_draft(draft, skill_rel_types=schema.skill_rel_types)
+            if draft is not None
+            else None
+        ) or ConnectRequest(subject=center.pref_label, rel_types=schema.skill_rel_types)
+        connected = connect(
+            runtime.suite,
+            rescued.suite,
+            center,
+            request=request,
+            confidence=rescued.confidence,
+            locate_evidence=rescued.evidence,
+            optional_rel_values=schema.optional_rel_values,
+        )
+    via = [w for w in rescued.warnings if w.startswith(WARNING_PREFIX)]
+    return connected.model_copy(update={"warnings": [*connected.warnings, *via]})
+
+
+def rescue_jobtech(
+    registry: SuiteRegistry,
+    result: AgentResult,
+    *,
+    subject: str,
+    question: str,
+    kind: str | None,
+    language: str | None,
+    wants_skills: bool,
+    draft: Any = None,
+) -> AgentResult | None:
+    """A better answer for a Swedish-labelled suite, or None to keep its own.
+
+    1. The user's own words, if one is exactly a title there.
+    2. Its published ESCO matches, when its own words found nothing, or found
+       only part-of-a-title hits for a question not written in Swedish
+       ("chef" in English is a cook, not a Swedish *chef*).
+    3. The rescued record's skills, when the question asked for them.
+    """
+    if not needs_rescue(result):
+        return None
+    kind = kind if kind in ("occupation", "skill") else "occupation"
+    rescued = own_words_hit(registry, result.suite, question, kind=kind)
+    if rescued is None and (wants_bridge(result) or (language or "").casefold() != "sv"):
+        probe = (
+            result
+            if wants_bridge(result)
+            else AgentResult(capability="locate", suite=result.suite, warnings=["not_found"])
+        )
+        rescued = bridge_via_esco(registry, probe, subject, kind=kind)
+    if rescued is None:
+        return None
+    return connect_after_rescue(registry, rescued, draft) if wants_skills else rescued

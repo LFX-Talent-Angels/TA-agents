@@ -242,9 +242,6 @@ def published_facts(node: NodeRef) -> list[str]:
     """
     f = node.facts
     lines: list[str] = []
-    ssyk = f.get("ssyk_code")
-    if isinstance(ssyk, str) and ssyk and node.kind == "Occupation":
-        lines.append(f"SSYK 2012 unit group: {ssyk} (JobTech)")
     wage = f.get("median_wage_annual")
     if isinstance(wage, (int, float)) and not isinstance(wage, bool):
         period = f.get("wage_period") or "latest"
@@ -288,6 +285,10 @@ def code_facts(result: AgentResult, node: NodeRef) -> list[str]:
     match = _SOC_CODE.match(node.id)
     if match:
         facts.append(f"SOC 2018 code: {match.group(1)}")
+    ssyk = node.facts.get("ssyk_code")
+    if isinstance(ssyk, str) and ssyk and node.kind == "Occupation":
+        # A code, not a published figure: it never answers "how much do they earn?".
+        facts.append(f"SSYK 2012 unit group: {ssyk} (JobTech)")
     facts.extend(published_facts(node))
     via = [w.removeprefix("via_esco:") for w in result.warnings if w.startswith("via_esco:")]
     if via and node.suite != "esco":

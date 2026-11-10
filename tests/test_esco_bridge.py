@@ -147,3 +147,42 @@ def test_phrasing_is_told_to_keep_the_users_language() -> None:
     assert "English" in line
     assert "never switch to the language of the card" in line
     assert "JobTech is" in _MAP_SYSTEM
+
+
+# -- batch tagging: the suite-level bridge -----------------------------------------
+
+
+def test_tagging_bridge_follows_esco_when_jobtech_finds_nothing() -> None:
+    from talent_angels.assistant.crosswalk import EscoBridgedSuite, with_esco_bridge
+
+    jobtech = _Jobtech()
+    bridged = with_esco_bridge("jobtech", jobtech, _Esco())
+    assert isinstance(bridged, EscoBridgedSuite)
+    result = bridged.search_nodes("baker", kind="occupation")
+    assert [(c.method, c.node.label) for c in result.candidates] == [
+        ("esco_exact_match", "Bagare/Konditor")
+    ]
+    # Nothing in ESCO either: JobTech's own (empty) answer comes back.
+    assert bridged.search_nodes("plonkwurst", kind="occupation").warnings == ["not_found"]
+
+
+def test_tagging_bridge_leaves_other_suites_and_kinds_alone() -> None:
+    from talent_angels.assistant.crosswalk import with_esco_bridge
+
+    plain = _Jobtech()
+    assert with_esco_bridge("bls", plain, _Esco()) is plain
+    assert with_esco_bridge("jobtech", plain, None) is plain
+    bridged = with_esco_bridge("jobtech", plain, _Esco())
+    assert bridged.search_nodes("baker", kind="task").warnings == ["not_found"]
+    assert plain.asked == []  # a task row never goes through ESCO
+
+
+def test_tagging_bridge_survives_an_esco_outage() -> None:
+    from talent_angels.assistant.crosswalk import with_esco_bridge
+
+    class _Down:
+        def search_nodes(self, text: str, kind: str | None = None) -> FakeToolResult:
+            raise ConnectionError("esco down")
+
+    bridged = with_esco_bridge("jobtech", _Jobtech(), _Down())
+    assert bridged.search_nodes("baker", kind="occupation").warnings == ["not_found"]

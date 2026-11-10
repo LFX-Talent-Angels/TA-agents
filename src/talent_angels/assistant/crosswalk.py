@@ -96,3 +96,63 @@ def bridge_via_esco(
 def esco_records_named(result: AgentResult) -> list[str]:
     """The ESCO titles a bridged result was reached through (for the card)."""
     return [w.removeprefix(WARNING_PREFIX) for w in result.warnings if w.startswith(WARNING_PREFIX)]
+
+
+class EscoBridgedSuite:
+    """A suite whose ``search_nodes`` falls back to its own ESCO matches.
+
+    For batch tagging: rows are English (the rewrite step writes English
+    phrases), JobTech labels are Swedish, so JobTech found nothing for almost
+    every row. When the suite's own words find nothing, the same words go to
+    ESCO and the suite's published matches to ESCO's top records come back,
+    each named by its match (``esco_exact_match`` …). Tagging lets the model's
+    choose step and the reviewer pick among them, so a list from ESCO is
+    followed too (``follow_ambiguous``); chat does not (``bridge_via_esco``).
+    Everything else is delegated unchanged.
+    """
+
+    def __init__(self, suite: Any, esco: Any, *, follow_ambiguous: bool = True) -> None:
+        self._suite = suite
+        self._esco = esco
+        self._follow_ambiguous = follow_ambiguous
+
+    def __getattr__(self, name: str) -> Any:
+        return getattr(self._suite, name)
+
+    @property
+    def suite_schema(self) -> Any:
+        return self._suite.suite_schema
+
+    def search_nodes(self, text: str, kind: str | None = None) -> Any:
+        own = self._suite.search_nodes(text, kind=kind)
+        warnings = list(getattr(own, "warnings", None) or [])
+        if getattr(own, "candidates", None) or any(w.startswith("unknown_kind:") for w in warnings):
+            return own
+        bridge_kind = kind or "occupation"
+        if bridge_kind not in ("occupation", "skill") or not text.strip():
+            return own
+        try:
+            found = self._esco.search_nodes(text, kind=bridge_kind)
+        except Exception:  # noqa: BLE001 — the bridge is a bonus, never a failure
+            return own
+        candidates = list(getattr(found, "candidates", None) or [])
+        if not candidates or candidates[0].confidence < MIN_CONFIDENCE:
+            return own
+        if "ambiguous" in (getattr(found, "warnings", None) or []) and not self._follow_ambiguous:
+            return own
+        uris = [
+            str(c.node.source_id)
+            for c in candidates[:MAX_ESCO_RECORDS]
+            if str(c.node.source_id).startswith("http")
+        ]
+        if not uris:
+            return own
+        bridged = self._suite.search_by_esco(uris, kind=bridge_kind)
+        return bridged if getattr(bridged, "candidates", None) else own
+
+
+def with_esco_bridge(name: str, suite: Any, esco: Any | None) -> Any:
+    """``suite`` wrapped in the ESCO bridge when it is one that offers it."""
+    if esco is None or name not in BRIDGED_SUITES or not hasattr(suite, "search_by_esco"):
+        return suite
+    return EscoBridgedSuite(suite, esco)

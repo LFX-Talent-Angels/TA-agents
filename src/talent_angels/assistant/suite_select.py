@@ -20,6 +20,14 @@ SUITE_ALIASES: dict[str, tuple[str, ...]] = {
     "onet": ("onet", "o*net", "o-net"),
     "sfia": ("sfia",),
     "bls": ("bls", "bureau of labor statistics", "us bls"),
+    "jobtech": (
+        "jobtech",
+        "job tech",
+        "jobtech taxonomy",
+        "swedish taxonomy",
+        "arbetsförmedlingen",
+        "sweden",
+    ),
 }
 
 

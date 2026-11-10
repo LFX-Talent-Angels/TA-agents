@@ -242,6 +242,9 @@ def published_facts(node: NodeRef) -> list[str]:
     """
     f = node.facts
     lines: list[str] = []
+    ssyk = f.get("ssyk_code")
+    if isinstance(ssyk, str) and ssyk and node.kind == "Occupation":
+        lines.append(f"SSYK 2012 unit group: {ssyk} (JobTech)")
     wage = f.get("median_wage_annual")
     if isinstance(wage, (int, float)) and not isinstance(wage, bool):
         period = f.get("wage_period") or "latest"

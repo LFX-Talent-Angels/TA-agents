@@ -2,11 +2,15 @@
 
 from __future__ import annotations
 
+import importlib.util
+import logging
 from collections.abc import Callable, Iterator, Mapping
 from contextlib import AbstractContextManager, contextmanager
 from dataclasses import dataclass
 
 from talent_angels.suites.protocol import SuiteTools
+
+_log = logging.getLogger(__name__)
 
 HealthCheck = Callable[[], bool]
 
@@ -119,6 +123,19 @@ def _open_default_jobtech() -> Iterator[SuiteRuntime]:
         yield runtime
 
 
+def _suite_installed(name: str) -> bool:
+    """False only when an importable ta-taxonomies clearly lacks this suite (an old pin)."""
+    try:
+        importlib.util.find_spec("ta_taxonomies.suites")
+    except ModuleNotFoundError:
+        # No package to inspect: stay lazy, and opening the suite says why.
+        return True
+    try:
+        return importlib.util.find_spec(f"ta_taxonomies.suites.{name}.tools") is not None
+    except ModuleNotFoundError:
+        return False
+
+
 def with_neighbor_cache(factory: SuiteFactory) -> SuiteFactory:
     """Wrap one suite factory so every open() serves get_neighbors from SQLite.
 
@@ -165,6 +182,13 @@ def default_suite_registry(*, neighbor_cache: bool = True) -> SuiteRegistry:
         "bls": _open_default_bls,
         "jobtech": _open_default_jobtech,
     }
+    missing = [name for name in factories if name != "esco" and not _suite_installed(name)]
+    if missing:
+        _log.warning(
+            "ta-taxonomies has no %s suite; not attached (update the ta-taxonomies pin)",
+            ", ".join(missing),
+        )
+        factories = {name: f for name, f in factories.items() if name not in missing}
     if neighbor_cache:
         factories = {name: with_neighbor_cache(factory) for name, factory in factories.items()}
     return SuiteRegistry(factories, default="esco")

@@ -100,6 +100,48 @@ def test_a_weak_whole_word_esco_match_is_only_a_pick_list() -> None:
     assert bridged is not None and "ambiguous" in bridged.warnings
 
 
+class _JobtechWithRelatedJobs(_Jobtech):
+    """Baker's exact Swedish record, plus a broader title that lists it as a narrow match."""
+
+    def search_by_esco(self, uris: list[str], kind: str = "occupation") -> FakeToolResult:
+        exact = FakeNode("jobtech:occupation:B", "Occupation", "Bagare/Konditor", source="jobtech")
+        broader = FakeNode("jobtech:occupation:VD", "Occupation", "VD", source="jobtech")
+        return FakeToolResult(
+            candidates=[
+                FakeCandidate(exact, 0.65, "esco_exact_match"),
+                FakeCandidate(broader, 0.55, "esco_narrow_match"),
+            ]
+        )
+
+
+def test_an_unsure_esco_answer_follows_only_same_job_matches() -> None:
+    unsure = bridge_via_esco(
+        _registry(_Esco(0.6), _JobtechWithRelatedJobs()), _not_found(), "baker"
+    )
+    assert unsure is not None and [n.pref_label for n in unsure.nodes] == ["Bagare/Konditor"]
+    clear = bridge_via_esco(_registry(_Esco(), _JobtechWithRelatedJobs()), _not_found(), "baker")
+    assert clear is not None and [n.pref_label for n in clear.nodes] == ["Bagare/Konditor", "VD"]
+
+
+def test_planner_titles_reach_the_swedish_records_as_a_pick_list() -> None:
+    from talent_angels.assistant.crosswalk import bridge_planner_titles
+
+    # ESCO knows "baker" clearly; "pastry wizard" it does not know at all.
+    found = bridge_planner_titles(
+        _registry(_Esco(), _JobtechWithRelatedJobs()), "jobtech", ["pastry wizard", "baker"]
+    )
+    assert found is not None
+    assert [n.pref_label for n in found.nodes] == ["Bagare/Konditor"]  # no narrow match
+    assert {"ambiguous", "guided", "via_esco:baker"} <= set(found.warnings)
+
+
+def test_a_planner_title_esco_is_unsure_about_is_not_followed() -> None:
+    from talent_angels.assistant.crosswalk import bridge_planner_titles
+
+    unsure = _registry(_Esco(0.6), _JobtechWithRelatedJobs())
+    assert bridge_planner_titles(unsure, "jobtech", ["baker"]) is None
+
+
 class _GiftedEsco(_Esco):
     """ESCO's only hit for "gift" holds it inside "gifted" (BX-02)."""
 
@@ -281,6 +323,34 @@ def test_rescue_tries_the_users_own_swedish_word_first() -> None:
     assert rescued is not None
     assert [n.pref_label for n in rescued.nodes] == ["Elevassistent"]
     assert not any(w.startswith("via_esco:") for w in rescued.warnings)
+
+
+class _EnglishWordTitles(_Jobtech):
+    """JobTech titles that are also one word of a longer English title."""
+
+    def search_nodes(self, text: str, kind: str | None = None) -> FakeToolResult:
+        if text.casefold() in {"controller", "officer"}:
+            label = text.capitalize()
+            node = FakeNode(
+                f"jobtech:occupation:{label}",
+                "Occupation",
+                label,
+                source="jobtech",
+                source_id=label,
+            )
+            return FakeToolResult(candidates=[FakeCandidate(node, 0.95, "exact_pref")])
+        return FakeToolResult(warnings=["not_found"])
+
+
+def test_one_word_of_an_english_title_is_never_bound() -> None:
+    # "air traffic controller" is not the finance job "Controller".
+    registry = _registry(_Esco(), _EnglishWordTitles())
+    for subject in ("air traffic controller", "police officer"):
+        rescued = _rescue(registry, _not_found(), subject=subject, question=f"{subject} in jobtech")
+        assert rescued is None
+    # The whole subject is still a title.
+    alone = _rescue(registry, _not_found(), subject="controller", question="controller in jobtech")
+    assert alone is not None and [n.pref_label for n in alone.nodes] == ["Controller"]
 
 
 def test_rescue_never_follows_a_partial_esco_match() -> None:

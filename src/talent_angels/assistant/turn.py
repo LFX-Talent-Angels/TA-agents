@@ -66,7 +66,11 @@ def normalize_question(question: str) -> tuple[str, list[str]]:
     """Strip and bound the question. Returns the text and any warnings."""
     text = " ".join(question.split())
     if len(text) > MAX_QUESTION_CHARS:
-        return text[:MAX_QUESTION_CHARS].rstrip(), ["question_truncated"]
+        # Keep both ends: the question is usually the last sentence ("<pasted
+        # text> ... what skills does a baker need?"), which a plain cut lost.
+        head = MAX_QUESTION_CHARS * 2 // 5
+        tail = MAX_QUESTION_CHARS - head - 3
+        return f"{text[:head].rstrip()} … {text[-tail:].lstrip()}", ["question_truncated"]
     return text, []
 
 

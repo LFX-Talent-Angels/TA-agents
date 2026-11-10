@@ -38,20 +38,26 @@ def _word_end(query: str) -> str:
 
 
 def lexical_rank(query: str, node: NodeRef) -> tuple[int, int, str]:
-    """Lower is better: exact pref, pref token, pref substring, exact alt, alt substring."""
+    """Lower is better: exact pref, pref token or plural, exact alt, pref substring, alt substring.
+
+    An exact alias outranks a title that merely contains the words: "software
+    engineer" is an alias of software developer, not the skill "utilise
+    computer-aided software engineering tools". A title that is the plural of
+    the words ("Bakers" for "baker") still outranks an alias.
+    """
     q = query.casefold().strip()
     pref = node.pref_label.casefold()
     alts = [alt.casefold() for alt in node.alt_labels]
     tokens = pref.replace("/", " ").replace("-", " ").split()
     if pref == q:
         tier = 0
-    elif q in tokens:
+    elif q in tokens or _near_pref_label(query, node):
         tier = 1
+    elif q in alts:
+        tier = 2
     elif q and re.search(rf"(?<![a-z0-9]){re.escape(q)}{_word_end(query)}", pref):
         # From the start of a word: "it manager" is not inside "credit manager".
         # A short word or an acronym must be a whole word: "swe" is not "sweep".
-        tier = 2
-    elif q in alts:
         tier = 3
     elif q and any(q in alt for alt in alts):
         tier = 4

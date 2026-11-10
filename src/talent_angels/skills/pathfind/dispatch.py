@@ -80,6 +80,18 @@ def pathfind_one(
         miss = target_result.model_copy(update={"capability": CAPABILITY_PATHFIND})
         return miss, measured.tool_calls
 
+    if start_node.id == target_node.id:
+        # "Software Developers to Software Developers": no gap and no route to
+        # look for; say so instead of no_path with the node listed twice.
+        same = AgentResult(
+            capability=CAPABILITY_PATHFIND,
+            suite=suite_name,
+            nodes=[start_node],
+            evidence=[*start_result.evidence],
+            warnings=["same_start_and_target"],
+        )
+        return same, measured.tool_calls
+
     gap = compute_gap(start_result, target_result, optional_rel_values=schema.optional_rel_values)
 
     missing_ids = {node.id for node in (*gap.essential_missing, *gap.optional_missing)}

@@ -412,9 +412,12 @@ def run(
     model = str(getattr(llm_client, "model", "") or "none") if llm_on else "none"
     pinned_versions = versions(model)
 
-    suite_names = (
-        list(opts.suites) if opts.suites is not None else default_tag_suites(registry.available)
-    )
+    suite_names = [
+        registry.resolve(name)
+        for name in (
+            list(opts.suites) if opts.suites is not None else default_tag_suites(registry.available)
+        )
+    ]
     unknown = [name for name in suite_names if name not in registry.available]
     if unknown:
         available = ", ".join(registry.available)

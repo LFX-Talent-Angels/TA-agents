@@ -226,7 +226,7 @@ def test_query_inside_a_word_is_not_a_title_match() -> None:
     credit = _occ("credit manager", 1)
     assert lexical_rank("IT manager", credit)[0] == 5
     assert lexical_rank("manager", credit)[0] == 1
-    assert lexical_rank("develop", _occ("software developer", 2))[0] == 2
+    assert lexical_rank("develop", _occ("software developer", 2))[0] == 3
 
 
 def test_alias_the_suite_doubts_is_never_auto_selected() -> None:
@@ -276,7 +276,7 @@ def test_a_short_word_ranks_only_as_a_whole_word() -> None:
 
     assert lexical_rank("swe", node("chimney sweep"))[0] == 5
     assert lexical_rank("SWE", node("SWE lead"))[0] == 1
-    assert lexical_rank("data scien", node("data scientist"))[0] == 2
+    assert lexical_rank("data scien", node("data scientist"))[0] == 3
 
 
 def test_a_single_alias_substring_hit_is_offered_not_selected() -> None:
@@ -345,3 +345,18 @@ def test_a_code_lookup_is_selected() -> None:
 
     ranked = group_and_sort_locate(NoNeighbours(), result, "15-1252.00", suite_name="onet")  # type: ignore[arg-type]
     assert "ambiguous" not in ranked.warnings
+
+
+def test_an_exact_alias_outranks_a_title_that_contains_the_words() -> None:
+    # RX-04: "software engineer" (an alias) lost to a skill whose title merely
+    # contains "software engineering".
+    dev = _occ("software developer", 1, alts=["software engineer"])
+    skill = _occ("utilise computer-aided software engineering tools", 2)
+    assert lexical_rank("software engineer", dev) < lexical_rank("software engineer", skill)
+
+
+def test_a_plural_title_outranks_an_alias() -> None:
+    # RX-01: O*NET "baker": Bakers, not the alias "Baker" on Chefs and Head Cooks.
+    bakers = _occ("Bakers", 1)
+    chefs = _occ("Chefs and Head Cooks", 2, alts=["Baker"])
+    assert lexical_rank("baker", bakers) < lexical_rank("baker", chefs)

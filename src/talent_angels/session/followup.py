@@ -157,6 +157,9 @@ def render_connect_list(result: AgentResult, *, cap: int = CONNECT_LIST_CAP) -> 
     if filtered:
         _, kind, total = filtered.split(":", 2)
         counts = t("filtered_count", count=len(neighbors), kind=kind, total=total)
+    none_marked = next((w for w in result.warnings if w.startswith("none_marked:")), None)
+    if none_marked:
+        counts = t("none_marked_count", kind=none_marked.split(":", 1)[1], counts=counts)
     lines = [t("connect_head", title=center.pref_label, counts=counts), ""]
     for index, node in enumerate(shown, start=1):
         tag = relations.get(node.id)
@@ -176,9 +179,10 @@ def _render_transitions(result: AgentResult, *, cap: int) -> str:
     if not neighbors:
         return t("no_transitions", title=center.pref_label, suite=suite_heading(result.suite))
     tags = relation_tags(result.edges, center.id)
+    moves = any(edge.type == "SUBSTITUTES" for edge in result.edges)
     lines = [
         t(
-            "transitions_head",
+            "transitions_head" if moves else "related_head",
             title=center.pref_label,
             count=len(neighbors),
             suite=suite_heading(result.suite),

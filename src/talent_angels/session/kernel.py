@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import copy
 import json
+import re
 from collections.abc import Sequence
 from dataclasses import dataclass, replace
 from datetime import UTC, datetime
@@ -19,9 +20,9 @@ from talent_angels.assistant.connect_request import (
 from talent_angels.assistant.intent import CAPABILITY_CONNECT
 from talent_angels.assistant.llm_plan import PlanDraft, denied_subject, is_statement
 from talent_angels.assistant.merge import suite_heading
-from talent_angels.assistant.suite_select import resolve_show_token
+from talent_angels.assistant.suite_select import SUITE_ALIASES, named_suites, resolve_show_token
 from talent_angels.assistant.synthesize import synthesize
-from talent_angels.assistant.turn import TurnOutcome
+from talent_angels.assistant.turn import MAX_QUESTION_CHARS, TurnOutcome
 from talent_angels.contracts import AgentResult, NodeRef
 from talent_angels.llm import LLMClient
 from talent_angels.llm.protocol import turn_cancelled, turn_deadline
@@ -969,6 +970,10 @@ def _may_narrow(state: SessionState, text: str) -> bool:
     """
     if state.binding is not None and not state.areas:
         return False
+    if named_suites(text, tuple(SUITE_ALIASES)):
+        # "elektriker enligt arbetsförmedlingen" names a taxonomy: a new
+        # question, never a hint about the open list.
+        return False
     return not is_statement(text) and pair_followup(text, state.recent) is None
 
 
@@ -1407,6 +1412,24 @@ def _facts_bound(state: SessionState) -> ChatReply:
     return _reply(state, message, source_note=" · ".join(names) if names else None)
 
 
+_SWITCH_RE = re.compile(
+    r"^\s*(?:and\s+|och\s+)?(?:(?:can\s+you\s+)?(?:show|see|give|find)(?:\s+me)?\s+)?"
+    r"(?:that|this|it|the\s+same|same)?\s*(?:in|on|for|from|i|enligt)\s+(.+?)\s*[?.!]*\s*$",
+    re.IGNORECASE,
+)
+
+
+def _switch_suite(text: str) -> str | None:
+    """The one suite a bare "show me that in <suite>" names, else None."""
+    match = _SWITCH_RE.match(text)
+    if match is None:
+        return None
+    named = named_suites(match.group(1), tuple(SUITE_ALIASES))
+    if len(named) != 1 or len(match.group(1).split()) > 3:
+        return None
+    return named[0]
+
+
 def _describe_bound(
     state: SessionState,
     text: str,
@@ -1445,6 +1468,17 @@ def _handle_map(
     ``suite`` limits the turn to one suite (a compare resumed after a pick there).
     """
     _record(state, "user", text)
+    switch = _switch_suite(text)
+    if switch is not None and state.recent and switch not in {r.suite for r in state.last_results}:
+        # "show me that in jobtech" after a BLS answer: the last title, looked
+        # up in that suite now (it was not searched there).
+        topic = state.recent[-1]
+        outcome = runner(topic, suite=switch)
+        reply = _from_outcome(state, outcome, question=topic, llm_client=llm_client)
+        _record(state, "assistant", reply.text)
+        return reply
+    if len(" ".join(text.split())) > MAX_QUESTION_CHARS and not preface:
+        preface = t("long_input", limit=MAX_QUESTION_CHARS)
     bound = state.binding.node if state.binding is not None else None
     bound_nodes = dict(state.bindings) if state.bindings else None
     # "compare the two" names its titles in code, from the working set.
@@ -1503,6 +1537,15 @@ def _handle_map(
         resolved = resolve_show_token(token, known)
         if resolved and resolved != "all":
             cached = next((r for r in state.last_results if r.suite == resolved), None)
+            if cached is None and state.recent:
+                # That suite was not searched for the last title: search it
+                # there now ("what does a baker do in bls?" -> "show me that
+                # in jobtech" looks "baker" up in JobTech).
+                topic = state.recent[-1]
+                rerun = runner(topic, suite=resolved)
+                reply = _from_outcome(state, rerun, question=topic, llm_client=llm_client)
+                _record(state, "assistant", reply.text)
+                return reply
             if cached is not None:
                 heading = suite_heading(resolved)
                 # Use structured output (no LLM) to match _handle_show — avoids the

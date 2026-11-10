@@ -79,36 +79,59 @@ def bridge_via_esco(
     """JobTech's own matches to what ESCO finds for ``text``, or None."""
     if not wants_bridge(result) or ESCO not in registry.available or not text.strip():
         return None
-    kind = kind if kind in ("occupation", "skill") else "occupation"
+    # The question's kind; with none, a job first and then a skill
+    # ("project management" is an ESCO skill, not an occupation).
+    kinds = [kind] if kind in ("occupation", "skill") else ["occupation", "skill"]
+    found = AgentResult(capability="locate", suite=ESCO, warnings=["not_found"])
+    found_kind = kinds[0]
     with registry.open(ESCO) as esco_runtime:
-        found = locate(esco_runtime.suite, ESCO, text, kind=kind)
-    if not found.nodes or (found.confidence or 0.0) < CHAT_MIN_CONFIDENCE:
+        for each in kinds:
+            found_kind = each
+            found = locate(esco_runtime.suite, ESCO, text, kind=each)
+            if found.nodes:
+                break
+    if not found.nodes:
         return None
-    if "ambiguous" in found.warnings:
-        # ESCO itself needs the user to choose. Following its first records
-        # would hand JobTech a confident answer ESCO never had (and a unique
-        # bridged hit binds the occupation and saves a goal).
-        return None
-    records = found.nodes[:MAX_ESCO_RECORDS]
+    clear = (found.confidence or 0.0) >= CHAT_MIN_CONFIDENCE and "ambiguous" not in found.warnings
+    if clear:
+        records = found.nodes[:1]
+    else:
+        # ESCO offers a list, or matched only part of a title: follow just the
+        # records that hold the words as whole words ("nurse" in "specialist
+        # nurse", never "gift" in "gifted"), and only ever as a pick list.
+        records = [n for n in found.nodes if _whole_words(text, n)][:MAX_ESCO_RECORDS]
+        if not records:
+            return None
     uris = [node.source_id for node in records if node.source_id.startswith("http")]
     if not uris:
         return None
     with registry.open(result.suite) as runtime:
         if not hasattr(runtime.suite, "search_by_esco"):
             return None
-        bridged = locate(_ByEsco(runtime.suite, uris, kind), result.suite, text, kind=kind)
+        bridged = locate(
+            _ByEsco(runtime.suite, uris, found_kind), result.suite, text, kind=found_kind
+        )
     if not bridged.nodes:
         return None
     via = [f"{WARNING_PREFIX}{node.pref_label}" for node in records]
+    pick = [] if clear or "ambiguous" in bridged.warnings else ["ambiguous"]
     return bridged.model_copy(
         update={
-            "warnings": [*bridged.warnings, *via],
+            "warnings": [*bridged.warnings, *pick, *via],
             "evidence": [
                 *bridged.evidence,
                 *(EvidencePointer(suite=ESCO, pointer=p.pointer) for p in found.evidence),
             ],
         }
     )
+
+
+def _whole_words(text: str, node: Any) -> bool:
+    words = text.casefold().strip()
+    if not words:
+        return False
+    pattern = re.compile(rf"(?<!\w){re.escape(words)}s?(?!\w)")
+    return any(pattern.search(name.casefold()) for name in (node.pref_label, *node.alt_labels))
 
 
 def esco_records_named(result: AgentResult) -> list[str]:
@@ -185,7 +208,7 @@ _NOT_TITLES = frozenset(
 
 
 def own_words_hit(
-    registry: SuiteRegistry, suite_name: str, question: str, *, kind: str
+    registry: SuiteRegistry, suite_name: str, question: str, *, kind: str, swedish: bool = False
 ) -> AgentResult | None:
     """A word of the user's own message that is exactly a title in the suite.
 
@@ -197,11 +220,21 @@ def own_words_hit(
     words = [w for w in _WORD.findall(question) if w.casefold() not in _NOT_TITLES]
     if not words:
         return None
+    lists: list[tuple[str, AgentResult]] = []
     with registry.open(suite_name) as runtime:
         for word in dict.fromkeys(words):
             found = locate(runtime.suite, suite_name, word, kind=kind)
             if found.nodes and (found.confidence or 0.0) >= CLEAR_CONFIDENCE:
                 return found
+            if found.nodes:
+                lists.append((word, found))
+    if swedish and lists:
+        # A Swedish question with no exact title in it: offer the list for its
+        # longest word ("sjuksköterska" -> the nurse titles), never one answer.
+        _word, best = max(lists, key=lambda pair: len(pair[0]))
+        if "ambiguous" not in best.warnings:
+            best = best.model_copy(update={"warnings": [*best.warnings, "ambiguous"]})
+        return best
     return None
 
 
@@ -254,8 +287,9 @@ def rescue_jobtech(
     """
     if not needs_rescue(result):
         return None
-    kind = kind if kind in ("occupation", "skill") else "occupation"
-    rescued = own_words_hit(registry, result.suite, question, kind=kind)
+    own_kind = kind if kind in ("occupation", "skill") else "occupation"
+    swedish = (language or "").casefold() == "sv"
+    rescued = own_words_hit(registry, result.suite, question, kind=own_kind, swedish=swedish)
     if rescued is None and (wants_bridge(result) or (language or "").casefold() != "sv"):
         probe = (
             result

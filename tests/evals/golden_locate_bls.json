@@ -1,0 +1,112 @@
+{
+  "suite": "bls",
+  "note": "Expected values from the full BLS graph (SOC 2018 + EP 2025-35: 867 occupations, 17 EP skills; direct-match titles are aliases). Additive truncated / match_count_capped / ambiguous / vector_index_missing warnings are allowed. '15-1252.00' is the O*NET form of a SOC code and names the same BLS occupation. 'RN' and 'CEO' are BLS direct-match titles.",
+  "cases": [
+    {
+      "question": "Software Developers",
+      "kind": "occupation",
+      "expected_top_id": "bls:occupation:15-1252",
+      "expected_confidence": 0.95,
+      "expected_method": "exact_pref",
+      "expected_warnings": []
+    },
+    {
+      "question": "software developers",
+      "kind": null,
+      "expected_top_id": "bls:occupation:15-1252",
+      "expected_confidence": 0.85,
+      "expected_method": "casefold_pref",
+      "expected_warnings": []
+    },
+    {
+      "question": "Registered Nurses",
+      "kind": null,
+      "expected_top_id": "bls:occupation:29-1141",
+      "expected_confidence": 0.95,
+      "expected_method": "exact_pref",
+      "expected_warnings": []
+    },
+    {
+      "question": "RN",
+      "kind": null,
+      "expected_top_id": "bls:occupation:29-1141",
+      "expected_confidence": 0.9,
+      "expected_method": "exact_alt",
+      "expected_warnings": []
+    },
+    {
+      "question": "CEO",
+      "kind": null,
+      "expected_top_id": "bls:occupation:11-1011",
+      "expected_confidence": 0.9,
+      "expected_method": "exact_alt",
+      "expected_warnings": []
+    },
+    {
+      "question": "15-1252",
+      "kind": null,
+      "expected_top_id": "bls:occupation:15-1252",
+      "expected_confidence": 0.95,
+      "expected_method": "exact_code",
+      "expected_warnings": []
+    },
+    {
+      "question": "15-1252.00",
+      "kind": null,
+      "expected_top_id": "bls:occupation:15-1252",
+      "expected_confidence": 0.95,
+      "expected_method": "exact_code",
+      "expected_warnings": []
+    },
+    {
+      "question": "29-1161",
+      "kind": null,
+      "expected_top_id": "bls:occupation:29-1161",
+      "expected_confidence": 0.95,
+      "expected_method": "exact_code",
+      "expected_warnings": []
+    },
+    {
+      "question": "web developer",
+      "kind": "occupation",
+      "expected_top_id": "bls:occupation:15-1254",
+      "expected_confidence": 0.7,
+      "expected_method": "contains",
+      "expected_warnings": []
+    },
+    {
+      "question": "Bakers",
+      "kind": "occupation",
+      "expected_top_id": "bls:occupation:51-3011",
+      "expected_confidence": 0.95,
+      "expected_method": "exact_pref",
+      "expected_warnings": []
+    },
+    {
+      "question": "Mathematics",
+      "kind": "skill",
+      "expected_top_id": "bls:skill:mathematics",
+      "expected_confidence": 0.95,
+      "expected_method": "exact_pref",
+      "expected_warnings": []
+    },
+    {
+      "question": "critical and analytical thinking",
+      "kind": "skill",
+      "expected_top_id": "bls:skill:critical-and-analytical-thinking",
+      "expected_confidence": 0.85,
+      "expected_method": "casefold_pref",
+      "expected_warnings": []
+    },
+    {
+      "question": "zzqxv plonkwurst",
+      "kind": "occupation",
+      "expected_top_id": null,
+      "expected_confidence": null,
+      "expected_method": null,
+      "expected_warnings": [
+        "not_found"
+      ]
+    }
+  ]
+}

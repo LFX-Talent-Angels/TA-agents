@@ -231,6 +231,7 @@ def group_and_sort_locate(
 
 
 _ONET_CODE = re.compile(r"^onet:occupation:(\d{2}-\d{4}\.\d{2})$")
+_SOC_CODE = re.compile(r"^bls:occupation:(\d{2}-\d{4})$")
 
 
 def code_facts(result: AgentResult, node: NodeRef) -> list[str]:
@@ -244,6 +245,9 @@ def code_facts(result: AgentResult, node: NodeRef) -> list[str]:
     match = _ONET_CODE.match(node.id)
     if match:
         facts.append(f"O*NET-SOC code: {match.group(1)}")
+    match = _SOC_CODE.match(node.id)
+    if match:
+        facts.append(f"SOC 2018 code: {match.group(1)}")
     for edge in result.edges:
         label = edge.properties.get("group_label")
         if edge.source_node_id != node.id or not label:

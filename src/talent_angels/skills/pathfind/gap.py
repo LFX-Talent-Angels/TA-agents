@@ -29,6 +29,10 @@ MAX_REALISTIC_GAP_SKILLS = 15
 _MAX_REALISTIC_GAP_SKILLS_BY_SUITE: dict[str, int] = {
     "esco": MAX_REALISTIC_GAP_SKILLS,
     "onet": 60,
+    # BLS has 17 broad skills, essential when BLS scores them 3.5+ (a median
+    # of 5 per occupation). Missing 8 or more is most of an occupation's
+    # profile. Provisional: re-measure with golden pairs (PF-6).
+    "bls": 8,
 }
 
 GAP_TOO_LARGE_WARNING = "gap_too_large"

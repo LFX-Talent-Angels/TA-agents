@@ -1,5 +1,5 @@
 {
-  "note": "Expected values captured from a live run against ESCO v1.2.1 and O*NET 31.0 (2026-10-11), via skills/pathfind/dispatch.py's own locate+connect+compute_gap+find_routes calls (not pathfind_one's merged AgentResult, to keep essential/optional/route counts separable). gap_too_large uses the per-suite threshold in skills/pathfind/gap.py (ESCO 15, O*NET 60), measured from this same set. O*NET's essential-missing counts run far higher than ESCO's because its skill edges include named software tools ESCO does not model as skills; see gap.py's module comment.",
+  "note": "Expected values captured from a live run against ESCO v1.2.1 and O*NET 31.0 (2026-10-11), via skills/pathfind/dispatch.py's own locate+connect+compute_gap+find_routes calls (not pathfind_one's merged AgentResult, to keep essential/optional/route counts separable). gap_too_large uses the per-suite threshold in skills/pathfind/gap.py (ESCO 15, O*NET 60), measured from this same set. O*NET's essential-missing counts run far higher than ESCO's because its skill edges include named software tools ESCO does not model as skills; see gap.py's module comment. 2026-11-04: pairs that expected no_path now expect routes: the branching cap had cut the edge to the target at hub nodes (TA-taxonomies dda9a71+), which was the cause of O*NET's no_path (PF-2).",
   "cases": [
     {
       "suite": "esco",
@@ -70,10 +70,8 @@
       "expected_essential_missing": 24,
       "expected_optional_missing": 84,
       "expected_gap_too_large": true,
-      "expected_has_route": false,
-      "expected_route_warnings": [
-        "no_path"
-      ]
+      "expected_has_route": true,
+      "expected_route_warnings": []
     },
     {
       "suite": "onet",
@@ -84,10 +82,8 @@
       "expected_essential_missing": 194,
       "expected_optional_missing": 0,
       "expected_gap_too_large": true,
-      "expected_has_route": false,
-      "expected_route_warnings": [
-        "no_path"
-      ]
+      "expected_has_route": true,
+      "expected_route_warnings": []
     },
     {
       "suite": "onet",
@@ -98,10 +94,8 @@
       "expected_essential_missing": 412,
       "expected_optional_missing": 0,
       "expected_gap_too_large": true,
-      "expected_has_route": false,
-      "expected_route_warnings": [
-        "no_path"
-      ]
+      "expected_has_route": true,
+      "expected_route_warnings": []
     },
     {
       "suite": "onet",
@@ -112,10 +106,8 @@
       "expected_essential_missing": 51,
       "expected_optional_missing": 0,
       "expected_gap_too_large": false,
-      "expected_has_route": false,
-      "expected_route_warnings": [
-        "no_path"
-      ]
+      "expected_has_route": true,
+      "expected_route_warnings": []
     },
     {
       "suite": "onet",
@@ -126,10 +118,8 @@
       "expected_essential_missing": 279,
       "expected_optional_missing": 0,
       "expected_gap_too_large": true,
-      "expected_has_route": false,
-      "expected_route_warnings": [
-        "no_path"
-      ]
+      "expected_has_route": true,
+      "expected_route_warnings": []
     }
   ]
 }

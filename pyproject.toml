@@ -44,11 +44,11 @@ dev = [
 ]
 # The suite-contract library (sibling repo, ADR-0004) plus what the concrete
 # adapters of all five suites need. Pinned to the commit this runtime is tested
-# against: the head of the TA-taxonomies BLS/JobTech stack (PR #37, on #21/#22).
+# against: the head of the TA-taxonomies BLS/JobTech stack (PR #38, on #21/#22).
 # Bump to the merge commit when that stack lands in `dev`.
 # Keep in step with the `app` dependency group below.
 taxonomies = [
-  "ta-taxonomies @ git+https://github.com/LFX-Talent-Angels/TA-taxonomies.git@f23cdf8ff0b05e0a0bc2de0339b02cbfc8f6ce05",
+  "ta-taxonomies @ git+https://github.com/LFX-Talent-Angels/TA-taxonomies.git@1651943fc3e00af1b5ff3f2f39f29fdccaed0308",
   "openpyxl",
 ]
 # Free, local embeddings (all-MiniLM-L6-v2, CPU): the same model the suites use
@@ -62,7 +62,7 @@ local-embed = [
 # the local embedding model. pip users keep using the extras.
 [dependency-groups]
 app = [
-  "ta-taxonomies @ git+https://github.com/LFX-Talent-Angels/TA-taxonomies.git@f23cdf8ff0b05e0a0bc2de0339b02cbfc8f6ce05",
+  "ta-taxonomies @ git+https://github.com/LFX-Talent-Angels/TA-taxonomies.git@1651943fc3e00af1b5ff3f2f39f29fdccaed0308",
   "openpyxl",
   "sentence-transformers>=3",
 ]

@@ -56,6 +56,19 @@ def select_units(
         ancestor_kind[row.row_id] = result
         return result
 
+    def kind_of(row: SourceRow) -> str | None:
+        """A row's kind before depth rules: row rule, graph relation, heading above, default."""
+        rule = profile.rule_for(row.text)
+        if rule is not None:
+            return rule.kind
+        found = profile.kind_of_relation(row.relation, row.label) or nearest_kind(row)
+        return found or profile.default_kind
+
+    def steps_of(row: SourceRow, kind: str) -> list[SourceRow]:
+        """Children of the same kind. In a graph export a performance's products
+        are its children too, but they are not its steps."""
+        return [child for child in children.get(row.row_id, []) if kind_of(child) == kind]
+
     def context_path_for(row: SourceRow) -> list[str]:
         """Ancestor texts from top (excluding the root) down to the parent."""
         path: list[str] = []
@@ -84,6 +97,7 @@ def select_units(
             continue
 
         seed_phrases: list[str] = []
+        steps: list[SourceRow] = []
         role: Literal["leaf", "heading", "group", "row_rule"]
         rule = profile.rule_for(row.text)
         if rule is not None:
@@ -98,15 +112,16 @@ def select_units(
                         seen_phrases.add(cleaned_part)
                         seed_phrases.append(cleaned_part)
         else:
-            ancestor = nearest_kind(row)
-            if ancestor is None:
+            found = profile.kind_of_relation(row.relation, row.label) or nearest_kind(row)
+            if found is None:
                 if profile.default_kind is None:
                     skipped.append(SkippedRow(row_id=row.row_id, reason="metadata"))
                     continue
                 kind = profile.default_kind
             else:
-                kind = ancestor
-            role = "heading" if children.get(row.row_id) else "leaf"
+                kind = found
+            steps = steps_of(row, kind)
+            role = "heading" if steps else "leaf"
             if role == "heading" and profile.groups:
                 role = "group"
             tagged_at_this_depth = (
@@ -125,13 +140,16 @@ def select_units(
 
         clean_text = profile.clean(row.text)
         if role == "group":
-            steps = [profile.clean(child.text) for child in children.get(row.row_id, [])]
-            steps = [step for step in steps if step]
-            if clean_text and steps:
-                clean_text = f"{clean_text}: {'; '.join(steps)}"
+            step_texts = [profile.clean(child.text) for child in steps]
+            step_texts = [step for step in step_texts if step]
+            if clean_text and step_texts:
+                clean_text = f"{clean_text}: {'; '.join(step_texts)}"
         if not clean_text:
             skipped.append(SkippedRow(row_id=row.row_id, reason="metadata", kind=kind))
             continue
+
+        if not seed_phrases and kind in profile.verbatim_kinds:
+            seed_phrases = [clean_text]
 
         context_path = context_path_for(row)
         occ_key = (parent_id, row.text.strip())

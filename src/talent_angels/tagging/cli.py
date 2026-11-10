@@ -40,14 +40,14 @@ _DEFAULT_TAG_LLM_TIMEOUT_SECONDS = "60"
 
 
 def _parse_rows(spec: str) -> set[str]:
-    """`"66-91,100"` -> `{"66", "67", ..., "91", "100"}`."""
+    """`"66-91,100"` -> `{"66", "67", ..., "91", "100"}`; "D-PR.1" is one id, not a range."""
     rows: set[str] = set()
     for part in spec.split(","):
         part = part.strip()
         if not part:
             continue
-        if "-" in part:
-            start_text, _, end_text = part.partition("-")
+        start_text, dash, end_text = part.partition("-")
+        if dash and start_text.strip().isdigit() and end_text.strip().isdigit():
             start, end = int(start_text), int(end_text)
             rows.update(str(i) for i in range(start, end + 1))
         else:

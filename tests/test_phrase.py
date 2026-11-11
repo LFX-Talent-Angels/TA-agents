@@ -1,0 +1,471 @@
+"""Tests for LLM phrasing functions — cards, guards, and profile injection."""
+
+from __future__ import annotations
+
+from pathlib import Path
+from unittest.mock import patch
+
+from talent_angels.contracts import AgentResult, EdgeRef, NodeRef
+from talent_angels.llm.protocol import LLMResult, LLMUsage, Message
+from talent_angels.llm.stub_client import StubLLMClient
+from talent_angels.session.phrase import (
+    connect_card,
+    locate_card,
+    phrase_chat,
+    phrase_map,
+    uses_chat_phrasing,
+)
+
+
+class _Scripted:
+    provider = "litellm"
+    model = "test-phrase"
+
+    def __init__(self, text: str) -> None:
+        self.text = text
+        self.calls: list[list[Message]] = []
+
+    def complete(self, messages: list[Message], **_kwargs: object) -> LLMResult:
+        self.calls.append(messages)
+        return LLMResult(text=self.text, provider=self.provider, model=self.model, usage=LLMUsage())
+
+
+class ScriptedClient:
+    provider = "litellm"
+    model = "test"
+
+    def __init__(self, response: str) -> None:
+        self.calls: list[list[Message]] = []
+        self._response = response
+
+    def complete(self, messages: list[Message]) -> LLMResult:
+        self.calls.append(messages)
+        return LLMResult(
+            text=self._response,
+            provider=self.provider,
+            model=self.model,
+            usage=LLMUsage(input_tokens=5, output_tokens=5),
+        )
+
+
+def _occ() -> NodeRef:
+    return NodeRef(
+        id="esco:occupation:1",
+        suite="esco",
+        source="esco",
+        source_id="s1",
+        kind="Occupation",
+        pref_label="software developer",
+    )
+
+
+def test_stub_does_not_use_chat_phrasing() -> None:
+    assert uses_chat_phrasing(None) is False
+    assert uses_chat_phrasing(StubLLMClient()) is False
+    assert uses_chat_phrasing(_Scripted("x")) is True
+
+
+def test_phrase_chat_falls_back_for_stub() -> None:
+    assert phrase_chat(StubLLMClient(), user_text="hi", fallback="Hey.", hint="") == "Hey."
+
+
+def test_phrase_chat_uses_live_client() -> None:
+    client = _Scripted("Hi — name a job title and I'll look it up.")
+    text = phrase_chat(client, user_text="hi", fallback="Hey.", hint="User greeted you.")
+    assert "name a job title" in text
+    assert client.calls
+
+
+def test_phrase_map_rejects_invented_numbered_list() -> None:
+    result = AgentResult(capability="locate", suite="esco", nodes=[_occ()], confidence=0.95)
+    client = _Scripted("1. software developer\n2. web developer")
+    text = phrase_map(
+        client,
+        question="software developer",
+        result=result,
+        fallback="software developer on the map.",
+        card=locate_card(result),
+    )
+    assert text == "software developer on the map."
+
+
+def test_phrase_chat_miss_rejects_invented_skill_page() -> None:
+    client = _Scripted(
+        "Python Programming is a skill linked to occupations such as:\n- Software Developer"
+    )
+    text = phrase_chat(
+        client,
+        user_text="python programming",
+        fallback="That's a miss, not a maybe.",
+        hint="miss",
+        mode="miss",
+    )
+    assert text == "That's a miss, not a maybe."
+
+
+def test_phrase_map_unique_locate_rejects_related_titles_not_on_card() -> None:
+    result = AgentResult(capability="locate", suite="esco", nodes=[_occ()], confidence=0.95)
+    client = _Scripted("Located **software developer**. Also try **Software Engineer**.")
+    text = phrase_map(
+        client,
+        question="software developer",
+        result=result,
+        fallback="software developer on the map.",
+        card=locate_card(result),
+    )
+    assert text == "software developer on the map."
+
+
+def test_phrase_map_keeps_allowed_bold_title() -> None:
+    result = AgentResult(capability="locate", suite="esco", nodes=[_occ()], confidence=0.95)
+    client = _Scripted("Located **software developer**. Ask for essential skills next.")
+    text = phrase_map(
+        client,
+        question="software developer",
+        result=result,
+        fallback="fallback",
+        card=locate_card(result),
+    )
+    assert "software developer" in text
+    assert "the person is" not in text.lower()
+
+
+def test_phrase_map_drops_product_name() -> None:
+    result = AgentResult(capability="locate", suite="esco", nodes=[_occ()], confidence=0.95)
+    client = _Scripted("High-confidence match in the LFX Talent Angels suite.")
+    text = phrase_map(
+        client,
+        question="software developer",
+        result=result,
+        fallback="software developer found on the ESCO graph. Ask for essential skills.",
+        card=locate_card(result),
+    )
+    assert "lfx" not in text.casefold()
+    assert "talent angels" not in text.casefold()
+    assert "essential skills" in text.casefold()
+
+
+def test_locate_card_includes_official_description() -> None:
+    node = _occ()
+    node = node.model_copy(
+        update={"description": "Designs and implements software applications and systems."}
+    )
+    result = AgentResult(capability="locate", suite="esco", nodes=[node], confidence=0.95)
+    card = locate_card(result)
+    assert "software developer" in card
+    assert "Designs and implements software" in card
+    assert "not listed yet" not in card
+
+
+def test_connect_card_counts_omitted_skills() -> None:
+    skills = [
+        NodeRef(
+            id=f"esco:skill:{i}",
+            suite="esco",
+            source="esco",
+            source_id=f"s{i}",
+            kind="Skill",
+            pref_label=f"skill {i}",
+        )
+        for i in range(8)
+    ]
+    result = AgentResult(
+        capability="connect",
+        suite="esco",
+        nodes=[_occ(), *skills],
+        edges=[],
+    )
+    card = connect_card(result, shown=5)
+    assert "software developer" in card
+    assert "3 more skills" in card
+
+
+def test_connect_card_shows_essential_and_optional_tags() -> None:
+    """The card must carry real tag data, not just an unbacked instruction."""
+    center = _occ()
+    essential = NodeRef(
+        id="esco:skill:essential",
+        suite="esco",
+        source="esco",
+        source_id="e1",
+        kind="Skill",
+        pref_label="python",
+    )
+    optional = NodeRef(
+        id="esco:skill:optional",
+        suite="esco",
+        source="esco",
+        source_id="e2",
+        kind="Skill",
+        pref_label="sql",
+    )
+    result = AgentResult(
+        capability="connect",
+        suite="esco",
+        nodes=[center, essential, optional],
+        edges=[
+            EdgeRef(
+                type="HAS_SKILL",
+                suite="esco",
+                source_node_id=center.id,
+                target_node_id=essential.id,
+                properties={"relation_type": "essential"},
+            ),
+            EdgeRef(
+                type="HAS_SKILL",
+                suite="esco",
+                source_node_id=center.id,
+                target_node_id=optional.id,
+                properties={"relation_type": "optional"},
+            ),
+        ],
+    )
+    card = connect_card(result, shown=5)
+    assert "python (essential)" in card
+    assert "sql (optional)" in card
+
+
+def test_connect_card_tags_untagged_software_edges_as_tool() -> None:
+    """GAP C: O*NET USES_SOFTWARE edges carry no relation_type — must not go blank.
+
+    Without this fallback, a tool skill sits in the same list as ESCO's tagged
+    essential/optional skills with nothing after its name, which reads as a
+    missing value rather than "this is a different kind of link".
+    """
+    center = NodeRef(
+        id="onet:occupation:1",
+        suite="onet",
+        source="onet",
+        source_id="15-1252.00",
+        kind="Occupation",
+        pref_label="software developer",
+    )
+    tool = NodeRef(
+        id="onet:tool:javascript",
+        suite="onet",
+        source="onet",
+        source_id="javascript",
+        kind="Skill",
+        pref_label="JavaScript",
+    )
+    result = AgentResult(
+        capability="connect",
+        suite="onet",
+        nodes=[center, tool],
+        edges=[
+            EdgeRef(
+                type="USES_SOFTWARE",
+                suite="onet",
+                source_node_id=center.id,
+                target_node_id=tool.id,
+                properties={},  # relation_type is always absent on this edge type
+            ),
+        ],
+    )
+    card = connect_card(result, shown=5)
+    assert "JavaScript (tool)" in card
+
+
+# --- Profile injection tests ---
+
+
+def test_phrase_chat_injects_user_profile(tmp_path: Path) -> None:
+    """phrase_chat system prompt must include USER.md content when it exists."""
+    user_md = tmp_path / "USER.md"
+    user_md.write_text(
+        "STANDING[onet]: Software Developers  [onet:15-1252.00]   since: 2026-09-20\n"
+    )
+    client = ScriptedClient("You were looking at software developers.")
+    with patch("talent_angels.memory.profile.user_md", lambda: user_md):
+        phrase_chat(
+            client,
+            user_text="what was I looking for?",
+            fallback="miss",
+            hint="Search missed.",
+        )
+
+    system_msg = client.calls[0][0].content
+    assert "Current job (onet): Software Developers" in system_msg
+
+
+def test_phrase_chat_no_profile_when_user_md_absent(tmp_path: Path) -> None:
+    """phrase_chat must not crash and must omit profile block when USER.md is absent."""
+    absent_md = tmp_path / "USER.md"  # does not exist
+    client = ScriptedClient("No match found.")
+    with patch("talent_angels.memory.profile.user_md", lambda: absent_md):
+        phrase_chat(
+            client,
+            user_text="pharmacist",
+            fallback="miss",
+            hint="Search missed.",
+        )
+
+    system_msg = client.calls[0][0].content
+    assert "STANDING" not in system_msg
+
+
+def test_phrase_map_injects_user_profile(tmp_path: Path) -> None:
+    """phrase_map system prompt must include USER.md content when it exists."""
+    from talent_angels.contracts.models import NodeRef
+
+    user_md = tmp_path / "USER.md"
+    user_md.write_text("GOAL: Data Scientists  [onet:15-2051.00]\n")
+
+    node = NodeRef(
+        id="onet:occ:1",
+        suite="onet",
+        source="onet",
+        source_id="15-1252.00",
+        kind="Occupation",
+        pref_label="Software Developers",
+    )
+    result = AgentResult(capability="locate", suite="onet", nodes=[node], confidence=0.95)
+    client = ScriptedClient("Software Developers is on the map.")
+
+    with patch("talent_angels.memory.profile.user_md", lambda: user_md):
+        phrase_map(
+            client,
+            question="software developer",
+            result=result,
+            fallback="fallback",
+            card="occupation: Software Developers",
+        )
+
+    system_msg = client.calls[0][0].content
+    assert "Goal: Data Scientists" in system_msg
+
+
+def test_phrase_map_no_profile_when_user_md_absent(tmp_path: Path) -> None:
+    """phrase_map must not crash and must omit profile block when USER.md is absent."""
+    from talent_angels.contracts.models import NodeRef
+
+    absent_md = tmp_path / "USER.md"
+    node = NodeRef(
+        id="onet:occ:1",
+        suite="onet",
+        source="onet",
+        source_id="15-1252.00",
+        kind="Occupation",
+        pref_label="Nurse",
+    )
+    result = AgentResult(capability="locate", suite="onet", nodes=[node], confidence=0.90)
+    client = ScriptedClient("Nurse is on the map.")
+
+    with patch("talent_angels.memory.profile.user_md", lambda: absent_md):
+        phrase_map(
+            client,
+            question="nurse",
+            result=result,
+            fallback="fallback",
+            card="occupation: Nurse",
+        )
+
+    system_msg = client.calls[0][0].content
+    assert "STANDING" not in system_msg
+    assert "GOAL" not in system_msg
+
+
+def _connect_result() -> AgentResult:
+    skills = [
+        NodeRef(
+            id=f"esco:skill:{i}",
+            suite="esco",
+            source="esco",
+            source_id=f"s{i}",
+            kind="Skill",
+            pref_label=f"skill {i}",
+        )
+        for i in range(4)
+    ]
+    return AgentResult(capability="connect", suite="esco", nodes=[_occ(), *skills], edges=[])
+
+
+def test_connect_phrasing_drops_a_bullet_list_the_table_already_shows() -> None:
+    reply = (
+        "You want the skills of a software developer. Here they are:\n"
+        "- skill 0\n- skill 1\n• skill 2\n* skill 3\n"
+        "Ask for optional skills next."
+    )
+    text = phrase_map(
+        ScriptedClient(reply),
+        question="what skills does a software developer need?",
+        result=_connect_result(),
+        fallback="fallback",
+        card=connect_card(_connect_result()),
+    )
+    assert "skill 0" not in text
+    assert text.startswith("You want the skills of a software developer.")
+    assert "Ask for optional skills next." in text
+
+
+def test_connect_phrasing_keeps_a_short_mention() -> None:
+    reply = "A software developer's map includes:\n- skill 0\n- skill 1"
+    text = phrase_map(
+        ScriptedClient(reply),
+        question="skills?",
+        result=_connect_result(),
+        fallback="fallback",
+        card=connect_card(_connect_result()),
+    )
+    assert text == reply
+
+
+def test_map_prompt_answers_first_and_forbids_invented_people() -> None:
+    client = ScriptedClient("ok")
+    phrase_map(
+        client,
+        question="show only ESCO results for electrician",
+        result=_connect_result(),
+        fallback="fallback",
+        card=connect_card(_connect_result()),
+    )
+    system = client.calls[0][0].content
+    assert "First reply to the user's own words" in system
+    assert "Do not invent people" in system
+
+
+def test_connect_phrasing_drops_a_table_the_list_already_shows() -> None:
+    reply = "Software developers code.\n\n| Skill | Tag |\n|---|---|\n| skill 0 | essential |"
+    text = phrase_map(
+        ScriptedClient(reply),
+        question="what skills does a software developer need?",
+        result=_connect_result(),
+        fallback="fallback",
+        card=connect_card(_connect_result()),
+    )
+    assert text == "Software developers code."
+
+
+def test_picker_intro_that_answers_for_the_user_falls_back() -> None:
+    reply = (
+        "Here they are side by side:\n\n| | Baker | Cook |\n|---|---|---|\n"
+        "| Typical tasks | doughs | food |\n\nWhich one did you mean?"
+    )
+    text = phrase_chat(
+        _Scripted(reply),
+        user_text="compare it with a cook",
+        fallback="pick one",
+        hint="",
+        mode="intro",
+    )
+    assert text == "pick one"
+
+
+def test_picker_intro_of_one_sentence_is_kept() -> None:
+    reply = "I found a few cooks on the map. Which one did you mean?"
+    text = phrase_chat(
+        _Scripted(reply), user_text="cook", fallback="pick one", hint="", mode="intro"
+    )
+    assert text == reply
+
+
+def test_map_prompt_forbids_claiming_an_earlier_conversation() -> None:
+    client = ScriptedClient("ok")
+    phrase_map(
+        client,
+        question="I want to become a web developer",
+        result=_connect_result(),
+        fallback="fallback",
+        card=connect_card(_connect_result()),
+    )
+    assert "Never claim\n  something was noted or said earlier" in client.calls[0][0].content

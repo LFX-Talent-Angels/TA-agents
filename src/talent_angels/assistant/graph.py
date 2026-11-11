@@ -1,58 +1,360 @@
-"""The main assistant's LangGraph loop (ARCHITECTURE.md): intent -> plan ->
-dispatch -> answer.
-
-Gate A scope: only the `locate` capability is dispatched for real; `connect`/
-`pathfind` route through intent classification but resolve to an explicit
-"not implemented" `AgentResult` rather than silently falling back to Locate.
-Only this module (the assistant) may change the plan or produce the
-user-facing answer — skills stay passive procedures (ARCHITECTURE.md rule #3).
-"""
+"""The main assistant's intent -> plan -> skill dispatch -> answer loop."""
 
 from __future__ import annotations
+
+from pathlib import Path
+from typing import cast
 
 from langgraph.graph import END, StateGraph
 from langgraph.graph.state import CompiledStateGraph
 
+from talent_angels.assistant.agent_loop import run_tool_loop
 from talent_angels.assistant.answer import build_answer
-from talent_angels.assistant.intent import CAPABILITY_LOCATE, classify_capability
+from talent_angels.assistant.connect_request import (
+    UnsupportedConnectQuery,
+    extract_connect_request,
+    followup_connect_request,
+)
+from talent_angels.assistant.intent import (
+    CAPABILITY_CONNECT,
+    CAPABILITY_LOCATE,
+    CAPABILITY_PATHFIND,
+    Capability,
+    extract_locate_subject,
+)
+from talent_angels.assistant.llm_plan import (
+    connect_request_from_draft,
+    interpret_question,
+)
 from talent_angels.assistant.state import AssistantState
-from talent_angels.contracts import AgentResult
+from talent_angels.contracts import AgentResult, NodeRef
 from talent_angels.llm import LLMClient
+from talent_angels.llm.protocol import uses_chat_phrasing
+from talent_angels.memory.paths import checkpoint_db_path as _checkpoint_db_path
+from talent_angels.runlog import usage_from_stage
+from talent_angels.skills.connect import connect
 from talent_angels.skills.locate import ESCO_SUITE_NAME, locate
-from talent_angels.skills.locate.resolve import SearchableSuite
+from talent_angels.skills.locate.rank import group_and_sort_locate
+from talent_angels.skills.pathfind import pathfind_one
+from talent_angels.suites.measured import MeasuredSuite
+from talent_angels.suites.protocol import SuiteTools
 
 
-def _interpret_intent(state: AssistantState) -> AssistantState:
-    return {"capability": classify_capability(state["question"])}
+def checkpoint_db_path() -> Path:
+    """Where the durable checkpointer writes (``assistant.checkpoint`` owns it).
+
+    Kept here because ``memory.erase`` and the tests reach the store through
+    this resolver; it simply forwards to the memory-home resolver.
+    """
+    return _checkpoint_db_path()
 
 
-def _dispatch_locate(state: AssistantState, *, suite: SearchableSuite) -> AssistantState:
-    capability = state["capability"]
-    if capability != CAPABILITY_LOCATE:
-        result = AgentResult(
-            capability=capability,
-            suite=ESCO_SUITE_NAME,
-            warnings=[f"capability_not_implemented:{capability}"],
+def fresh_state_input(**values: object) -> dict[str, object]:
+    """Every AssistantState channel explicitly set for a new turn.
+
+    A LangGraph channel without a reducer keeps its previous value when the
+    input omits it, so on a checkpointed thread turn 2 used to return turn 1's
+    ``answer`` (``_answer`` short-circuits on a non-empty answer).
+    """
+    state: dict[str, object] = {key: None for key in AssistantState.__annotations__}
+    state["llm_stages"] = []
+    state["tool_calls"] = []
+    state.update(values)
+    return state
+
+
+def _interpret_intent(
+    state: AssistantState,
+    *,
+    suite_name: str,
+    llm_client: LLMClient,
+    forced_capability: Capability | None,
+) -> AssistantState:
+    interpreted = interpret_question(
+        state["question"],
+        suites=(suite_name,),
+        llm_client=llm_client,
+        forced_capability=forced_capability,
+    )
+    stages = list(state.get("llm_stages") or [])
+    if interpreted.stage is not None:
+        stages.append(interpreted.stage)
+    return {
+        "capability": interpreted.plan.intent.target,
+        "plan": interpreted.plan,
+        "plan_draft": interpreted.draft,
+        "heuristic_intent": interpreted.heuristic,
+        "llm_stages": stages,
+    }
+
+
+def _dispatch_heuristic(
+    state: AssistantState, *, suite: SuiteTools, suite_name: str
+) -> AssistantState:
+    """No-LLM fallback: hardcoded capability routing for LLM_PROVIDER=none and offline tests."""
+    capability = state["plan"].intent.target
+    measured = MeasuredSuite(suite)
+    draft = state.get("plan_draft")
+    schema = suite.suite_schema
+    if capability == CAPABILITY_LOCATE:
+        locate_text = (
+            draft.subject if draft and draft.subject else extract_locate_subject(state["question"])
         )
-    else:
-        result = locate(suite, ESCO_SUITE_NAME, state["question"], kind=state.get("kind"))
-    return {"result": result}
+        locate_kind = state.get("kind") or (draft.kind if draft else None) or "occupation"
+        result = locate(
+            measured,
+            suite_name,
+            locate_text,
+            kind=locate_kind,
+        )
+        result = group_and_sort_locate(
+            measured,
+            result,
+            locate_text,
+            suite_name=suite_name,
+            group_rel_type=schema.group_rel_type,
+            group_node_kinds=schema.group_node_kinds,
+        )
+        return {"result": result, "tool_calls": measured.tool_calls}
+
+    if capability == CAPABILITY_CONNECT:
+        bound = state.get("bound_node")
+        if isinstance(bound, NodeRef) and bound.suite == suite_name:
+            followup = followup_connect_request(
+                state["question"], bound, skill_rel_types=schema.skill_rel_types
+            )
+            if followup is not None:
+                result = connect(
+                    measured,
+                    suite_name,
+                    bound,
+                    request=followup,
+                    confidence=None,
+                    locate_evidence=[],
+                    optional_rel_values=schema.optional_rel_values,
+                )
+                return {
+                    "result": result,
+                    "tool_calls": measured.tool_calls,
+                }
+
+        request = (
+            connect_request_from_draft(draft, skill_rel_types=schema.skill_rel_types)
+            if draft is not None
+            else None
+        )
+        if request is None:
+            try:
+                request = extract_connect_request(
+                    state["question"], skill_rel_types=schema.skill_rel_types
+                )
+            except UnsupportedConnectQuery:
+                if draft is not None and draft.subject:
+                    from talent_angels.skills.connect.models import ConnectRequest as _CR
+
+                    request = _CR(
+                        subject=draft.subject,
+                        rel_types=schema.skill_rel_types,
+                    )
+                else:
+                    return {
+                        "result": AgentResult(
+                            capability=capability,
+                            suite=suite_name,
+                            warnings=["unsupported_connect_query"],
+                        ),
+                        "tool_calls": [],
+                    }
+
+        locate_kind = state.get("kind") or (draft.kind if draft else None) or "occupation"
+        bound = state.get("bound_node")
+        if bound is None and request.subject.strip().casefold() in {
+            "it",
+            "that",
+            "this",
+            "them",
+        }:
+            return {
+                "result": AgentResult(
+                    capability=capability,
+                    suite=suite_name,
+                    warnings=["bind_required"],
+                ),
+                "tool_calls": [],
+            }
+        located = locate(
+            measured,
+            suite_name,
+            request.subject,
+            kind=locate_kind,
+        )
+        located = group_and_sort_locate(
+            measured,
+            located,
+            request.subject,
+            suite_name=suite_name,
+            group_rel_type=schema.group_rel_type,
+            group_node_kinds=schema.group_node_kinds,
+        )
+        if not located.nodes or "ambiguous" in located.warnings:
+            return {
+                "result": located.model_copy(update={"capability": capability}),
+                "tool_calls": measured.tool_calls,
+            }
+
+        result = connect(
+            measured,
+            suite_name,
+            located.nodes[0],
+            request=request,
+            confidence=located.confidence,
+            locate_evidence=located.evidence,
+            optional_rel_values=schema.optional_rel_values,
+        )
+        return {
+            "result": result,
+            "tool_calls": measured.tool_calls,
+        }
+
+    if capability == CAPABILITY_PATHFIND:
+        if draft is None or not draft.subject or not draft.secondary_subject:
+            # The planner found only one end, or none — Pathfind needs both
+            # (ADR-0008 decision 1/2); never guess the missing one.
+            return {
+                "result": AgentResult(
+                    capability=capability,
+                    suite=suite_name,
+                    warnings=["pathfind_missing_subject"],
+                ),
+                "tool_calls": [],
+            }
+        result, tool_calls = pathfind_one(suite, suite_name, draft.subject, draft.secondary_subject)
+        return {"result": result, "tool_calls": tool_calls}
+
+    return {
+        "result": AgentResult(
+            capability=capability,
+            suite=suite_name,
+            warnings=[f"capability_not_implemented:{capability}"],
+        ),
+        "tool_calls": [],
+    }
+
+
+def dispatch_plan(
+    state: AssistantState,
+    *,
+    suite: SuiteTools,
+    suite_name: str,
+    llm_client: LLMClient | None = None,
+    bound_node: NodeRef | None = None,
+    need_answer: bool = True,
+) -> AssistantState:
+    """Run the planned capability against one opened suite.
+
+    When a real LLM is configured, delegates to run_tool_loop() so the model
+    can call search_nodes / get_neighbors in a multi-round loop and decide
+    capability from context. Falls back to _dispatch_heuristic() when running
+    offline (LLM_PROVIDER=none) so tests remain deterministic.
+    """
+    if uses_chat_phrasing(llm_client):
+        assert llm_client is not None
+        plan = state.get("plan")
+        draft = state.get("plan_draft")
+        secondary_subject_hint: str | None = None
+        if draft is not None:
+            subject_hint = draft.subject
+            secondary_subject_hint = draft.secondary_subject
+        elif state.get("heuristic_intent", True):
+            # The LLM planner failed or was skipped: keyword extraction is the
+            # only subject we have (empty question → empty subject → no search).
+            subject_hint = extract_locate_subject(state["question"])
+        else:
+            subject_hint = None
+        try:
+            outcome = run_tool_loop(
+                question=state["question"],
+                suite=suite,
+                suite_name=suite_name,
+                llm_client=llm_client,
+                # The planner's kind ("skill" for "what is machine learning?")
+                # unless the caller fixed one. A follow-up on a bound node keeps
+                # that node: "what skills does it need?" is not a skill search.
+                kind=state.get("kind")
+                or (draft.kind if draft is not None and bound_node is None else None),
+                bound_node=bound_node,
+                intent=plan.intent.target if plan is not None else None,
+                subject_hint=subject_hint,
+                secondary_subject_hint=secondary_subject_hint,
+                need_answer=need_answer,
+            )
+        except Exception:
+            # Provider rejected the call or the loop failed — fall back to deterministic dispatch.
+            return _dispatch_heuristic(state, suite=suite, suite_name=suite_name)
+        stages = list(state.get("llm_stages") or [])
+        stages.extend(outcome.stages)
+        return {
+            "capability": cast(Capability, outcome.result.capability),
+            "plan": outcome.plan,
+            "result": outcome.result,
+            "tool_calls": outcome.tool_calls,
+            "llm_stages": stages,
+            "answer": outcome.answer,
+        }
+    return _dispatch_heuristic(state, suite=suite, suite_name=suite_name)
 
 
 def _answer(state: AssistantState, *, llm_client: LLMClient, answer_mode: str) -> AssistantState:
-    answer, llm_usage = build_answer(state["result"], llm_client=llm_client, mode=answer_mode)
-    return {"answer": answer, "llm_usage": llm_usage}
+    if state.get("answer"):
+        # Tool loop already produced the answer — avoid a redundant LLM phrasing call.
+        return {"llm_usage": None}
+    answer, stage = build_answer(state["result"], llm_client=llm_client, mode=answer_mode)
+    stages = list(state.get("llm_stages") or [])
+    if stage is not None:
+        stages.append(stage)
+    return {
+        "answer": answer,
+        "llm_usage": usage_from_stage(stage) if stage is not None else None,
+        "llm_stages": stages,
+    }
 
 
 def build_graph(
-    *, suite: SearchableSuite, llm_client: LLMClient, answer_mode: str = "structured"
+    *,
+    suite: SuiteTools,
+    llm_client: LLMClient,
+    suite_name: str = ESCO_SUITE_NAME,
+    answer_mode: str = "structured",
+    forced_capability: Capability | None = None,
+    thread_id: str | None = None,
 ) -> CompiledStateGraph:
+    """Intent → plan → dispatch → answer. The model names the goal; code walks the graph."""
     graph = StateGraph(AssistantState)
-    graph.add_node("interpret_intent", _interpret_intent)
-    graph.add_node("dispatch_locate", lambda s: _dispatch_locate(s, suite=suite))
+    graph.add_node(
+        "interpret_intent",
+        lambda s: _interpret_intent(
+            s,
+            suite_name=suite_name,
+            llm_client=llm_client,
+            forced_capability=forced_capability,
+        ),
+    )
+    graph.add_node(
+        "dispatch_plan",
+        lambda s: dispatch_plan(
+            s,
+            suite=suite,
+            suite_name=suite_name,
+            llm_client=llm_client,
+            bound_node=s.get("bound_node"),
+        ),
+    )
     graph.add_node("answer", lambda s: _answer(s, llm_client=llm_client, answer_mode=answer_mode))
     graph.set_entry_point("interpret_intent")
-    graph.add_edge("interpret_intent", "dispatch_locate")
-    graph.add_edge("dispatch_locate", "answer")
+    graph.add_edge("interpret_intent", "dispatch_plan")
+    graph.add_edge("dispatch_plan", "answer")
     graph.add_edge("answer", END)
-    return graph.compile()
+    from talent_angels.assistant.checkpoint import shared_checkpointer
+
+    checkpointer = shared_checkpointer() if thread_id is not None else None
+    return graph.compile(checkpointer=checkpointer)

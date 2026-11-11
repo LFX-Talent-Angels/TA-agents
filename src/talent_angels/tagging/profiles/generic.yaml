@@ -1,0 +1,39 @@
+# A business-agnostic fallback profile: every row is an "item" worth tagging,
+# with no kind headings to look for. Pick this (`--profile generic`, or
+# `base_profile: generic` in `<project>/tag.yaml`) for a new business whose
+# input is a flat table (readers/table.py) with no CONOCER-style section
+# structure — see docs/tagging.md "Use it for another business".
+name: generic
+version: 1
+
+document_type: document
+document_label: Document
+
+# Every row is taggable; nothing here is a group-of-steps shape to flatten.
+depth: all
+groups: false
+
+# How many times a reviewer may Retry with hint / Reject one answer before the
+# tool asks for Use my tag or Mark as gap instead.
+max_retries: 2
+
+# No heading text assigns a kind — every row falls through to `default_kind`.
+kinds: {}
+row_rules: []
+default_kind: item
+
+include_kinds:
+  - item
+
+report_kinds:
+  - item
+
+# Trailing ", and" / "," / "." / " and" only; word-boundary on "and" so it
+# doesn't eat a real final word such as "hand".
+cleaners:
+  - "[\\s,;.:]*(\\band)?[\\s,;.:]*$"
+
+routing:
+  item: [skill, task, knowledge]
+
+doc_context: []

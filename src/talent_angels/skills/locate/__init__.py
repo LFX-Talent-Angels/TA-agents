@@ -17,11 +17,11 @@ ESCO_SUITE_NAME = "esco"
 
 @contextmanager
 def open_esco_suite() -> Iterator[SearchableSuite]:
-    """Open the optional concrete ESCO adapter without importing it eagerly."""
-    from talent_angels.skills.locate.esco import open_esco_suite as _open_esco_suite
+    """Compatibility helper backed by the central lazy suite registry."""
+    from talent_angels.suites import default_suite_registry
 
-    with _open_esco_suite() as suite:
-        yield suite
+    with default_suite_registry().open(ESCO_SUITE_NAME) as runtime:
+        yield runtime.suite
 
 
 __all__ = ["ESCO_SUITE_NAME", "SearchableSuite", "locate", "open_esco_suite"]

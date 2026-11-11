@@ -1,0 +1,95 @@
+"""The code-written answer shown before a pick list."""
+
+from __future__ import annotations
+
+from talent_angels.assistant.llm_plan import PlanDraft
+from talent_angels.contracts import AgentResult, NodeRef
+from talent_angels.session.lead import found, lead, understood
+
+
+def _result(suite: str, *labels: str, warnings: tuple[str, ...] = ("ambiguous",)) -> AgentResult:
+    nodes = [
+        NodeRef(
+            id=f"{suite}:{x}",
+            suite=suite,
+            source=suite,
+            source_id=x,
+            kind="Occupation",
+            pref_label=x,
+        )
+        for x in labels
+    ]
+    return AgentResult(capability="locate", suite=suite, nodes=nodes, warnings=list(warnings))
+
+
+def _draft(subject: str, *candidates: str, intent: str | None = None) -> PlanDraft:
+    return PlanDraft(target="locate", subject=subject, candidates=candidates, profile_intent=intent)
+
+
+def test_an_abbreviation_says_how_it_was_read() -> None:
+    draft = _draft("SWE", "software engineer", "software developer", "web developer", "x")
+    results = [_result("esco", "software engineer", "software developer", "web developers")]
+    assert understood("SWE", draft, results) == (
+        'I read "SWE" as software engineer, software developer or web developer.'
+    )
+
+
+def test_a_description_is_read_as_the_request() -> None:
+    draft = _draft("engineer", "civil engineer")
+    assert understood(
+        "I want to become an engineer who builds buildings",
+        draft,
+        [_result("esco", "civil engineer")],
+    ) == ("I read your request as civil engineer.")
+
+
+def test_a_guess_the_map_does_not_have_is_never_named() -> None:
+    draft = _draft("engineer", "civil engineer", "bridge architect")
+    text = understood("an engineer who builds bridges", draft, [_result("esco", "civil engineer")])
+    assert text == "I read your request as civil engineer."
+    assert "bridge architect" not in text
+    nothing = understood("an engineer who builds bridges", draft, [])
+    assert nothing == 'I looked up "engineer".'
+
+
+def test_meaning_search_hits_are_called_close_not_matching() -> None:
+    from talent_angels.contracts import EvidencePointer
+
+    close = _result("esco", "basket maker").model_copy(
+        update={"evidence": [EvidencePointer(suite="esco", pointer="esco:search:hybrid:q")]}
+    )
+    assert found([close]) == "ESCO has no exact match; 1 close title."
+
+
+def test_a_plain_lookup_names_its_search() -> None:
+    assert understood("what does a nurse do?", _draft("nurse")) == 'I looked up "nurse".'
+    assert understood("nurse", None) == 'I looked up "nurse".'
+
+
+def test_found_names_what_every_map_did() -> None:
+    results = [
+        _result("esco", "software developer", warnings=()),
+        _result("onet", "A", "B", warnings=("ambiguous", "truncated")),
+        _result("sfia", warnings=("not_found",)),
+    ]
+    assert found(results) == (
+        "ESCO matched software developer, O*NET has 2+ matching titles and SFIA has no match."
+    )
+
+
+def test_next_step_follows_the_profile_intent() -> None:
+    text = lead(
+        "I want to be an engineer", _draft("engineer", intent="goal"), [_result("esco", "a", "b")]
+    )
+    assert text.endswith("Pick the one you mean and I'll save it as your goal.")
+    plain = lead("engineer", _draft("engineer"), [_result("esco", "a", "b")])
+    assert plain.endswith("Pick the one you mean, or tell me more and I'll narrow it.")
+
+
+def test_suggestions_are_not_saved_as_the_current_job() -> None:
+    from talent_angels.session.lead import pick_intent
+
+    suggestions = _draft("math", "actuary", "statistician", intent="standing")
+    assert pick_intent(suggestions) is None
+    assert pick_intent(_draft("nurse", intent="standing")) == "standing"
+    assert pick_intent(_draft("engineer", "civil engineer", intent="goal")) == "goal"

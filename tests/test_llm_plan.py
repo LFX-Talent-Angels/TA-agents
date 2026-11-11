@@ -1,0 +1,378 @@
+"""LLM planner JSON parsing and fallback."""
+
+from __future__ import annotations
+
+import pytest
+
+from talent_angels.assistant.llm_plan import (
+    PLAN_SYSTEM,
+    PlanDraft,
+    _profile_intent_heuristic,
+    interpret_question,
+    is_compare,
+    parse_plan_text,
+    uses_llm_planner,
+)
+from talent_angels.llm.protocol import LLMResult, LLMUsage, Message
+from talent_angels.llm.stub_client import StubLLMClient
+
+
+class ScriptedLLMClient:
+    provider = "litellm"
+    model = "openrouter/test"
+
+    def __init__(self, text: str) -> None:
+        self.text = text
+        self.calls: list[list[Message]] = []
+
+    def complete(self, messages: list[Message]) -> LLMResult:
+        self.calls.append(messages)
+        return LLMResult(
+            text=self.text,
+            provider=self.provider,
+            model="actual-test-model",
+            usage=LLMUsage(input_tokens=11, output_tokens=7),
+        )
+
+
+def test_parse_plan_text_accepts_fenced_json() -> None:
+    draft = parse_plan_text(
+        """```json
+        {"target": "connect", "subject": "software developer",
+         "kind": "occupation", "relation_filter": "essential", "suites": ["esco"]}
+        ```"""
+    )
+
+    assert draft.target == "connect"
+    assert draft.subject == "software developer"
+    assert draft.kind == "occupation"
+    assert draft.relation_filter == "essential"
+
+
+def test_stub_provider_does_not_call_the_planner() -> None:
+    interpreted = interpret_question(
+        "What essential skills does a software developer need?",
+        suite_name="esco",
+        llm_client=StubLLMClient(),
+    )
+
+    assert interpreted.heuristic is True
+    assert interpreted.stage is None
+    assert interpreted.plan.capabilities == ("locate", "connect")
+    assert uses_llm_planner(StubLLMClient()) is False
+
+
+def test_llm_plan_builds_connect_execution_plan() -> None:
+    client = ScriptedLLMClient(
+        '{"target":"connect","subject":"software developer",'
+        '"kind":"occupation","relation_filter":"essential","suites":["esco"]}'
+    )
+
+    interpreted = interpret_question(
+        "What should a software developer know?",
+        suite_name="esco",
+        llm_client=client,
+    )
+
+    assert interpreted.heuristic is False
+    assert interpreted.plan.capabilities == ("locate", "connect")
+    assert interpreted.draft is not None
+    assert interpreted.draft.subject == "software developer"
+    assert interpreted.stage is not None
+    assert interpreted.stage.stage == "intent"
+    assert interpreted.stage.input_tokens == 11
+    assert interpreted.stage.response_model == "actual-test-model"
+    assert len(client.calls) == 1
+
+
+def test_planner_provider_error_falls_back_to_heuristic() -> None:
+    class ExplodingClient:
+        provider = "litellm"
+
+        def complete(self, messages: list[Message]) -> LLMResult:
+            raise RuntimeError("LiteLLM provider request failed")
+
+    interpreted = interpret_question(
+        "What essential skills does a software developer need?",
+        suite_name="esco",
+        llm_client=ExplodingClient(),  # type: ignore[arg-type]
+    )
+
+    assert interpreted.heuristic is True
+    assert interpreted.draft is None
+    assert interpreted.plan.capabilities == ("locate", "connect")
+
+
+def test_invalid_planner_json_falls_back_to_heuristic() -> None:
+    client = ScriptedLLMClient("sorry, I cannot make a plan")
+
+    interpreted = interpret_question(
+        "What essential skills does a software developer need?",
+        suite_name="esco",
+        llm_client=client,
+    )
+
+    assert interpreted.heuristic is True
+    assert interpreted.draft is None
+    assert interpreted.plan.capabilities == ("locate", "connect")
+    assert interpreted.stage is not None
+    assert interpreted.stage.output_tokens == 7
+
+
+def test_planner_prompt_asks_for_english_subjects() -> None:
+    assert '("enfermero" → "nurse")' in PLAN_SYSTEM
+
+
+@pytest.mark.parametrize(
+    ("question", "intent", "subject"),
+    [
+        ("I am a plumber", "standing", "plumber"),
+        ("I work as a nurse", "standing", "nurse"),
+        ("my job is data analyst", "standing", "data analyst"),
+        ("I am not a teacher", "reject", "teacher"),
+        ("I am working toward data analyst", "goal", "data analyst"),
+        ("I want to move into marketing", "goal", "marketing"),
+        ("I'd like to switch to nursing", "goal", "nursing"),
+        ("I want to work as a chef", "goal", "chef"),
+        ("I'm aiming for data scientist", "goal", "data scientist"),
+    ],
+)
+def test_profile_heuristic_reads_statements(question: str, intent: str, subject: str) -> None:
+    draft = _profile_intent_heuristic(question)
+    assert draft is not None
+    assert (draft.profile_intent, draft.subject) == (intent, subject)
+
+
+@pytest.mark.parametrize("question", ["I am looking for a job", "I'm interested in tech", "chef"])
+def test_profile_heuristic_ignores_non_statements(question: str) -> None:
+    assert _profile_intent_heuristic(question) is None
+
+
+@pytest.mark.parametrize(
+    "question", ["I want to become a web developer", "I want to be a web developer"]
+)
+def test_wanting_to_become_is_a_goal_not_a_skills_list(question: str) -> None:
+    draft = _profile_intent_heuristic(question)
+    assert draft is not None
+    assert (draft.target, draft.profile_intent, draft.subject) == (
+        "locate",
+        "goal",
+        "web developer",
+    )
+
+
+@pytest.mark.parametrize(
+    ("question", "first", "second"),
+    [
+        ("data analyst vs data scientist", "data analyst", "data scientist"),
+        ("a nurse versus a midwife?", "nurse", "midwife"),
+        ("compare accountant and software developer", "accountant", "software developer"),
+        (
+            "compare accountant and software developer and help me choose",
+            "accountant",
+            "software developer",
+        ),
+        ("compare a chef with a baker", "chef", "baker"),
+        (
+            "what is the difference between a web developer and a software developer?",
+            "web developer",
+            "software developer",
+        ),
+    ],
+)
+def test_compare_heuristic_reads_two_titles(question: str, first: str, second: str) -> None:
+    draft = _profile_intent_heuristic(question)
+    assert draft is not None
+    assert (draft.target, draft.subject, draft.secondary_subject) == ("connect", first, second)
+    assert is_compare(draft)
+
+
+@pytest.mark.parametrize(
+    "question", ["what skills does a chef need?", "skills of a salt and pepper cook"]
+)
+def test_one_title_is_not_a_compare(question: str) -> None:
+    assert not is_compare(_profile_intent_heuristic(question))
+
+
+def test_pathfind_with_two_ends_is_not_a_compare() -> None:
+    draft = PlanDraft(target="pathfind", subject="teacher", secondary_subject="data analyst")
+    assert not is_compare(draft)
+
+
+@pytest.mark.parametrize(
+    ("question", "start", "destination"),
+    [
+        ("path from nurse to data analyst", "nurse", "data analyst"),
+        ("skill gap from nurse to data analyst", "nurse", "data analyst"),
+        ("gap between a nurse and a data analyst", "nurse", "data analyst"),
+        ("route from teacher to data analyst?", "teacher", "data analyst"),
+        ("career path from chef to restaurant manager", "chef", "restaurant manager"),
+        ("how do I move from nurse to data analyst?", "nurse", "data analyst"),
+        ("from nurse to data analyst", "nurse", "data analyst"),
+        ("how to become a data analyst from a nurse", "nurse", "data analyst"),
+        ("how do I become a data scientist from an accountant", "accountant", "data scientist"),
+    ],
+)
+def test_pathfind_heuristic_reads_both_ends(question: str, start: str, destination: str) -> None:
+    draft = _profile_intent_heuristic(question)
+    assert draft is not None
+    assert draft.target == "pathfind"
+    assert (draft.subject, draft.secondary_subject) == (start, destination)
+    assert draft.kind == "occupation"
+
+
+@pytest.mark.parametrize(
+    "question", ["what skills does a chef need?", "I want to become a web developer"]
+)
+def test_one_ended_questions_are_not_pathfind(question: str) -> None:
+    draft = _profile_intent_heuristic(question)
+    assert draft is None or draft.target != "pathfind"
+
+
+def test_planner_prompt_teaches_the_compare_shape() -> None:
+    assert '"secondary_subject":"software developer"' in PLAN_SYSTEM
+    assert '"X vs Y" or "X and Y" as two titles is locate' not in PLAN_SYSTEM
+    assert '("I know Python and SQL") are not a compare' in PLAN_SYSTEM
+
+
+def test_candidates_are_cleaned_deduplicated_and_capped() -> None:
+    draft = parse_plan_text(
+        '{"target":"locate","subject":"engineer","candidates":'
+        '[" civil engineer ","civil engineer","",3,"a","b","c","d","e"]}'
+    )
+    assert draft.candidates == ("civil engineer", "a", "b", "c", "d")
+
+
+def test_candidates_default_to_none_offered() -> None:
+    assert parse_plan_text('{"target":"locate","subject":"nurse"}').candidates == ()
+    assert parse_plan_text('{"target":"locate","candidates":"nurse"}').candidates == ()
+
+
+def test_planner_sees_the_profile_line_before_the_message() -> None:
+    client = ScriptedLLMClient('{"target":"locate","subject":"chef"}')
+    interpret_question("jobs like mine", llm_client=client, profile="current job: chef")
+    user = client.calls[0][1].content
+    assert user == "Profile: current job: chef\n\nMessage: jobs like mine"
+
+
+def test_planner_without_profile_gets_the_bare_question() -> None:
+    client = ScriptedLLMClient('{"target":"locate","subject":"chef"}')
+    interpret_question("chef", llm_client=client)
+    assert client.calls[0][1].content == "chef"
+
+
+def test_prompt_asks_for_candidates_on_vague_requests() -> None:
+    assert "candidates" in PLAN_SYSTEM and "Vague requests" in PLAN_SYSTEM
+
+
+def test_trivial_subjects_are_not_searches() -> None:
+    from talent_angels.assistant.llm_plan import is_trivial_subject
+
+    for subject in ("a", "an", "the", "", "  ", "a.", "my"):
+        assert is_trivial_subject(subject), subject
+    for subject in ("IT", "nurse", "C++", "C#", "R", "QA tester", "15-1252.00"):
+        assert not is_trivial_subject(subject), subject
+
+
+def test_planner_keeps_codes_and_refuses_instructions() -> None:
+    assert "15-1252.00" in PLAN_SYSTEM
+    assert "previous instructions" in PLAN_SYSTEM.replace("\n", " ")
+
+
+def test_the_same_question_reuses_the_first_reading() -> None:
+    client = ScriptedLLMClient(
+        '{"target":"locate","subject":"swe","candidates":["software developer"]}'
+    )
+    first = interpret_question("SWE", llm_client=client)
+    client.text = '{"target":"locate","subject":"sweep"}'
+    second = interpret_question("  swe? ", llm_client=client)
+    assert len(client.calls) == 1
+    assert second.draft == first.draft
+    assert second.stage is None
+
+
+def test_a_different_profile_reads_the_question_again() -> None:
+    client = ScriptedLLMClient('{"target":"locate","subject":"chef"}')
+    interpret_question("jobs like mine", llm_client=client, profile="current job: chef")
+    interpret_question("jobs like mine", llm_client=client, profile="current job: nurse")
+    assert len(client.calls) == 2
+
+
+def test_an_unreadable_plan_is_retried_once() -> None:
+    class Twice(ScriptedLLMClient):
+        def __init__(self) -> None:
+            super().__init__("not json")
+            self.replies = ["not json", '{"target":"locate","subject":"nurse"}']
+
+        def complete(self, messages: list[Message]) -> LLMResult:
+            self.text = self.replies[len(self.calls)]
+            return super().complete(messages)
+
+    client = Twice()
+    interpreted = interpret_question("nurse", llm_client=client)
+    assert len(client.calls) == 2
+    assert interpreted.draft is not None and interpreted.draft.subject == "nurse"
+
+
+def test_forgetting_everything_forgets_stored_readings() -> None:
+    from talent_angels.memory.erase import erase_person
+    from talent_angels.memory.paths import db_path
+
+    client = ScriptedLLMClient('{"target":"locate","subject":"my secret job"}')
+    interpret_question("my secret job", llm_client=client)
+    erase_person()
+    assert b"my secret job" not in db_path().read_bytes()
+
+
+def test_a_turn_past_its_deadline_makes_no_more_model_calls() -> None:
+    import time
+
+    from talent_angels.assistant.llm_call import measure_complete
+    from talent_angels.llm.protocol import LLMError, llm_timeout_seconds, turn_deadline
+
+    client = ScriptedLLMClient("{}")
+    with turn_deadline(5.0):
+        assert llm_timeout_seconds() <= 5.0
+    with turn_deadline(0.5):
+        time.sleep(0.6)
+        with pytest.raises(LLMError, match="deadline"):
+            measure_complete(client, [Message(role="user", content="x")], stage="phrase")
+    assert client.calls == []
+
+
+def test_a_cancelled_turn_makes_no_more_model_calls() -> None:
+    import contextvars
+    import threading
+
+    from talent_angels.assistant.llm_call import measure_complete
+    from talent_angels.llm.protocol import LLMError, bind_cancel
+
+    client = ScriptedLLMClient("{}")
+    event = threading.Event()
+    event.set()
+
+    def call() -> None:
+        bind_cancel(event)
+        with pytest.raises(LLMError, match="cancelled"):
+            measure_complete(client, [Message(role="user", content="x")], stage="phrase")
+
+    contextvars.copy_context().run(call)
+    assert client.calls == []
+
+
+def test_a_first_lookup_never_reaches_the_model_tool_loop() -> None:
+    from talent_angels.assistant.turn import run_turn
+    from tests.fakes.suite import SUITE_NAME, fake_registry
+
+    client = ScriptedLLMClient(
+        '{"target":"locate","subject":"software developer","kind":"occupation"}'
+    )
+    outcome = run_turn(
+        registry=fake_registry(),
+        llm_client=client,
+        question="software developer",
+        suite_override=SUITE_NAME,
+        persist=False,
+    )
+    assert len(client.calls) == 1  # the planner only: code located the title
+    assert [n.pref_label for n in outcome.result.nodes] == ["software developer"]

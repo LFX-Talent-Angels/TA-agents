@@ -71,6 +71,7 @@ from talent_angels.session.models import (
     TranscriptLine,
 )
 from talent_angels.session.narrow import area_by_letter, area_choices, narrow_decision, render_areas
+from talent_angels.session.pathfind_view import render_pathfind
 from talent_angels.session.phrase import (
     connect_card,
     locate_card,
@@ -95,6 +96,7 @@ from talent_angels.session.working_set import pair_followup, refers_to_one, reme
 from talent_angels.skills.connect.compare import CAPABILITY_COMPARE
 from talent_angels.skills.locate.areas import AreaRequest
 from talent_angels.skills.locate.rank import published_facts
+from talent_angels.skills.pathfind.dispatch import CAPABILITY_PATHFIND
 
 _NO_PENDING = "There's no numbered list to pick from. Type a job title first."
 _BAD_PICK = "That number isn't in the list. Reply with a number from the options."
@@ -526,7 +528,8 @@ def _handle_pick(
     state.areas = []
 
     compares = [node for node in nodes if node.suite in state.pending_compare]
-    if not compares:
+    pathfinds = [node for node in nodes if node.suite in state.pending_pathfind]
+    if not compares and not pathfinds:
         titles = [node.pref_label for node in nodes]
         message = (
             t("bound", title=titles[0])
@@ -536,14 +539,20 @@ def _handle_pick(
         _record(state, "assistant", message)
         return _reply(state, message)
 
-    # The compares that waited on these picks: each runs in its own suite only,
-    # with the chosen title. A suite not picked keeps its list for later.
+    # The compares/pathfinds that waited on these picks: each runs in its own
+    # suite only, with the chosen title. A suite not picked keeps its list.
     waiting = {
         suite: value for suite, value in state.pending_compare.items() if suite not in picked_suites
     }
+    pathfind_waiting = {
+        suite: value
+        for suite, value in state.pending_pathfind.items()
+        if suite not in picked_suites
+    }
     other_lists = [c for c in lists_before if c.node.suite not in picked_suites]
-    # A snapshot: each resumed compare resets the session's own record.
+    # A snapshot: each resumed compare/pathfind resets the session's own record.
     to_resume = dict(state.pending_compare)
+    to_resume_pathfind = dict(state.pending_pathfind)
     parts: list[str] = []
     for node in compares:
         first, second, side = to_resume[node.suite]
@@ -556,11 +565,24 @@ def _handle_pick(
             suite=node.suite,
         )
         parts.append(reply.text)
-    if waiting and other_lists:
+    for node in pathfinds:
+        start, target, side = to_resume_pathfind[node.suite]
+        pair = (node.pref_label, target) if side == "start" else (start, node.pref_label)
+        reply = _handle_map(
+            state,
+            f"path from {pair[0]} to {pair[1]}",
+            runner=runner,
+            llm_client=llm_client,
+            suite=node.suite,
+        )
+        parts.append(reply.text)
+    still_waiting = {**waiting, **pathfind_waiting}
+    if still_waiting and other_lists:
         renumbered = _renumber_pending(other_lists, start=len(state.pending) + 1)
         state.pending = [*state.pending, *renumbered]
         state.pending_compare.update(waiting)
-        for suite in waiting:
+        state.pending_pathfind.update(pathfind_waiting)
+        for suite in still_waiting:
             choices = [c for c in renumbered if c.node.suite == suite]
             if choices:
                 picker = render_picker("", choices, omitted=0, intro=" ", include_source=False)
@@ -825,6 +847,7 @@ def _from_single_outcome(
         state.pending = []
         state.list_topic = ""
         state.pending_compare = {}
+        state.pending_pathfind = {}
     if "ambiguous" in result.warnings:
         pending = choices_from_result(result)
         omitted = max(0, len(result.nodes) - len(pending))
@@ -835,6 +858,7 @@ def _from_single_outcome(
         searched = _searched_for(question, draft)
         state.list_topic = searched
         _remember_pending_compare(state, draft, (result,))
+        _remember_pending_pathfind(state, draft, (result,))
         # What was understood and what happens next, written in code (lead.py).
         intro = lead(question, draft, [result])
         text = render_picker(searched, pending, omitted=omitted, intro=intro)
@@ -891,8 +915,9 @@ def _from_single_outcome(
         state.pending = []
         _remember_compared(state, draft, result)
         text = render_compare(result)
-    elif any(w.startswith("capability_not_implemented") for w in result.warnings):
-        text = t("pathfind")
+    elif result.capability == CAPABILITY_PATHFIND and len(result.nodes) >= 2:
+        state.pending = []
+        text = render_pathfind(result)
     elif "no_subject" in result.warnings:
         text = t("no_subject")
     else:
@@ -914,6 +939,21 @@ def _remember_pending_compare(
         )
         if side:
             state.pending_compare[result.suite] = [draft.subject, draft.secondary_subject, side]
+
+
+def _remember_pending_pathfind(
+    state: SessionState, draft: PlanDraft | None, results: Sequence[AgentResult]
+) -> None:
+    """Keep "path from X to Y" alive, per suite, while a side waits for a pick there."""
+    state.pending_pathfind = {}
+    if draft is None or not draft.subject or not draft.secondary_subject:
+        return
+    for result in results:
+        side = next(
+            (w.split(":", 1)[1] for w in result.warnings if w.startswith("pathfind_side:")), None
+        )
+        if side:
+            state.pending_pathfind[result.suite] = [draft.subject, draft.secondary_subject, side]
 
 
 def _with_areas(
@@ -1194,10 +1234,6 @@ def _from_outcome(
             picker_blocks.append(blocks[-1])
             pending_all.extend(choices)
             continue
-        if any(w.startswith("capability_not_implemented") for w in result.warnings):
-            blocks.append(f"## {heading}\n\n{t('pathfind')}")
-            all_miss = False
-            continue
         if not result.nodes or "not_found" in result.warnings:
             # A follow-up ("its skills") with nothing chosen in this suite is
             # not a search miss: the user still has to pick from its list.
@@ -1215,6 +1251,10 @@ def _from_outcome(
         if result.capability == CAPABILITY_COMPARE:
             # Two titles, neither is "it": the compare binds nothing.
             unique_cards.append(f"## {heading}\n\n{render_compare(result)}")
+            continue
+        if result.capability == CAPABILITY_PATHFIND and len(result.nodes) >= 2:
+            # Two titles, neither is "it": a pathfind binds nothing either.
+            unique_cards.append(f"## {heading}\n\n{render_pathfind(result)}")
             continue
         _set_bind(state, result.nodes[0])
         if unique_bind is None:
@@ -1251,6 +1291,7 @@ def _from_outcome(
         _remember_compared(state, _draft, compared)
 
     _remember_pending_compare(state, _draft, results if pending_all else ())
+    _remember_pending_pathfind(state, _draft, results if pending_all else ())
     if pending_all:
         state.pending = pending_all
         state.list_topic = searched
@@ -1262,20 +1303,7 @@ def _from_outcome(
         state.pending = []
         state.list_topic = ""
 
-    not_implemented = any(
-        w.startswith("capability_not_implemented") for result in results for w in result.warnings
-    )
-    if not_implemented and not any_hit and not pending_all:
-        # GAP-PF (multi-suite): every attached suite classifies the SAME question
-        # to the SAME capability, so "not implemented" here is never partial —
-        # if one suite says it, all of them do. Show the honest redirect instead
-        # of falling through to synthesize(), which cannot tell "not implemented"
-        # apart from a genuine search miss: both are zero-nodes results, and
-        # _hit_phrase() treats any zero-nodes result as "no hit" (GAP-PF was
-        # closed for the tool loop and the single-suite reply in agent_loop.py /
-        # _from_single_outcome; this merge path had the same bug independently).
-        text = t("pathfind")
-    elif all_miss and not any_hit:
+    if all_miss and not any_hit:
         text = phrase_chat(
             llm_client,
             user_text=question,
@@ -1312,7 +1340,8 @@ def _from_outcome(
         text = _with_areas(state, text, outcome, searched=searched, draft=_draft)
     else:
         has_connect = any(
-            r.capability in ("connect", CAPABILITY_COMPARE) and r.nodes for r in results
+            r.capability in ("connect", CAPABILITY_COMPARE, CAPABILITY_PATHFIND) and r.nodes
+            for r in results
         )
         if has_connect and unique_cards:
             text = "\n\n---\n\n".join(unique_cards)

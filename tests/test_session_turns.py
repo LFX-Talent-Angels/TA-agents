@@ -1499,34 +1499,57 @@ def test_ambiguous_multi_suite_connect_never_calls_the_llm_narrative() -> None:
         assert invented not in reply.text
 
 
-def test_multi_suite_pathfind_shows_redirect_not_a_generic_miss() -> None:
-    """Regression, found via a live run against real Neo4j: when every attached
-    suite classifies a question as pathfind (the same capability, uniformly —
-    that classification never differs per suite for one question), each
-    suite's AgentResult carries zero nodes and a `capability_not_implemented`
-    warning. The merge path treated that identically to a genuine search miss
-    (`_hit_phrase`/`synthesize_structured` cannot tell "not implemented" apart
-    from "not found" — both are just zero nodes) and showed "No node for that
-    phrase with today's search", which actively misleads a user into thinking
-    their search failed rather than that the capability doesn't exist yet.
-    """
+def test_multi_suite_pathfind_renders_the_gap_not_a_generic_miss() -> None:
+    """A resolved pathfind result (PF-4) renders its own gap/route card per
+    suite in the multi-suite merge path, the same way compare already does —
+    not the generic "unique hit" locate-style line, and not a search miss."""
     from talent_angels.assistant.planning import build_plan_for_capability
     from talent_angels.assistant.turn import TurnOutcome
-    from talent_angels.contracts import AgentResult
+    from talent_angels.contracts import AgentResult, EdgeRef, NodeRef
     from talent_angels.runlog import RunLogRecord
-    from talent_angels.session.copy import PATHFIND_REDIRECT
     from talent_angels.session.kernel import handle_line
 
-    esco = AgentResult(
-        capability="pathfind",
-        suite="esco",
-        warnings=["capability_not_implemented:pathfind"],
-    )
-    onet = AgentResult(
-        capability="pathfind",
-        suite="onet",
-        warnings=["capability_not_implemented:pathfind"],
-    )
+    def _pair(suite: str) -> AgentResult:
+        start = NodeRef(
+            id=f"{suite}:occupation:nurse",
+            suite=suite,
+            source=suite,
+            source_id="n",
+            kind="Occupation",
+            pref_label="nurse",
+        )
+        target = NodeRef(
+            id=f"{suite}:occupation:dev",
+            suite=suite,
+            source=suite,
+            source_id="d",
+            kind="Occupation",
+            pref_label="software developer",
+        )
+        skill = NodeRef(
+            id=f"{suite}:skill:code",
+            suite=suite,
+            source=suite,
+            source_id="c",
+            kind="Skill",
+            pref_label="write code",
+        )
+        return AgentResult(
+            capability="pathfind",
+            suite=suite,
+            nodes=[start, target, skill],
+            edges=[
+                EdgeRef(
+                    type="HAS_SKILL",
+                    suite=suite,
+                    source_node_id=target.id,
+                    target_node_id=skill.id,
+                    properties={"relation_type": "essential"},
+                )
+            ],
+        )
+
+    esco, onet = _pair("esco"), _pair("onet")
 
     def runner(question: str, **_kwargs: object) -> TurnOutcome:
         return TurnOutcome(
@@ -1541,7 +1564,8 @@ def test_multi_suite_pathfind_shows_redirect_not_a_generic_miss() -> None:
     state = new_session()
     reply = handle_line(state, "how do I get from nurse to software developer", runner=runner)
 
-    assert reply.text == PATHFIND_REDIRECT
+    assert "From nurse to software developer" in reply.text
+    assert "write code" in reply.text
     assert "No node for that phrase" not in reply.text
 
 

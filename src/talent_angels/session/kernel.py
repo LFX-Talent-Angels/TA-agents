@@ -71,6 +71,7 @@ from talent_angels.session.models import (
     TranscriptLine,
 )
 from talent_angels.session.narrow import area_by_letter, area_choices, narrow_decision, render_areas
+from talent_angels.session.pathfind_view import render_pathfind
 from talent_angels.session.phrase import (
     connect_card,
     locate_card,
@@ -95,6 +96,7 @@ from talent_angels.session.working_set import pair_followup, refers_to_one, reme
 from talent_angels.skills.connect.compare import CAPABILITY_COMPARE
 from talent_angels.skills.locate.areas import AreaRequest
 from talent_angels.skills.locate.rank import published_facts
+from talent_angels.skills.pathfind.dispatch import CAPABILITY_PATHFIND
 
 _NO_PENDING = "There's no numbered list to pick from. Type a job title first."
 _BAD_PICK = "That number isn't in the list. Reply with a number from the options."
@@ -913,8 +915,9 @@ def _from_single_outcome(
         state.pending = []
         _remember_compared(state, draft, result)
         text = render_compare(result)
-    elif any(w.startswith("capability_not_implemented") for w in result.warnings):
-        text = t("pathfind")
+    elif result.capability == CAPABILITY_PATHFIND and len(result.nodes) >= 2:
+        state.pending = []
+        text = render_pathfind(result)
     elif "no_subject" in result.warnings:
         text = t("no_subject")
     else:
@@ -1231,10 +1234,6 @@ def _from_outcome(
             picker_blocks.append(blocks[-1])
             pending_all.extend(choices)
             continue
-        if any(w.startswith("capability_not_implemented") for w in result.warnings):
-            blocks.append(f"## {heading}\n\n{t('pathfind')}")
-            all_miss = False
-            continue
         if not result.nodes or "not_found" in result.warnings:
             # A follow-up ("its skills") with nothing chosen in this suite is
             # not a search miss: the user still has to pick from its list.
@@ -1252,6 +1251,10 @@ def _from_outcome(
         if result.capability == CAPABILITY_COMPARE:
             # Two titles, neither is "it": the compare binds nothing.
             unique_cards.append(f"## {heading}\n\n{render_compare(result)}")
+            continue
+        if result.capability == CAPABILITY_PATHFIND and len(result.nodes) >= 2:
+            # Two titles, neither is "it": a pathfind binds nothing either.
+            unique_cards.append(f"## {heading}\n\n{render_pathfind(result)}")
             continue
         _set_bind(state, result.nodes[0])
         if unique_bind is None:
@@ -1300,20 +1303,7 @@ def _from_outcome(
         state.pending = []
         state.list_topic = ""
 
-    not_implemented = any(
-        w.startswith("capability_not_implemented") for result in results for w in result.warnings
-    )
-    if not_implemented and not any_hit and not pending_all:
-        # GAP-PF (multi-suite): every attached suite classifies the SAME question
-        # to the SAME capability, so "not implemented" here is never partial —
-        # if one suite says it, all of them do. Show the honest redirect instead
-        # of falling through to synthesize(), which cannot tell "not implemented"
-        # apart from a genuine search miss: both are zero-nodes results, and
-        # _hit_phrase() treats any zero-nodes result as "no hit" (GAP-PF was
-        # closed for the tool loop and the single-suite reply in agent_loop.py /
-        # _from_single_outcome; this merge path had the same bug independently).
-        text = t("pathfind")
-    elif all_miss and not any_hit:
+    if all_miss and not any_hit:
         text = phrase_chat(
             llm_client,
             user_text=question,
@@ -1350,7 +1340,8 @@ def _from_outcome(
         text = _with_areas(state, text, outcome, searched=searched, draft=_draft)
     else:
         has_connect = any(
-            r.capability in ("connect", CAPABILITY_COMPARE) and r.nodes for r in results
+            r.capability in ("connect", CAPABILITY_COMPARE, CAPABILITY_PATHFIND) and r.nodes
+            for r in results
         )
         if has_connect and unique_cards:
             text = "\n\n---\n\n".join(unique_cards)

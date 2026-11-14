@@ -131,6 +131,7 @@ _EN: dict[str, str] = {
         'I don\'t know your current job or your goal yet. Tell me with "I am a ..." '
         'and "my goal is ...", then ask again.'
     ),
+    "pathfind_no_facts": "No published pay, outlook or education figures for this occupation.",
     # profile
     "profile_empty": (
         'I don\'t have much about you yet. Tell me your current job ("I am a …") '
@@ -263,6 +264,9 @@ _ES: dict[str, str] = {
     "pathfind_unknown_both": (
         "Todavía no sé cuál es tu trabajo actual ni tu meta. Dímelo con "
         '"soy ..." y "mi meta es ...", y pregunta otra vez.'
+    ),
+    "pathfind_no_facts": (
+        "No hay datos publicados de salario, perspectivas o educación para este puesto."
     ),
     "profile_empty": (
         'Aún no sé mucho de ti. Dime tu trabajo actual ("soy …") o el trabajo al '
@@ -403,6 +407,7 @@ _SV: dict[str, str] = {
         "Jag vet inte ditt nuvarande jobb eller ditt mål än. Säg det med "
         '"jag är ..." och "mitt mål är ...", och fråga igen.'
     ),
+    "pathfind_no_facts": "Ingen publicerad lön-, utsikts- eller utbildningsdata för detta yrke.",
     "profile_empty": (
         "Jag vet inte mycket om dig än. Berätta ditt nuvarande yrke (”jag är …”) "
         "eller ett yrke du siktar på (”mitt mål är …”) så noterar jag det."

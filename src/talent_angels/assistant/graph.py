@@ -31,6 +31,7 @@ from talent_angels.contracts import AgentResult, NodeRef
 from talent_angels.llm import LLMClient
 from talent_angels.llm.protocol import uses_chat_phrasing
 from talent_angels.memory.paths import checkpoint_db_path as _checkpoint_db_path
+from talent_angels.memory.profile import resolve_pathfind_subject
 from talent_angels.runlog import usage_from_stage
 from talent_angels.skills.connect import connect
 from talent_angels.skills.locate import ESCO_SUITE_NAME, locate
@@ -228,7 +229,9 @@ def _dispatch_heuristic(
                 ),
                 "tool_calls": [],
             }
-        result, tool_calls = pathfind_one(suite, suite_name, draft.subject, draft.secondary_subject)
+        start_subject = resolve_pathfind_subject(draft.subject, suite_name=suite_name)
+        target_subject = resolve_pathfind_subject(draft.secondary_subject, suite_name=suite_name)
+        result, tool_calls = pathfind_one(suite, suite_name, start_subject, target_subject)
         return {"result": result, "tool_calls": tool_calls}
 
     return {

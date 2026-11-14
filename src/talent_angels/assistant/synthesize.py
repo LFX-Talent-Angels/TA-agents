@@ -9,7 +9,7 @@ from __future__ import annotations
 import re
 from collections.abc import Sequence
 
-from talent_angels.assistant.answer import NO_SUBJECT, PATHFIND_UNAVAILABLE, is_pathfind_unavailable
+from talent_angels.assistant.answer import NO_SUBJECT
 from talent_angels.assistant.llm_call import measure_complete
 from talent_angels.assistant.merge import suite_heading
 from talent_angels.assistant.prose import prose_only
@@ -19,7 +19,8 @@ from talent_angels.llm.protocol import uses_chat_phrasing
 from talent_angels.memory.agent_notes import notes_prefix
 from talent_angels.memory.profile import profile_prefix
 from talent_angels.skills.connect.compare import CAPABILITY_COMPARE, skill_overlap
-from talent_angels.skills.locate.rank import code_facts
+from talent_angels.skills.locate.rank import code_facts, published_facts
+from talent_angels.skills.pathfind.dispatch import CAPABILITY_PATHFIND
 
 _NODE_ID_RE = re.compile(
     r"\b(?:esco|onet|sfia|bls|jobtech):[a-z0-9][a-z0-9_.:-]*",
@@ -117,6 +118,41 @@ def _connect_line(result: AgentResult) -> str:
     return f"{center.pref_label} — " + "; ".join(parts)
 
 
+def _pathfind_line(result: AgentResult) -> str:
+    """Both titles, the gap size (skills vs software) and routes found.
+
+    BLS's own skill taxonomy is shared broad skills, not a real gap signal
+    (PF-6) — named facts (wage/outlook/education) are shown instead.
+    """
+    start, target = result.nodes[0], result.nodes[1]
+    if result.suite == "bls":
+        start_facts = len(published_facts(start))
+        target_facts = len(published_facts(target))
+        return (
+            f"{start.pref_label} -> {target.pref_label} — BLS tracks pay/outlook here, "
+            f"not skills ({start_facts} + {target_facts} published figures)"
+        )
+    gap_ids: set[str] = set()
+    software_ids: set[str] = set()
+    for edge in result.edges:
+        if edge.source_node_id == target.id:
+            other = edge.target_node_id
+        elif edge.target_node_id == target.id:
+            other = edge.source_node_id
+        else:
+            continue
+        gap_ids.add(other)
+        if edge.type == "USES_SOFTWARE":
+            software_ids.add(other)
+    parts = [f"{len(gap_ids - software_ids)} skill(s)"]
+    if software_ids:
+        parts.append(f"{len(software_ids)} software/tool(s)")
+    route_text = f"{len(result.routes)} route(s)" if result.routes else "no route found"
+    retrain = "; full retrain" if "gap_too_large" in result.warnings else ""
+    gap_text = " + ".join(parts)
+    return f"{start.pref_label} -> {target.pref_label} — {gap_text} missing, {route_text}{retrain}"
+
+
 def _suite_line(result: AgentResult, *, list_ambiguous: bool = True) -> str | None:
     """One line per suite, or None when the suite had nothing to say."""
     heading = suite_heading(result.suite) if result.suite else "map"
@@ -129,6 +165,8 @@ def _suite_line(result: AgentResult, *, list_ambiguous: bool = True) -> str | No
         return None
     if result.capability == "connect":
         return f"{heading}: {_connect_line(result)}"
+    if result.capability == CAPABILITY_PATHFIND and len(result.nodes) >= 2:
+        return f"{heading}: {_pathfind_line(result)}"
     if result.capability == CAPABILITY_COMPARE:
         o = skill_overlap(result)
         return (
@@ -188,8 +226,6 @@ def synthesize_structured(
         return f"Name or pick an occupation first, then ask for skills.\n\n{sources}"
     if all("no_subject" in result.warnings for result in results):
         return f"{NO_SUBJECT}\n\n{sources}"
-    if all(is_pathfind_unavailable(result) for result in results):
-        return f"{PATHFIND_UNAVAILABLE}\n\n{sources}"
 
     lines = [
         line for result in results if (line := _suite_line(result, list_ambiguous=list_ambiguous))

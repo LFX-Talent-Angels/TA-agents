@@ -172,3 +172,75 @@ count measured). Whether this is a genuine graph-structure difference
 between ESCO and O\*NET or an artifact of the suite's own default
 `max_depth=4` is unknown from 4 data points — flagged here as a finding
 for a wider O\*NET golden pairs set to confirm, not a conclusion.
+(Resolved upstream by PF-1: TA-taxonomies fixed `enumerate_paths` for
+O\*NET, and the same pairs now return routes.)
+
+**2026-11-15 — PF-2: software split out of the gap; a coverage floor added
+for the cases essential-count alone misses.** Re-measuring the O\*NET
+pairs above with `essential`/`optional`/`software` tracked separately
+(rather than one combined count) found every one of them had **zero**
+non-software essential/optional gap — the entire count the first
+amendment measured was `USES_SOFTWARE` edges (named tools), not skills or
+knowledge. O*NET's generic skill/knowledge taxonomy barely differentiates
+between occupations at all once software is excluded. `MAX_REALISTIC_GAP_SKILLS["onet"]`
+(60) is left as-is but now rarely fires in practice; it is not removed, in
+case a wider golden pairs set finds real skill/knowledge differentiation
+this one did not.
+
+`SkillGap` gained `software_missing` (always separate, regardless of
+`relation_type` — a software edge never carried essential/optional signal
+to begin with) and `coverage` (share of the target's skills, including
+software, the start already has). A new floor,
+`MIN_REALISTIC_COVERAGE = 0.20`, flags `gap_too_large` when coverage is
+below it, independent of the essential-count check — this is the "share
+already covered" test the original PF-2 ask named, catching the case the
+essential-only threshold missed: ESCO "data analyst" → "general
+practitioner" has only 10 essential-missing (under the threshold of 15)
+but 46 optional-missing and 0% coverage once both are counted.
+
+The floor (0.20) is deliberately conservative: of 16 live pairs measured
+(10 ESCO, 6 O\*NET — the set grown from 10 total per PF-2's own ask),
+only the clearest 0–15% cases sit below it. One pair, ESCO "civil
+engineer" → "construction engineer" at 27%, sits close above the line
+and was left unflagged — a genuine judgement call, not yet confirmed
+either way by enough data to move the number with confidence.
+
+**2026-11-16 — PF-6: BLS has no measurable skill-gap signal at all;
+pathfind shows its published facts instead.** Measuring 4 live BLS
+pairs — including clearly unrelated ones ("Electricians" →
+"Software Developers") — essential, optional and software-missing were
+all **zero** and coverage was **1.00** every time. This is not a
+threshold problem: BLS's own skill taxonomy is ~17 broad skills shared
+by every occupation it has, so `compute_gap` and the coverage floor
+both structurally cannot distinguish a real transition from an
+unrelated one for this suite. `_MAX_REALISTIC_GAP_SKILLS_BY_SUITE["bls"]`
+(8) is left in place for the same reason O\*NET's was after PF-2 — it
+simply never fires, and removing it would claim a confidence the data
+doesn't support either way.
+
+Rather than show a gap/route section that always reads "nothing
+missing, not a full retrain" regardless of how real the transition is —
+exactly the kind of confidently-wrong signal this ADR's own rules exist
+to prevent — Pathfind renders BLS's actual distinguishing data instead:
+published wage, employment outlook and education figures for both
+occupations (`session/pathfind_view.py::_render_bls_facts`, reusing
+`skills/locate/rank.py::published_facts`, already used for Locate's own
+cards). This was an explicit team decision, not a unilateral call: BLS's
+own purpose in this suite set (per TA-taxonomies' README) is that it is
+the one source with pay/outlook/education data, and that is what it was
+asked to show once the gap route was confirmed to carry no signal.
+
+JobTech, by contrast, needed no new mechanism: its one genuinely distant
+measured pair (ESCO-unrelated "Webbdesigner" → "Redovisningsekonom", 98
+optional-missing, 0% coverage) was already caught correctly by PF-2's
+coverage floor without any change. JobTech's essential threshold (15)
+is left as a provisional holdover — only one of 4 measured pairs had a
+non-zero essential count (1), too thin to move the number with
+confidence either way.
+
+Also out of scope here, flagged as a known gap: JobTech's English-title
+crosswalk through its ESCO links (`assistant/crosswalk.py::rescue_jobtech`,
+already used by Locate) is not wired into `pathfind_one` — doing so needs
+a suite registry threaded into the pathfind call chain, which today only
+ever holds one suite at a time by design. Golden pairs here use
+JobTech's own official titles directly instead.

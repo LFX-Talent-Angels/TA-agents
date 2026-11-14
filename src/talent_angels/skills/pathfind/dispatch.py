@@ -94,14 +94,24 @@ def pathfind_one(
 
     gap = compute_gap(start_result, target_result, optional_rel_values=schema.optional_rel_values)
 
-    missing_ids = {node.id for node in (*gap.essential_missing, *gap.optional_missing)}
+    missing_ids = {
+        node.id for node in (*gap.essential_missing, *gap.optional_missing, *gap.software_missing)
+    }
     gap_edges = [
         edge
         for edge in target_result.edges
         if edge.source_node_id in missing_ids or edge.target_node_id in missing_ids
     ]
 
-    nodes: list[NodeRef] = [start_node, target_node, *gap.essential_missing, *gap.optional_missing]
+    # Skills and knowledge first, named software tools last (PF-2) — never
+    # mixed into the essential/optional counts above them.
+    nodes: list[NodeRef] = [
+        start_node,
+        target_node,
+        *gap.essential_missing,
+        *gap.optional_missing,
+        *gap.software_missing,
+    ]
     edges: list[EdgeRef] = list(gap_edges)
     seen_ids = {node.id for node in nodes}
     warnings = list(dict.fromkeys([*start_result.warnings, *target_result.warnings]))

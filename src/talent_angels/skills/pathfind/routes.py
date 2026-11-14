@@ -95,11 +95,20 @@ def find_routes(
         start_occupation_id, target_occupation_id, max_depth=max_depth, max_paths=max_paths
     )
     node_by_id = {node.id: _node_ref(node, suite_name) for node in raw.nodes}
-    routes = tuple(
-        BridgeRoute(
-            nodes=tuple(node_by_id[node_id] for node_id in path.node_ids),
-            edges=tuple(_edge_ref(edge, suite_name) for edge in path.edges),
+
+    # Same chain of nodes joined by the same edge types is the same route
+    # (e.g. O*NET's RELATED_TO bridge has come back twice from one call).
+    seen: set[tuple[tuple[str, ...], tuple[str, ...]]] = set()
+    routes: list[BridgeRoute] = []
+    for path in raw.paths:
+        key = (tuple(path.node_ids), tuple(edge.type for edge in path.edges))
+        if key in seen:
+            continue
+        seen.add(key)
+        routes.append(
+            BridgeRoute(
+                nodes=tuple(node_by_id[node_id] for node_id in path.node_ids),
+                edges=tuple(_edge_ref(edge, suite_name) for edge in path.edges),
+            )
         )
-        for path in raw.paths
-    )
-    return BridgeRoutes(routes=routes, warnings=tuple(raw.warnings))
+    return BridgeRoutes(routes=tuple(routes), warnings=tuple(raw.warnings))

@@ -65,6 +65,9 @@ class SessionState(BaseModel):
     list_topic: str = ""
     #: Compares waiting on a pick, per suite: suite -> [first, second, side].
     pending_compare: dict[str, list[str]] = Field(default_factory=dict)
+    #: Pathfinds waiting on a pick, per suite: suite -> [start, target, side].
+    #: side is "start" or "target" (matches dispatch.py's pathfind_side: tag).
+    pending_pathfind: dict[str, list[str]] = Field(default_factory=dict)
     #: The language the user last wrote in; code-written sentences follow it.
     language: str = "en"
     last_result: AgentResult | None = None

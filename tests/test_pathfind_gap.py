@@ -18,7 +18,11 @@ def _node(label: str, kind: str = "Skill", suite: str = "esco") -> NodeRef:
 
 
 def _connect(
-    occupation: str, skills: list[tuple[str, str | None]], suite: str = "esco"
+    occupation: str,
+    skills: list[tuple[str, str | None]],
+    suite: str = "esco",
+    *,
+    software: list[str] | None = None,
 ) -> AgentResult:
     """skills: (label, relation_type) pairs; relation_type None = no signal."""
     centre = _node(occupation, "Occupation", suite)
@@ -33,7 +37,17 @@ def _connect(
         )
         for node, (_, relation) in zip(neighbours, skills, strict=True)
     ]
-    return AgentResult(capability="connect", suite=suite, nodes=[centre, *neighbours], edges=edges)
+    software_nodes = [_node(label, suite=suite) for label in software or []]
+    software_edges = [
+        EdgeRef(type="USES_SOFTWARE", suite=suite, source_node_id=centre.id, target_node_id=node.id)
+        for node in software_nodes
+    ]
+    return AgentResult(
+        capability="connect",
+        suite=suite,
+        nodes=[centre, *neighbours, *software_nodes],
+        edges=[*edges, *software_edges],
+    )
 
 
 def _labels(nodes: tuple[NodeRef, ...]) -> list[str]:
@@ -98,9 +112,15 @@ def test_gap_is_empty_when_start_already_covers_the_target() -> None:
     assert gap.gap_too_large is False
 
 
+#: Shared skills keep coverage above MIN_REALISTIC_COVERAGE in the
+#: threshold-boundary tests below, so they isolate the essential-count
+#: check rather than also tripping the coverage floor.
+_SHARED = [(f"shared-{i}", "essential") for i in range(5)]
+
+
 def test_gap_too_large_flags_past_the_threshold_but_still_returns_the_list() -> None:
-    skills = [(f"skill-{i}", "essential") for i in range(MAX_REALISTIC_GAP_SKILLS + 1)]
-    start = _connect("nurse", [])
+    skills = [*_SHARED, *[(f"skill-{i}", "essential") for i in range(MAX_REALISTIC_GAP_SKILLS + 1)]]
+    start = _connect("nurse", _SHARED)
     target = _connect("data scientist", skills)
 
     gap = compute_gap(start, target)
@@ -110,8 +130,8 @@ def test_gap_too_large_flags_past_the_threshold_but_still_returns_the_list() -> 
 
 
 def test_gap_at_exactly_the_threshold_is_not_flagged() -> None:
-    skills = [(f"skill-{i}", "essential") for i in range(MAX_REALISTIC_GAP_SKILLS)]
-    start = _connect("nurse", [])
+    skills = [*_SHARED, *[(f"skill-{i}", "essential") for i in range(MAX_REALISTIC_GAP_SKILLS)]]
+    start = _connect("nurse", _SHARED)
     target = _connect("data scientist", skills)
 
     gap = compute_gap(start, target)
@@ -120,13 +140,69 @@ def test_gap_at_exactly_the_threshold_is_not_flagged() -> None:
     assert len(gap.essential_missing) == MAX_REALISTIC_GAP_SKILLS
 
 
+def test_software_is_listed_separately_never_as_essential_or_optional() -> None:
+    """O*NET's USES_SOFTWARE names tools, not skills (PF-2) — regardless of
+    relation_type, a software edge always goes to software_missing."""
+    start = _connect("nurse", [])
+    target = _connect(
+        "data scientist", [("statistics", "essential")], software=["Python", "Tableau"]
+    )
+
+    gap = compute_gap(start, target)
+
+    assert _labels(gap.essential_missing) == ["statistics"]
+    assert gap.optional_missing == ()
+    assert _labels(gap.software_missing) == ["Python", "Tableau"]
+
+
+def test_coverage_is_the_share_of_targets_skills_already_shared() -> None:
+    start = _connect("nurse", [("care", "essential")])
+    target = _connect("data analyst", [("care", "essential"), ("statistics", "essential")])
+
+    gap = compute_gap(start, target)
+
+    assert gap.coverage == 0.5  # 1 shared of 2 total
+
+
+def test_a_low_coverage_gap_is_too_large_even_under_the_essential_threshold() -> None:
+    """ESCO "data analyst" -> "general practitioner": few essential links
+    (under threshold) but near-zero overlap once optional is counted too —
+    the essential-count check alone misses this (PF-2 amendment)."""
+    start = _connect("data analyst", [])
+    target = _connect(
+        "general practitioner",
+        [("diagnose patients", "essential"), ("prescribe medication", "optional")],
+    )
+
+    gap = compute_gap(start, target)
+
+    assert len(gap.essential_missing) < MAX_REALISTIC_GAP_SKILLS
+    assert gap.coverage == 0.0
+    assert gap.gap_too_large is True
+
+
+def test_high_coverage_is_not_flagged_even_with_some_essential_gap() -> None:
+    start = _connect("web developer", [("html", "essential"), ("css", "essential")])
+    target = _connect(
+        "software developer",
+        [("html", "essential"), ("css", "essential"), ("algorithms", "essential")],
+    )
+
+    gap = compute_gap(start, target)
+
+    assert gap.coverage > 0.6
+    assert gap.gap_too_large is False
+
+
 def test_onet_uses_its_own_higher_threshold_than_esco() -> None:
-    """O*NET counts software tools as skills, so its essential-missing counts
-    run far higher than ESCO's and are not on the same scale (measured
-    against live ESCO/O*NET in PR 6's golden pairs set)."""
+    """O*NET's threshold (60) rarely fires in practice post-PF-2 — once
+    software is split out, live O*NET pairs measure zero essential-missing
+    skills/knowledge — but the mapping itself is still suite-specific and
+    worth a direct unit test."""
+    shared = [(f"shared-{i}", "essential") for i in range(10)]
     skill_count = MAX_REALISTIC_GAP_SKILLS + 10
-    skills = [(f"skill-{i}", "essential") for i in range(skill_count)]
-    start = _connect("nurse", [], suite="onet")
+    skills = [*shared, *[(f"skill-{i}", "essential") for i in range(skill_count)]]
+    start = _connect("nurse", shared, suite="onet")
     target = _connect("data scientist", skills, suite="onet")
 
     gap = compute_gap(start, target)

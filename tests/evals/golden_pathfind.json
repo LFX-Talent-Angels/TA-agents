@@ -1,5 +1,5 @@
 {
-  "note": "Expected values captured from a live run against ESCO v1.2.1 and O*NET 31.0 (2026-11-15), via skills/pathfind/dispatch.py's own locate+connect+compute_gap+find_routes calls (not pathfind_one's merged AgentResult, to keep essential/optional/software/route counts separable). PF-2: the gap is split into essential, optional and software (named tools, e.g. O*NET USES_SOFTWARE) \u2014 software is never counted as essential/optional. gap_too_large is true when essential-missing exceeds the suite's threshold (skills/pathfind/gap.py) OR coverage (shared / total target skills+software) is below MIN_REALISTIC_COVERAGE (0.20).",
+  "note": "Expected values captured from a live run against ESCO v1.2.1 and O*NET 31.0 (2026-11-15), via skills/pathfind/dispatch.py's own locate+connect+compute_gap+find_routes calls (not pathfind_one's merged AgentResult, to keep essential/optional/software/route counts separable). PF-2: the gap is split into essential, optional and software (named tools, e.g. O*NET USES_SOFTWARE) — software is never counted as essential/optional. gap_too_large is true when essential-missing exceeds the suite's threshold (skills/pathfind/gap.py) OR coverage (shared / total target skills+software) is below MIN_REALISTIC_COVERAGE (0.20). PF-6 (2026-11-16) added 4 BLS and 4 JobTech pairs. BLS's essential/optional/coverage are always 0/0/1.0 regardless of pair (confirmed live on all 4 BLS pairs, including unrelated ones) - its skill taxonomy is ~17 broad skills shared by every occupation, not a real gap signal; pathfind shows published wage/outlook/education facts for BLS instead (session/pathfind_view.py), not the gap/routes.",
   "cases": [
     {
       "suite": "esco",
@@ -224,6 +224,120 @@
       "expected_gap_too_large": false,
       "expected_has_route": true,
       "expected_route_warnings": []
+    },
+    {
+      "suite": "bls",
+      "start": "Web Developers",
+      "target": "Software Developers",
+      "start_id": "bls:occupation:15-1254",
+      "target_id": "bls:occupation:15-1252",
+      "expected_essential_missing": 0,
+      "expected_optional_missing": 0,
+      "expected_software_missing": 0,
+      "expected_coverage": 1.0,
+      "expected_gap_too_large": false,
+      "expected_has_route": true,
+      "expected_route_warnings": []
+    },
+    {
+      "suite": "bls",
+      "start": "Computer Programmers",
+      "target": "Software Developers",
+      "start_id": "bls:occupation:15-1251",
+      "target_id": "bls:occupation:15-1252",
+      "expected_essential_missing": 0,
+      "expected_optional_missing": 0,
+      "expected_software_missing": 0,
+      "expected_coverage": 1.0,
+      "expected_gap_too_large": false,
+      "expected_has_route": true,
+      "expected_route_warnings": []
+    },
+    {
+      "suite": "bls",
+      "start": "Registered Nurses",
+      "target": "Software Developers",
+      "start_id": "bls:occupation:29-1141",
+      "target_id": "bls:occupation:15-1252",
+      "expected_essential_missing": 0,
+      "expected_optional_missing": 0,
+      "expected_software_missing": 0,
+      "expected_coverage": 1.0,
+      "expected_gap_too_large": false,
+      "expected_has_route": true,
+      "expected_route_warnings": []
+    },
+    {
+      "suite": "bls",
+      "start": "Electricians",
+      "target": "Software Developers",
+      "start_id": "bls:occupation:47-2111",
+      "target_id": "bls:occupation:15-1252",
+      "expected_essential_missing": 0,
+      "expected_optional_missing": 0,
+      "expected_software_missing": 0,
+      "expected_coverage": 1.0,
+      "expected_gap_too_large": false,
+      "expected_has_route": true,
+      "expected_route_warnings": []
+    },
+    {
+      "suite": "jobtech",
+      "start": "Frontend-utvecklare",
+      "target": "Systemutvecklare/Programmerare",
+      "start_id": "jobtech:occupation:GDHs_eoz_uKx",
+      "target_id": "jobtech:occupation:fg7B_yov_smw",
+      "expected_essential_missing": 0,
+      "expected_optional_missing": 0,
+      "expected_software_missing": 0,
+      "expected_coverage": 1.0,
+      "expected_gap_too_large": false,
+      "expected_has_route": true,
+      "expected_route_warnings": []
+    },
+    {
+      "suite": "jobtech",
+      "start": "Backend-utvecklare",
+      "target": "Mjukvaruutvecklare",
+      "start_id": "jobtech:occupation:7wdX_4rv_33z",
+      "target_id": "jobtech:occupation:rQds_YGd_quU",
+      "expected_essential_missing": 0,
+      "expected_optional_missing": 0,
+      "expected_software_missing": 0,
+      "expected_coverage": 1.0,
+      "expected_gap_too_large": false,
+      "expected_has_route": true,
+      "expected_route_warnings": []
+    },
+    {
+      "suite": "jobtech",
+      "start": "Sjuksköterska, grundutbildad",
+      "target": "Barnmorska",
+      "start_id": "jobtech:occupation:bXNH_MNX_dUR",
+      "target_id": "jobtech:occupation:DEDi_wap_ntF",
+      "expected_essential_missing": 1,
+      "expected_optional_missing": 14,
+      "expected_software_missing": 0,
+      "expected_coverage": 0.375,
+      "expected_gap_too_large": false,
+      "expected_has_route": true,
+      "expected_route_warnings": []
+    },
+    {
+      "suite": "jobtech",
+      "start": "Webbdesigner",
+      "target": "Redovisningsekonom",
+      "start_id": "jobtech:occupation:PTs4_wYQ_zDP",
+      "target_id": "jobtech:occupation:8N18_sGB_X4M",
+      "expected_essential_missing": 0,
+      "expected_optional_missing": 98,
+      "expected_software_missing": 0,
+      "expected_coverage": 0.0,
+      "expected_gap_too_large": true,
+      "expected_has_route": false,
+      "expected_route_warnings": [
+        "no_path"
+      ]
     }
   ]
 }

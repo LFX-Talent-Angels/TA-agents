@@ -120,6 +120,7 @@ _EN: dict[str, str] = {
     "pathfind_route": "Route {number}: {chain}",
     "pathfind_more_routes": "(+{count} more routes)",
     "pathfind_no_route": "No route found within {steps} steps. The gap above still stands.",
+    "pathfind_no_facts": "No published pay, outlook or education figures for this occupation.",
     # profile
     "profile_empty": (
         'I don\'t have much about you yet. Tell me your current job ("I am a …") '
@@ -238,6 +239,9 @@ _ES: dict[str, str] = {
     "pathfind_more_routes": "(+{count} rutas más)",
     "pathfind_no_route": (
         "No se encontró ninguna ruta en {steps} pasos. La brecha de arriba sigue siendo válida."
+    ),
+    "pathfind_no_facts": (
+        "No hay datos publicados de salario, perspectivas o educación para este puesto."
     ),
     "profile_empty": (
         'Aún no sé mucho de ti. Dime tu trabajo actual ("soy …") o el trabajo al '
@@ -363,6 +367,7 @@ _SV: dict[str, str] = {
     "pathfind_no_route": (
         "Ingen rutt hittades inom {steps} steg. Kompetensklyftan ovan gäller fortfarande."
     ),
+    "pathfind_no_facts": "Ingen publicerad lön-, utsikts- eller utbildningsdata för detta yrke.",
     "profile_empty": (
         "Jag vet inte mycket om dig än. Berätta ditt nuvarande yrke (”jag är …”) "
         "eller ett yrke du siktar på (”mitt mål är …”) så noterar jag det."

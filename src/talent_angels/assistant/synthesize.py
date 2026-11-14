@@ -19,7 +19,7 @@ from talent_angels.llm.protocol import uses_chat_phrasing
 from talent_angels.memory.agent_notes import notes_prefix
 from talent_angels.memory.profile import profile_prefix
 from talent_angels.skills.connect.compare import CAPABILITY_COMPARE, skill_overlap
-from talent_angels.skills.locate.rank import code_facts
+from talent_angels.skills.locate.rank import code_facts, published_facts
 from talent_angels.skills.pathfind.dispatch import CAPABILITY_PATHFIND
 
 _NODE_ID_RE = re.compile(
@@ -119,8 +119,19 @@ def _connect_line(result: AgentResult) -> str:
 
 
 def _pathfind_line(result: AgentResult) -> str:
-    """Both titles, the gap size (skills vs software) and routes found."""
+    """Both titles, the gap size (skills vs software) and routes found.
+
+    BLS's own skill taxonomy is shared broad skills, not a real gap signal
+    (PF-6) — named facts (wage/outlook/education) are shown instead.
+    """
     start, target = result.nodes[0], result.nodes[1]
+    if result.suite == "bls":
+        start_facts = len(published_facts(start))
+        target_facts = len(published_facts(target))
+        return (
+            f"{start.pref_label} -> {target.pref_label} — BLS tracks pay/outlook here, "
+            f"not skills ({start_facts} + {target_facts} published figures)"
+        )
     gap_ids: set[str] = set()
     software_ids: set[str] = set()
     for edge in result.edges:

@@ -104,6 +104,62 @@ def test_no_route_found_still_shows_the_gap() -> None:
     assert "No route found within 4 steps" in text
 
 
+def test_bls_shows_published_facts_instead_of_the_trivial_gap() -> None:
+    """BLS's own skill taxonomy is ~17 broad skills shared by every
+    occupation — essential/optional/routes are always trivially empty
+    (PF-6). Pathfind shows wage/outlook/education facts instead."""
+    start = NodeRef(
+        id="bls:occupation:electricians",
+        suite="bls",
+        source="bls",
+        source_id="47-2111",
+        kind="Occupation",
+        pref_label="Electricians",
+        facts={"median_wage_annual": 61590.0, "wage_period": "May 2024"},
+    )
+    target = NodeRef(
+        id="bls:occupation:software-developers",
+        suite="bls",
+        source="bls",
+        source_id="15-1252",
+        kind="Occupation",
+        pref_label="Software Developers",
+        facts={"median_wage_annual": 135980.0, "wage_period": "May 2025"},
+    )
+    result = AgentResult(capability="pathfind", suite="bls", nodes=[start, target])
+
+    text = render_pathfind(result)
+
+    assert "From Electricians to Software Developers" in text
+    assert "$61,590" in text
+    assert "$135,980" in text
+    assert "Essential skills needed" not in text
+
+
+def test_bls_with_no_published_facts_says_so_honestly() -> None:
+    start = NodeRef(
+        id="bls:occupation:a",
+        suite="bls",
+        source="bls",
+        source_id="a",
+        kind="Occupation",
+        pref_label="A",
+    )
+    target = NodeRef(
+        id="bls:occupation:b",
+        suite="bls",
+        source="bls",
+        source_id="b",
+        kind="Occupation",
+        pref_label="B",
+    )
+    result = AgentResult(capability="pathfind", suite="bls", nodes=[start, target])
+
+    text = render_pathfind(result)
+
+    assert "No published pay, outlook or education figures" in text
+
+
 def test_more_than_the_preview_cap_is_counted_not_listed() -> None:
     skills = [_node(f"skill-{i}") for i in range(7)]
     result = AgentResult(

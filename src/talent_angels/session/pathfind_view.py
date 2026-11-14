@@ -11,6 +11,7 @@ from __future__ import annotations
 
 from talent_angels.contracts import AgentResult, NodeRef, Route
 from talent_angels.session.i18n import t
+from talent_angels.skills.locate.rank import published_facts
 
 #: Names shown per gap bucket before "+N more".
 GAP_PREVIEW = 5
@@ -66,8 +67,28 @@ def _route_line(number: int, route: Route, labels: dict[str, str]) -> str:
     return t("pathfind_route", number=number, chain=" → ".join(names))
 
 
+def _render_bls_facts(start: NodeRef, target: NodeRef) -> str:
+    """BLS's own skill taxonomy is ~17 broad skills shared by every
+    occupation (confirmed live, PF-6): the essential/optional gap and
+    routes are always trivially empty, never a real signal. BLS's actual
+    distinguishing data — wage, outlook, education — is shown instead.
+    """
+    lines = [t("pathfind_head", start=start.pref_label, target=target.pref_label), ""]
+    for node in (start, target):
+        facts = published_facts(node)
+        lines.append(f"**{node.pref_label}**")
+        if facts:
+            lines.extend(f"- {fact}" for fact in facts)
+        else:
+            lines.append(f"- {t('pathfind_no_facts')}")
+        lines.append("")
+    return "\n".join(lines).strip()
+
+
 def render_pathfind(result: AgentResult) -> str:
     start, target = result.nodes[0], result.nodes[1]
+    if result.suite == "bls":
+        return _render_bls_facts(start, target)
     essential, optional, software = _gap_buckets(result)
     labels = {node.id: node.pref_label for node in result.nodes}
 

@@ -23,7 +23,7 @@ from talent_angels.assistant.planning import ExecutionPlan, build_plan_for_capab
 from talent_angels.contracts import AgentResult, NodeRef
 from talent_angels.llm import LLMClient, Message, ToolInvocation
 from talent_angels.memory.agent_notes import notes_prefix
-from talent_angels.memory.profile import profile_prefix
+from talent_angels.memory.profile import profile_prefix, resolve_pathfind_subject
 from talent_angels.runlog import StageUsage, ToolCall
 from talent_angels.skills.connect import connect
 from talent_angels.skills.connect.models import ConnectRequest
@@ -328,9 +328,9 @@ def run_tool_loop(
         # skills list instead of the real gap/routes. Pathfind runs the same
         # locate+connect+gap+routes code as the no-LLM path, never the loop.
         if subject_hint and secondary_subject_hint:
-            result, tool_calls = pathfind_one(
-                suite, suite_name, subject_hint, secondary_subject_hint
-            )
+            start_subject = resolve_pathfind_subject(subject_hint, suite_name=suite_name)
+            target_subject = resolve_pathfind_subject(secondary_subject_hint, suite_name=suite_name)
+            result, tool_calls = pathfind_one(suite, suite_name, start_subject, target_subject)
         else:
             result = AgentResult(
                 capability=CAPABILITY_PATHFIND,

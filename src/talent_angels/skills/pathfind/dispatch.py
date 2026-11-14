@@ -12,7 +12,7 @@ from talent_angels.contracts import AgentResult, EdgeRef, NodeRef, Route
 from talent_angels.runlog import ToolCall
 from talent_angels.skills.connect import ConnectRequest, connect
 from talent_angels.skills.locate import locate
-from talent_angels.skills.locate.rank import group_and_sort_locate
+from talent_angels.skills.locate.rank import _near_pref_label, group_and_sort_locate
 from talent_angels.skills.pathfind.gap import compute_gap
 from talent_angels.skills.pathfind.routes import find_routes, supports_enumerate_paths
 from talent_angels.suites.measured import MeasuredSuite
@@ -34,6 +34,14 @@ def _locate_and_connect(
         group_rel_type=schema.group_rel_type,
         group_node_kinds=schema.group_node_kinds,
     )
+    if located.nodes and "ambiguous" not in located.warnings:
+        if not _near_pref_label(subject, located.nodes[0]) and len(found.nodes) > 1:
+            # Not the title the user typed ("surgeon" -> "tree surgeon"): a
+            # pathfind never picks a side for the user, same rule compare_one
+            # already follows.
+            located = found.model_copy(
+                update={"warnings": list(dict.fromkeys([*found.warnings, "ambiguous"]))}
+            )
     if not located.nodes or "ambiguous" in located.warnings:
         # Which side needs a pick — a pathfind never guesses one for the user.
         marked = located.model_copy(

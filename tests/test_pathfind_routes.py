@@ -129,6 +129,32 @@ def test_unreachable_endpoint_is_reported_not_silently_dropped() -> None:
     assert routes.warnings == ("endpoint_not_found",)
 
 
+class _DuplicateRouteSuite:
+    """Returns the same bridge twice, plus one real alternative (PF-1)."""
+
+    def enumerate_paths(
+        self, from_id: str, to_id: str, *, max_depth: int = 4, max_paths: int = 20
+    ) -> _PathsResult:
+        bridge = _Path(
+            node_ids=[NURSE.id, STATISTICS.id, ANALYST.id],
+            edges=[NURSE_HAS_STATS, ANALYST_HAS_STATS],
+        )
+        direct = _Path(node_ids=[NURSE.id, ANALYST.id], edges=[ANALYST_HAS_STATS])
+        return _PathsResult(
+            nodes=[NURSE, STATISTICS, ANALYST],
+            paths=[bridge, bridge, direct],
+        )
+
+
+def test_the_same_chain_returned_twice_collapses_to_one_route() -> None:
+    """O*NET's RELATED_TO bridge has come back twice from one enumerate_paths call."""
+    routes = find_routes(_DuplicateRouteSuite(), "esco", NURSE.id, ANALYST.id)
+
+    assert len(routes.routes) == 2
+    assert [node.id for node in routes.routes[0].nodes] == [NURSE.id, STATISTICS.id, ANALYST.id]
+    assert [node.id for node in routes.routes[1].nodes] == [NURSE.id, ANALYST.id]
+
+
 def test_max_depth_and_max_paths_are_forwarded_to_the_suite() -> None:
     seen: dict[str, int] = {}
 

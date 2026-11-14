@@ -526,7 +526,8 @@ def _handle_pick(
     state.areas = []
 
     compares = [node for node in nodes if node.suite in state.pending_compare]
-    if not compares:
+    pathfinds = [node for node in nodes if node.suite in state.pending_pathfind]
+    if not compares and not pathfinds:
         titles = [node.pref_label for node in nodes]
         message = (
             t("bound", title=titles[0])
@@ -536,14 +537,20 @@ def _handle_pick(
         _record(state, "assistant", message)
         return _reply(state, message)
 
-    # The compares that waited on these picks: each runs in its own suite only,
-    # with the chosen title. A suite not picked keeps its list for later.
+    # The compares/pathfinds that waited on these picks: each runs in its own
+    # suite only, with the chosen title. A suite not picked keeps its list.
     waiting = {
         suite: value for suite, value in state.pending_compare.items() if suite not in picked_suites
     }
+    pathfind_waiting = {
+        suite: value
+        for suite, value in state.pending_pathfind.items()
+        if suite not in picked_suites
+    }
     other_lists = [c for c in lists_before if c.node.suite not in picked_suites]
-    # A snapshot: each resumed compare resets the session's own record.
+    # A snapshot: each resumed compare/pathfind resets the session's own record.
     to_resume = dict(state.pending_compare)
+    to_resume_pathfind = dict(state.pending_pathfind)
     parts: list[str] = []
     for node in compares:
         first, second, side = to_resume[node.suite]
@@ -556,11 +563,24 @@ def _handle_pick(
             suite=node.suite,
         )
         parts.append(reply.text)
-    if waiting and other_lists:
+    for node in pathfinds:
+        start, target, side = to_resume_pathfind[node.suite]
+        pair = (node.pref_label, target) if side == "start" else (start, node.pref_label)
+        reply = _handle_map(
+            state,
+            f"path from {pair[0]} to {pair[1]}",
+            runner=runner,
+            llm_client=llm_client,
+            suite=node.suite,
+        )
+        parts.append(reply.text)
+    still_waiting = {**waiting, **pathfind_waiting}
+    if still_waiting and other_lists:
         renumbered = _renumber_pending(other_lists, start=len(state.pending) + 1)
         state.pending = [*state.pending, *renumbered]
         state.pending_compare.update(waiting)
-        for suite in waiting:
+        state.pending_pathfind.update(pathfind_waiting)
+        for suite in still_waiting:
             choices = [c for c in renumbered if c.node.suite == suite]
             if choices:
                 picker = render_picker("", choices, omitted=0, intro=" ", include_source=False)
@@ -825,6 +845,7 @@ def _from_single_outcome(
         state.pending = []
         state.list_topic = ""
         state.pending_compare = {}
+        state.pending_pathfind = {}
     if "ambiguous" in result.warnings:
         pending = choices_from_result(result)
         omitted = max(0, len(result.nodes) - len(pending))
@@ -835,6 +856,7 @@ def _from_single_outcome(
         searched = _searched_for(question, draft)
         state.list_topic = searched
         _remember_pending_compare(state, draft, (result,))
+        _remember_pending_pathfind(state, draft, (result,))
         # What was understood and what happens next, written in code (lead.py).
         intro = lead(question, draft, [result])
         text = render_picker(searched, pending, omitted=omitted, intro=intro)
@@ -914,6 +936,21 @@ def _remember_pending_compare(
         )
         if side:
             state.pending_compare[result.suite] = [draft.subject, draft.secondary_subject, side]
+
+
+def _remember_pending_pathfind(
+    state: SessionState, draft: PlanDraft | None, results: Sequence[AgentResult]
+) -> None:
+    """Keep "path from X to Y" alive, per suite, while a side waits for a pick there."""
+    state.pending_pathfind = {}
+    if draft is None or not draft.subject or not draft.secondary_subject:
+        return
+    for result in results:
+        side = next(
+            (w.split(":", 1)[1] for w in result.warnings if w.startswith("pathfind_side:")), None
+        )
+        if side:
+            state.pending_pathfind[result.suite] = [draft.subject, draft.secondary_subject, side]
 
 
 def _with_areas(
@@ -1251,6 +1288,7 @@ def _from_outcome(
         _remember_compared(state, _draft, compared)
 
     _remember_pending_compare(state, _draft, results if pending_all else ())
+    _remember_pending_pathfind(state, _draft, results if pending_all else ())
     if pending_all:
         state.pending = pending_all
         state.list_topic = searched

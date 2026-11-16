@@ -9,7 +9,9 @@ from talent_angels.contracts import AgentResult
 from talent_angels.runlog import CostBreakdown, GenAIUsage, GraphStats, ToolCall
 
 #: Longer questions are rejected with 422; the runtime also bounds what it sends.
-MAX_QUESTION_CHARS = 2000
+# The same bound the runtime applies (assistant/turn.py), so the API rejects
+# what the runtime would otherwise shorten.
+MAX_QUESTION_CHARS = 1000
 SESSION_ID_PATTERN = r"^[A-Za-z0-9][A-Za-z0-9_-]{0,63}$"
 
 

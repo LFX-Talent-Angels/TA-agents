@@ -142,7 +142,9 @@ def test_connect_filters_edge_property_and_preserves_graph_facts() -> None:
     ]
 
 
-def test_connect_reports_no_matching_neighbors_without_dropping_center() -> None:
+def test_connect_shows_everything_when_none_is_marked_as_asked() -> None:
+    # RX-02: "0 essential (of 12 in all)" with an empty list. Now all are shown
+    # and the result says none is marked essential.
     center = _node("esco:occupation:software-developer", "Occupation", "software developer")
     optional = _node("esco:skill:presenting", "Skill", "present information")
     suite = RecordingConnectSuite(
@@ -168,6 +170,6 @@ def test_connect_reports_no_matching_neighbors_without_dropping_center() -> None
         locate_evidence=[],
     )
 
-    assert [node.id for node in result.nodes] == [center.id]
-    assert result.edges == []
-    assert "no_matching_neighbors" in result.warnings
+    assert [node.id for node in result.nodes] == [center.id, optional.id]
+    assert len(result.edges) == 1
+    assert "none_marked:essential" in result.warnings

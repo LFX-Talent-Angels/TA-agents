@@ -93,6 +93,7 @@ def connect(
     rel_types = list(request.rel_types) or None
     raw = suite.get_neighbors(center.id, rel_types=rel_types)
     edges = list(raw.edges)
+    unfiltered = False
     if request.relation_kind is not None:
         edges = [
             edge
@@ -106,6 +107,11 @@ def connect(
             # (e.g. O*NET USES_SOFTWARE) — always include them in any filter.
             or edge.properties.get("relation_type") is None
         ]
+        if raw.edges and not edges:
+            # The job has skills, none marked as asked (JobTech marks few as
+            # essential): show them all and say so, never "0 of 12".
+            edges = list(raw.edges)
+            unfiltered = True
 
     kept_ids = {center.id}
     for edge in edges:
@@ -150,9 +156,9 @@ def connect(
         for edge in edges
     ]
     warnings = list(raw.warnings)
-    if request.relation_kind is not None and raw.edges and not mapped_edges:
-        warnings.append("no_matching_neighbors")
-    if request.relation_kind is not None and raw.edges:
+    if unfiltered:
+        warnings.append(f"none_marked:{request.relation_kind}")
+    elif request.relation_kind is not None and raw.edges:
         # "1 skill on the map" for a job with 8 hid the filter: say what was kept.
         everyone = {e.to_id if e.from_id == center.id else e.from_id for e in raw.edges}
         if len(everyone) > len(nodes) - 1:

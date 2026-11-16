@@ -58,7 +58,16 @@ Rules:
   Swedish). Still write in the user's language (see "Reply language"),
   keeping those titles as written."""
 
-_LANGUAGE_NAMES = {"en": "English", "es": "Spanish", "sv": "Swedish"}
+_LANGUAGE_NAMES = {
+    "en": "English",
+    "es": "Spanish",
+    "sv": "Swedish",
+    "de": "German",
+    "fr": "French",
+    "pt": "Portuguese",
+    "it": "Italian",
+    "nl": "Dutch",
+}
 
 
 def _reply_language_line() -> str:
@@ -179,6 +188,12 @@ def connect_card(result: AgentResult, *, shown: int = CONNECT_PREVIEW_CAP) -> st
     if center.description:
         lines.append(f"description: {center.description}")
     lines.extend(published_facts(center))
+    none_marked = next((w for w in result.warnings if w.startswith("none_marked:")), None)
+    if none_marked:
+        lines.append(
+            f"the taxonomy marks none of these as {none_marked.split(':', 1)[1]}; "
+            "all of them are shown"
+        )
     filtered = next((w for w in result.warnings if w.startswith("filtered:")), None)
     if filtered:
         _, kind, total = filtered.split(":", 2)

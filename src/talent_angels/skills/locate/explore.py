@@ -75,12 +75,33 @@ def _is_short_word(subject: str) -> bool:
     return text.isalpha() and len(text) <= 4
 
 
+def _title_has_every_word(candidate: str, node: NodeRef) -> bool:
+    """Every word of a multi-word ``candidate`` is a whole word of the official title.
+
+    BLS names one job for several: "automotive mechanic" is in "Automotive
+    Service Technicians and Mechanics", never its exact title. Aliases are not
+    used here: informal ones ("Rail Car Mechanic") would confirm the wrong job.
+    """
+    words = re.findall(r"\w+", candidate.casefold())
+    if len(words) < 2:
+        return False
+    title = node.pref_label.casefold()
+    return all(re.search(rf"(?<!\w){re.escape(word)}s?(?!\w)", title) for word in words)
+
+
+#: How a candidate was confirmed; exact titles are listed first.
+_EXACT, _EVERY_WORD = 0, 1
+
+
 def _confirmed(
     suite: ExploreSuite, suite_name: str, candidate: str, kind: str | None
-) -> tuple[NodeRef, AgentResult] | None:
+) -> tuple[NodeRef, AgentResult, int] | None:
     found = locate(suite, suite_name, candidate, kind=kind)
     node = next((node for node in found.nodes if _same_title(candidate, node)), None)
-    return (node, found) if node is not None else None
+    if node is not None:
+        return node, found, _EXACT
+    node = next((n for n in found.nodes if _title_has_every_word(candidate, n)), None)
+    return (node, found, _EVERY_WORD) if node is not None else None
 
 
 def explore(
@@ -126,16 +147,23 @@ def explore(
         candidates = [subject, *candidates]
     areas = areas_from(recording.last, suite_name)
 
-    confirmed: list[NodeRef] = []
+    ranked: list[tuple[int, NodeRef]] = []
     evidence = list(located.evidence)
     for candidate in list(dict.fromkeys(c.strip() for c in candidates if c.strip()))[
         :MAX_CANDIDATES
     ]:
         hit = _confirmed(suite, suite_name, candidate, kind)
-        if hit is None or any(node.id == hit[0].id for node in confirmed):
+        if hit is None:
             continue
-        confirmed.append(hit[0])
-        evidence.extend(hit[1].evidence)
+        node, found, strength = hit
+        known = next((i for i, (_, n) in enumerate(ranked) if n.id == node.id), None)
+        if known is not None:
+            # Confirmed again, more strongly: keep the stronger reason.
+            ranked[known] = (min(strength, ranked[known][0]), node)
+            continue
+        ranked.append((strength, node))
+        evidence.extend(found.evidence)
+    confirmed = [node for _, node in sorted(ranked, key=lambda pair: pair[0])]
 
     if not confirmed and _is_short_word(subject):
         # "swe" with no confirmed title: word-start hits ("chimney sweep") are

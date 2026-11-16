@@ -478,7 +478,7 @@ def _dispatch(state: TurnState, rt: TurnRuntime) -> dict[str, Any]:
                         run.result,
                         subject=subject,
                         question=state["question"],
-                        kind=state.get("kind"),
+                        kind=state.get("kind") or getattr(draft, "kind", None),
                         language=getattr(draft, "language", None),
                         wants_skills=plan.intent.target == CAPABILITY_CONNECT,
                         draft=draft,
@@ -486,6 +486,11 @@ def _dispatch(state: TurnState, rt: TurnRuntime) -> dict[str, Any]:
                 except Exception:  # noqa: BLE001 — a rescue is a bonus, never a failure
                     logger.warning("jobtech rescue failed for %s", name, exc_info=True)
                     rescued = None
+                if rescued is not None:
+                    # The areas belonged to the words' own (replaced) hits:
+                    # "Chefsyrken" under a list of cooks brought the false
+                    # friend back.
+                    run.areas = []
                 run.result = rescued or run.result
             if area is None and is_transition_question(state["question"]):
                 try:

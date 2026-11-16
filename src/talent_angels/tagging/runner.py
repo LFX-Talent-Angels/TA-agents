@@ -29,6 +29,7 @@ from dataclasses import dataclass
 from datetime import UTC, datetime
 from pathlib import Path
 
+from talent_angels.assistant.crosswalk import BRIDGED_SUITES, ESCO, with_esco_bridge
 from talent_angels.llm.protocol import LLMClient
 from talent_angels.runlog import (
     GenAIUsage,
@@ -282,8 +283,9 @@ def _input_warnings(path: Path) -> list[str]:
 
 
 def _needs_rewrite(unit: TagUnit) -> bool:
-    """Occupation rows with seed phrases use code-derived queries; no model call."""
-    return not (unit.role == "row_rule" and unit.seed_phrases)
+    """Units with seed phrases (split occupation lists, `verbatim_kinds`) are
+    searched as written; no model call."""
+    return not unit.seed_phrases
 
 
 def _rewrite_phase(
@@ -411,9 +413,12 @@ def run(
     model = str(getattr(llm_client, "model", "") or "none") if llm_on else "none"
     pinned_versions = versions(model)
 
-    suite_names = (
-        list(opts.suites) if opts.suites is not None else default_tag_suites(registry.available)
-    )
+    suite_names = [
+        registry.resolve(name)
+        for name in (
+            list(opts.suites) if opts.suites is not None else default_tag_suites(registry.available)
+        )
+    ]
     unknown = [name for name in suite_names if name not in registry.available]
     if unknown:
         available = ", ".join(registry.available)
@@ -500,10 +505,21 @@ def run(
 
         with ExitStack() as stack:
             suites: dict[str, MeasuredSuite | None] = {}
+            esco_for_bridge: object | None = None
+            if BRIDGED_SUITES & set(suite_names) and ESCO in registry.available:
+                # JobTech's labels are Swedish; rows reach it through its own
+                # ESCO matches (assistant/crosswalk.py). ESCO is opened for that
+                # even when it is not one of the run's tagged suites.
+                try:
+                    esco_for_bridge = stack.enter_context(registry.open(ESCO)).suite
+                except Exception:  # noqa: BLE001 - no bridge, not a failed run
+                    run_warnings.append("esco: unavailable for the JobTech bridge")
             for name in suite_names:
                 try:
                     runtime = stack.enter_context(registry.open(name))
-                    suites[name] = MeasuredSuite(runtime.suite)
+                    suites[name] = MeasuredSuite(
+                        with_esco_bridge(name, runtime.suite, esco_for_bridge)
+                    )
                 except Exception as exc:  # noqa: BLE001 - recorded per-suite, run continues
                     run_warnings.append(f"{name}: suite unavailable ({type(exc).__name__})")
                     suites[name] = None

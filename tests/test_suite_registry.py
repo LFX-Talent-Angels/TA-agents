@@ -19,7 +19,7 @@ def test_suite_registry_imports_first_in_a_fresh_process() -> None:
             "-c",
             "from talent_angels.suites import default_suite_registry; "
             "assert default_suite_registry().available == "
-            "('bls', 'esco', 'jobtech', 'onet', 'sfia')",
+            "('esco', 'onet', 'sfia', 'bls', 'jobtech')",
         ],
         check=False,
         capture_output=True,
@@ -27,6 +27,17 @@ def test_suite_registry_imports_first_in_a_fresh_process() -> None:
     )
 
     assert completed.returncode == 0, completed.stderr
+
+
+def test_a_suite_missing_from_ta_taxonomies_is_not_attached(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from talent_angels.suites import registry as registry_module
+
+    monkeypatch.setattr(
+        registry_module, "_suite_installed", lambda name: name not in {"bls", "jobtech"}
+    )
+    assert registry_module.default_suite_registry().available == ("esco", "onet", "sfia")
 
 
 class FakeSuite:
@@ -92,3 +103,13 @@ def test_registry_rejects_empty_or_missing_default() -> None:
 
     with pytest.raises(ValueError, match="default suite 'bls' is not registered"):
         SuiteRegistry({"esco": _factory("esco", [])}, default="bls")
+
+
+def test_available_keeps_registration_order() -> None:
+    # Users see suites in this order (answers, pick lists, areas); a newly added
+    # suite must not jump ahead alphabetically ("bls" before "esco").
+    events: list[str] = []
+    registry = SuiteRegistry(
+        {"esco": _factory("esco", events), "bls": _factory("bls", events)}, default="esco"
+    )
+    assert registry.available == ("esco", "bls")

@@ -303,6 +303,14 @@ class CachedSuite:
             raise AttributeError("enumerate_paths")
         return inner(from_id, to_id, max_depth=max_depth, max_paths=max_paths)
 
+    def search_by_esco(self, uris: list[str], kind: str = "occupation") -> SearchResult:
+        """Delegated, uncached: JobTech's lookup through its own ESCO matches."""
+        inner = getattr(self._suite, "search_by_esco", None)
+        if inner is None:
+            raise AttributeError("search_by_esco")
+        result: SearchResult = inner(uris, kind=kind)
+        return result
+
     def score_paths(self, paths: object, policy: object) -> object:
         inner = getattr(self._suite, "score_paths", None)
         if inner is None:

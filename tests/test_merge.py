@@ -58,6 +58,16 @@ def test_suite_heading_for_known_and_future_suites() -> None:
     assert suite_heading("esco") == "ESCO"
     assert suite_heading("onet") == "O*NET"
     assert suite_heading("sfia") == "SFIA"
+    assert suite_heading("bls") == "BLS"
+    assert suite_heading("jobtech") == "JobTech"
+
+
+def test_every_surface_uses_the_one_heading() -> None:
+    # The TUI banner, chat source note and tagging workbook all read suite_heading.
+    from talent_angels.tagging.writers.xlsx import display_name
+
+    for name in ("esco", "onet", "sfia", "bls", "jobtech", "other"):
+        assert display_name(name) == suite_heading(name)
 
 
 class _CodeBlockClient:

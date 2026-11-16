@@ -38,20 +38,26 @@ def _word_end(query: str) -> str:
 
 
 def lexical_rank(query: str, node: NodeRef) -> tuple[int, int, str]:
-    """Lower is better: exact pref, pref token, pref substring, exact alt, alt substring."""
+    """Lower is better: exact pref, pref token or plural, exact alt, pref substring, alt substring.
+
+    An exact alias outranks a title that merely contains the words: "software
+    engineer" is an alias of software developer, not the skill "utilise
+    computer-aided software engineering tools". A title that is the plural of
+    the words ("Bakers" for "baker") still outranks an alias.
+    """
     q = query.casefold().strip()
     pref = node.pref_label.casefold()
     alts = [alt.casefold() for alt in node.alt_labels]
     tokens = pref.replace("/", " ").replace("-", " ").split()
     if pref == q:
         tier = 0
-    elif q in tokens:
+    elif q in tokens or _near_pref_label(query, node):
         tier = 1
+    elif q in alts:
+        tier = 2
     elif q and re.search(rf"(?<![a-z0-9]){re.escape(q)}{_word_end(query)}", pref):
         # From the start of a word: "it manager" is not inside "credit manager".
         # A short word or an acronym must be a whole word: "swe" is not "sweep".
-        tier = 2
-    elif q in alts:
         tier = 3
     elif q and any(q in alt for alt in alts):
         tier = 4
@@ -231,6 +237,44 @@ def group_and_sort_locate(
 
 
 _ONET_CODE = re.compile(r"^onet:occupation:(\d{2}-\d{4}\.\d{2})$")
+_SOC_CODE = re.compile(r"^bls:occupation:(\d{2}-\d{4})$")
+
+
+def published_facts(node: NodeRef) -> list[str]:
+    """Card lines for the facts a suite published on the node (BLS today).
+
+    Each line names its source and period, so pay and outlook are stated as
+    graph data with a date, never as the model's own knowledge.
+    """
+    f = node.facts
+    lines: list[str] = []
+    wage = f.get("median_wage_annual")
+    if isinstance(wage, (int, float)) and not isinstance(wage, bool):
+        period = f.get("wage_period") or "latest"
+        lines.append(f"Median annual wage: ${wage:,.0f} (BLS, {period})")
+    cycle = f.get("projection_cycle")
+    during = f" {cycle}" if cycle else ""
+    change = f.get("employment_change_pct")
+    if isinstance(change, (int, float)) and not isinstance(change, bool):
+        lines.append(f"Projected employment change{during}: {change:+.1f}% (BLS)")
+    openings = f.get("openings_annual")
+    if isinstance(openings, (int, float)) and not isinstance(openings, bool):
+        average = f", {cycle} average" if cycle else ""
+        lines.append(f"Openings per year{average}: {openings:,.0f} (BLS)")
+    for key, label in (
+        ("entry_education", "Typical entry education"),
+        ("work_experience", "Work experience in a related occupation"),
+        ("job_training", "Typical on-the-job training"),
+    ):
+        value = f.get(key)
+        if isinstance(value, str) and value:
+            lines.append(f"{label}: {value} (BLS)")
+    if f.get("projection_aggregate") is True and lines:
+        lines.append(
+            f"Note: BLS publishes these figures for the combined group "
+            f"{f.get('projection_code')}, not for this occupation alone."
+        )
+    return lines
 
 
 def code_facts(result: AgentResult, node: NodeRef) -> list[str]:
@@ -244,6 +288,20 @@ def code_facts(result: AgentResult, node: NodeRef) -> list[str]:
     match = _ONET_CODE.match(node.id)
     if match:
         facts.append(f"O*NET-SOC code: {match.group(1)}")
+    match = _SOC_CODE.match(node.id)
+    if match:
+        facts.append(f"SOC 2018 code: {match.group(1)}")
+    ssyk = node.facts.get("ssyk_code")
+    if isinstance(ssyk, str) and ssyk and node.kind == "Occupation":
+        # A code, not a published figure: it never answers "how much do they earn?".
+        facts.append(f"SSYK 2012 unit group: {ssyk} (JobTech)")
+    facts.extend(published_facts(node))
+    via = [w.removeprefix("via_esco:") for w in result.warnings if w.startswith("via_esco:")]
+    if via and node.suite != "esco":
+        facts.append(
+            f"found through {node.suite}'s own match to the ESCO record(s): {', '.join(via)}; "
+            "the words matched ESCO, not this record's own (non-English) title"
+        )
     for edge in result.edges:
         label = edge.properties.get("group_label")
         if edge.source_node_id != node.id or not label:

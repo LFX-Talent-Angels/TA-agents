@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import copy
 import json
+import re
 from collections.abc import Sequence
 from dataclasses import dataclass, replace
 from datetime import UTC, datetime
@@ -11,13 +12,17 @@ from pathlib import Path
 from typing import Literal, Protocol
 
 from talent_angels.assistant.answer import CONNECT_PREVIEW_CAP, summarize_result
-from talent_angels.assistant.connect_request import followup_connect_request, is_describe_followup
+from talent_angels.assistant.connect_request import (
+    followup_connect_request,
+    is_describe_followup,
+    is_facts_followup,
+)
 from talent_angels.assistant.intent import CAPABILITY_CONNECT
 from talent_angels.assistant.llm_plan import PlanDraft, denied_subject, is_statement
 from talent_angels.assistant.merge import suite_heading
-from talent_angels.assistant.suite_select import resolve_show_token
+from talent_angels.assistant.suite_select import SUITE_ALIASES, named_suites, resolve_show_token
 from talent_angels.assistant.synthesize import synthesize
-from talent_angels.assistant.turn import TurnOutcome
+from talent_angels.assistant.turn import MAX_QUESTION_CHARS, TurnOutcome
 from talent_angels.contracts import AgentResult, NodeRef
 from talent_angels.llm import LLMClient
 from talent_angels.llm.protocol import turn_cancelled, turn_deadline
@@ -89,6 +94,7 @@ from talent_angels.session.switch import SwitchError, apply, load_catalogue, res
 from talent_angels.session.working_set import pair_followup, refers_to_one, remember
 from talent_angels.skills.connect.compare import CAPABILITY_COMPARE
 from talent_angels.skills.locate.areas import AreaRequest
+from talent_angels.skills.locate.rank import published_facts
 
 _NO_PENDING = "There's no numbered list to pick from. Type a job title first."
 _BAD_PICK = "That number isn't in the list. Reply with a number from the options."
@@ -623,7 +629,7 @@ def _focus_skill(
         card=skill_card(skill, number=number, occupation=occupation, neighbors=neighbors),
     )
     _record(state, "assistant", message)
-    source = phrase_result.suite.upper() if phrase_result.suite else None
+    source = suite_heading(phrase_result.suite) if phrase_result.suite else None
     return _reply(state, message, source_note=source)
 
 
@@ -689,7 +695,7 @@ def _connect_more_hint(result: AgentResult) -> str:
     skills" (session.followup) — the gap was that nothing ever told the user
     those words work. Returns "" when there is nothing left to expand to.
     """
-    if result.capability != "connect" or not result.nodes:
+    if result.capability != "connect" or not result.nodes or "transitions" in result.warnings:
         return ""
     if len(result.nodes) - 1 <= CONNECT_PREVIEW_CAP:
         return ""
@@ -721,8 +727,12 @@ def _locate_fact_line(result: AgentResult) -> str:
     if not result.nodes:
         return ""
     top = result.nodes[0]
-    confidence = f", confidence {result.confidence:.0%}" if result.confidence is not None else ""
-    return f"Map record: **{top.pref_label}** ({top.kind}{confidence})"
+    confidence = (
+        t("map_confidence", percent=f"{result.confidence:.0%}")
+        if result.confidence is not None
+        else ""
+    )
+    return t("map_record", title=top.pref_label, kind=top.kind, confidence=confidence)
 
 
 def _render_unique_block(
@@ -887,7 +897,7 @@ def _from_single_outcome(
         text = t("no_subject")
     else:
         text = _map_answer(outcome.answer)
-    source = result.suite.upper() if result.suite else None
+    source = suite_heading(result.suite) if result.suite else None
     return _reply(state, text, source_note=source)
 
 
@@ -963,6 +973,10 @@ def _may_narrow(state: SessionState, text: str) -> bool:
     never a hint about the list.
     """
     if state.binding is not None and not state.areas:
+        return False
+    if named_suites(text, tuple(SUITE_ALIASES)):
+        # "elektriker enligt arbetsförmedlingen" names a taxonomy: a new
+        # question, never a hint about the open list.
         return False
     return not is_statement(text) and pair_followup(text, state.recent) is None
 
@@ -1380,6 +1394,46 @@ def _handle_expand(state: SessionState, text: str, *, runner: TurnRunner) -> Cha
     return _reply(state, message, source_note=_source_note_for(tuple(lists)))
 
 
+def _facts_bound(state: SessionState) -> ChatReply:
+    """Pay, outlook and education of the bound occupations, from the graph only.
+
+    Written in code, no model: these are figures, and a taxonomy that publishes
+    none (ESCO, O*NET here) says so instead of guessing.
+    """
+    blocks: list[str] = []
+    for suite, node in state.bindings.items():
+        heading = suite_heading(suite)
+        lines = published_facts(node)
+        body = (
+            "\n".join(f"- {line}" for line in lines)
+            if lines
+            else t("no_published_facts", suite=heading)
+        )
+        blocks.append(f"## {heading}\n\n**{node.pref_label}**\n\n{body}")
+    message = "\n\n---\n\n".join(blocks)
+    _record(state, "assistant", message)
+    names = [suite_heading(s) for s in state.bindings]
+    return _reply(state, message, source_note=" · ".join(names) if names else None)
+
+
+_SWITCH_RE = re.compile(
+    r"^\s*(?:and\s+|och\s+)?(?:(?:can\s+you\s+)?(?:show|see|give|find)(?:\s+me)?\s+)?"
+    r"(?:that|this|it|the\s+same|same)?\s*(?:in|on|for|from|i|enligt)\s+(.+?)\s*[?.!]*\s*$",
+    re.IGNORECASE,
+)
+
+
+def _switch_suite(text: str) -> str | None:
+    """The one suite a bare "show me that in <suite>" names, else None."""
+    match = _SWITCH_RE.match(text)
+    if match is None:
+        return None
+    named = named_suites(match.group(1), tuple(SUITE_ALIASES))
+    if len(named) != 1 or len(match.group(1).split()) > 3:
+        return None
+    return named[0]
+
+
 def _describe_bound(
     state: SessionState,
     text: str,
@@ -1418,6 +1472,17 @@ def _handle_map(
     ``suite`` limits the turn to one suite (a compare resumed after a pick there).
     """
     _record(state, "user", text)
+    switch = _switch_suite(text)
+    if switch is not None and state.recent and switch not in {r.suite for r in state.last_results}:
+        # "show me that in jobtech" after a BLS answer: the last title, looked
+        # up in that suite now (it was not searched there).
+        topic = state.recent[-1]
+        outcome = runner(topic, suite=switch)
+        reply = _from_outcome(state, outcome, question=topic, llm_client=llm_client)
+        _record(state, "assistant", reply.text)
+        return reply
+    if len(" ".join(text.split())) > MAX_QUESTION_CHARS and not preface:
+        preface = t("long_input", limit=MAX_QUESTION_CHARS)
     bound = state.binding.node if state.binding is not None else None
     bound_nodes = dict(state.bindings) if state.bindings else None
     # "compare the two" names its titles in code, from the working set.
@@ -1443,6 +1508,11 @@ def _handle_map(
         )
         _record(state, "assistant", message)
         return _reply(state, message)
+    if pair is None and bound_nodes and is_facts_followup(text, bound_nodes):
+        # Answered from the graph whatever it holds: a job with no BLS figures
+        # (Legislators) or a taxonomy with none (JobTech) says so, rather than
+        # falling to generic advice.
+        return _facts_bound(state)
     if pair is None and bound_nodes and is_describe_followup(text, bound_nodes):
         return _describe_bound(state, text, llm_client=llm_client)
     question = pair or text
@@ -1460,7 +1530,10 @@ def _handle_map(
     # Semantic suite switch: LLM detected user wants to see cached results on a specific suite.
     # Re-render from state.last_results (previous turn) without running a new query.
     _draft = getattr(outcome, "plan_draft", None)
-    if _draft and _draft.suite_override and state.last_results:
+    # Only a bare "show me that on ESCO" re-renders the last answer. A message
+    # that names its own subject ("bagare i jobtech") was just searched: show
+    # that, not the previous turn's result for the same suite.
+    if _draft and _draft.suite_override and not _draft.subject and state.last_results:
         token = _draft.suite_override
         known = tuple(
             dict.fromkeys([item.suite for item in state.last_results] + list(state.bindings))
@@ -1468,6 +1541,15 @@ def _handle_map(
         resolved = resolve_show_token(token, known)
         if resolved and resolved != "all":
             cached = next((r for r in state.last_results if r.suite == resolved), None)
+            if cached is None and state.recent:
+                # That suite was not searched for the last title: search it
+                # there now ("what does a baker do in bls?" -> "show me that
+                # in jobtech" looks "baker" up in JobTech).
+                topic = state.recent[-1]
+                rerun = runner(topic, suite=resolved)
+                reply = _from_outcome(state, rerun, question=topic, llm_client=llm_client)
+                _record(state, "assistant", reply.text)
+                return reply
             if cached is not None:
                 heading = suite_heading(resolved)
                 # Use structured output (no LLM) to match _handle_show — avoids the

@@ -13,6 +13,7 @@ from rich.console import Console
 
 from talent_angels.assistant import TurnOutcome, run_turn
 from talent_angels.assistant.llm_call import PHRASING_STAGES, collect_stages
+from talent_angels.assistant.merge import suite_heading
 from talent_angels.assistant.turn import persist_turn_record, with_extra_stages
 from talent_angels.env import load_local_dotenv
 from talent_angels.llm import LLMClient
@@ -165,9 +166,7 @@ def main(argv: Sequence[str] | None = None, *, registry: SuiteRegistry | None = 
         state = new_session()
     os.environ["RUNLOG_PATH"] = str(sessions_dir() / state.session_id / "runlog.jsonl")
     runlog_key = state.name or state.session_id
-    attached = " · ".join(
-        "O*NET" if name == "onet" else name.upper() for name in selected.available
-    )
+    attached = " · ".join(suite_heading(name) for name in selected.available)
 
     def make_runner(outcomes: list[tuple[TurnOutcome, str]]):
         def runner(

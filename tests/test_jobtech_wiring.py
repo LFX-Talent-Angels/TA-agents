@@ -16,10 +16,35 @@ def test_users_can_name_jobtech() -> None:
         "barnmorska in JobTech",
         "what does the Swedish taxonomy say about bakers",
         "bagare enligt Arbetsförmedlingen",
-        "nurse jobs in Sweden",
         "show me job tech",
     ):
         assert named_suites(question, ATTACHED) == ("jobtech",), question
+
+
+def test_sweden_alone_does_not_pick_jobtech() -> None:
+    # "I moved from Sweden to the US. How much do bakers earn here?" is about BLS.
+    assert named_suites("I moved from Sweden to the US, bakers pay?", ATTACHED) == ()
+
+
+def test_lightcast_is_named_as_not_attached() -> None:
+    from talent_angels.assistant.suite_select import named_unattached
+
+    assert named_unattached("baker in lightcast", ATTACHED) == ("lightcast",)
+
+
+def test_ssyk_code_is_not_a_published_fact() -> None:
+    from talent_angels.skills.locate.rank import published_facts
+
+    node = NodeRef(
+        id="jobtech:occupation:X",
+        suite="jobtech",
+        source="jobtech",
+        source_id="X",
+        kind="Occupation",
+        pref_label="Bagare/Konditor",
+        facts={"ssyk_code": "7612"},
+    )
+    assert published_facts(node) == []
 
 
 def test_heading() -> None:

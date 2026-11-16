@@ -8,8 +8,8 @@ from pathlib import Path
 import pytest
 
 pytest.importorskip(
-    "ta_taxonomies",
-    reason="TA-taxonomies is not installed; install the sibling package for integration tests",
+    "ta_taxonomies.suites.jobtech.tools",
+    reason="the installed ta-taxonomies has no JobTech suite; update the pin",
 )
 
 from talent_angels.evals import LocateMetrics  # noqa: E402
@@ -45,8 +45,8 @@ pytestmark = [
 
 @pytest.fixture(autouse=True)
 def _no_query_model(monkeypatch: pytest.MonkeyPatch) -> None:
-    """JobTech has no label vectors yet, so the meaning tier finds nothing anyway;
-    keep it from loading the local embedding model."""
+    """The golden cases are exact titles and codes; keep the local embedding
+    model from loading."""
     monkeypatch.setattr("ta_taxonomies.suites.jobtech.tools._embed_query", lambda _q: None)
 
 
@@ -63,6 +63,8 @@ def test_golden_locate_jobtech_case(case: dict) -> None:
         "ambiguous",
         # JobTech embeddings are not built yet; set whenever a query model is installed.
         "vector_index_missing",
+        # Swedish compounds: titles that contain the word are offered too.
+        "compound_part",
     }
     if case["expected_top_id"] is None:
         assert outcome.nodes == []

@@ -11,14 +11,17 @@ as the taxonomy names them.
 
 from __future__ import annotations
 
+import re
 from contextvars import ContextVar
 from typing import Any
 
 #: Languages with code-written sentences. Others get English sentences and
 #: model-written text in their own language.
-SUPPORTED = ("en", "es")
+SUPPORTED = ("en", "es", "sv")
 
 _LANG: ContextVar[str] = ContextVar("reply_language", default="en")
+#: "sv", "es-MX", "sv_SE".
+_LANGUAGE_CODE = re.compile(r"([a-z]{2})(?:[-_][a-z0-9]{2,8})?")
 
 _EN: dict[str, str] = {
     # lead line
@@ -61,6 +64,8 @@ _EN: dict[str, str] = {
         "None of the titles on the list fit that. Describe it another way, or name a title."
     ),
     # fixed messages
+    "map_record": "Map record: **{title}** ({kind}{confidence})",
+    "map_confidence": ", confidence {percent}",
     "map_next": "You can ask for essential skills, optional skills, or pick another number.",
     "miss": "No node for that phrase with today's search. That's a miss, not a maybe.",
     "no_published_facts": (
@@ -169,6 +174,8 @@ _ES: dict[str, str] = {
         "Ninguno de los títulos de la lista encaja con eso. "
         "Descríbelo de otra forma o nombra un título."
     ),
+    "map_record": "Registro del mapa: **{title}** ({kind}{confidence})",
+    "map_confidence": ", confianza {percent}",
     "map_next": "Puedes pedir las habilidades esenciales u opcionales, o elegir otro número.",
     "miss": "No encontré nada para esa frase con la búsqueda de hoy. Es un no, no un tal vez.",
     "no_published_facts": (
@@ -239,19 +246,137 @@ _ES: dict[str, str] = {
     ),
 }
 
-_TABLES: dict[str, dict[str, str]] = {"en": _EN, "es": _ES}
+_SV: dict[str, str] = {
+    "your_request": "din fråga",
+    "read_as_titles": "Jag tolkade {quoted} som {titles}.",
+    "looked_up": 'Jag sökte på "{subject}".',
+    "read_as_subject": 'Jag tolkade {quoted} som "{subject}".',
+    "or": "eller",
+    "and": "och",
+    "matching_title": "matchande titel",
+    "matching_titles": "matchande titlar",
+    "close_title": "närliggande titel",
+    "close_titles": "närliggande titlar",
+    "area_title": "titel",
+    "area_titles": "titlar",
+    "found_list": "{suite} har {count} {noun}",
+    "found_close": "{suite} har ingen exakt träff; {count} {noun}",
+    "found_one": "{suite} matchade {title}",
+    "found_none": "{suite} har ingen träff",
+    "next_goal": "Välj den du menar så sparar jag den som ditt mål.",
+    "next_standing": "Välj den du menar så sparar jag den som ditt nuvarande yrke.",
+    "next_reject": "Välj den du menar så noterar jag att det inte är ditt yrke.",
+    "next_default": "Välj den du menar, eller berätta mer så smalnar jag av listan.",
+    "picker_heading": 'Jag hittade flera träffar för "{question}". Vilken menade du?',
+    "picker_empty": 'Jag hittade flera träffar för "{question}", men inga att visa.',
+    "picker_one": "Jag väljer inte åt dig — svara med {first}.",
+    "picker_range": "Jag väljer inte åt dig — svara med {first}–{last}.",
+    "picker_showing": (
+        "Visar {shown} av {total} ({omitted} till). Hela listan finns i frågedetaljerna."
+    ),
+    "intro_guided": "Titlar i {suite} som passar din fråga. Vilken menade du?",
+    "intro_several": 'Jag hittade flera träffar i {suite} för "{searched}". Vilken menade du?',
+    "areas_head": "**Eller avgränsa efter område:**",
+    "areas_foot": "Svara med en bokstav, eller beskriv arbetet du tänker på.",
+    "bound": "Vald: {title}.",
+    "narrow_fit": 'De här passar "{text}". Vilken menade du?',
+    "narrow_area": '{names}: titlar som matchar "{query}". Vilken menade du?',
+    "narrow_none": (
+        "Ingen av titlarna i listan passar det. Beskriv det på ett annat sätt, eller ange en titel."
+    ),
+    "map_record": "Post i kartan: **{title}** ({kind}{confidence})",
+    "map_confidence": ", säkerhet {percent}",
+    "map_next": (
+        "Du kan fråga efter nödvändiga kompetenser, valfria kompetenser, "
+        "eller välja ett annat nummer."
+    ),
+    "miss": "Ingen nod för den frasen med dagens sökning. Det är en miss, inte ett kanske.",
+    "no_published_facts": (
+        "{suite} publicerar inga siffror om lön, framtidsutsikter eller utbildning "
+        "för det här yrket."
+    ),
+    "no_subject": (
+        "Vilket yrke eller vilken kompetens menar du? Till exempel: "
+        "”Vilka kompetenser behöver en sjuksköterska?” eller ”Var finns data scientist?”"
+    ),
+    "pathfind": (
+        "Karriärvägar mellan två yrken finns inte än — de kommer. Prova tills vidare "
+        "”jämför lärare och dataanalytiker” för att se vilka kompetenser de delar och "
+        "vilka bara den ena behöver."
+    ),
+    "skill": "kompetens",
+    "skills": "kompetenser",
+    "tool": "verktyg",
+    "tools": "verktyg",
+    "shared_skill": "gemensam kompetens",
+    "shared_skills_noun": "gemensamma kompetenser",
+    "shared_tool": "gemensamt verktyg",
+    "shared_tools_noun": "gemensamma verktyg",
+    "connect_head": "**{title}** — {counts} på kartan:",
+    "transitions_head": "**{title}** — {count} yrken att byta till ({suite}):",
+    "related_head": "**{title}** — {count} relaterade yrken ({suite}):",
+    "long_input": (
+        "Ditt meddelande är långt, så jag läste början och slutet ({limit} tecken totalt)."
+    ),
+    "filtered_count": "{count} {kind} (av {total} totalt)",
+    "none_marked_count": "inga markerade {kind}; totalt {counts}",
+    "transitions_foot": (
+        "Procentsatsen anger hur stor del av erfarenheten taxonomin säger kan överföras. "
+        "Det här är kartan, inte karriärråd."
+    ),
+    "no_transitions": "{suite} publicerar inga yrkesbyten för **{title}**.",
+    "connect_foot_moves": (
+        "Relaterade yrken så som taxonomin listar dem. Det här är kartan, inte karriärråd."
+    ),
+    "connect_more": "{count} till finns i frågedetaljerna.",
+    "connect_foot": "Det här är grannar i grafen, inte en studieplan.",
+    "compare_head": "**{first}** mot **{second}** — {shared}.",
+    "compare_shared": "Gemensamma",
+    "compare_only": "Bara {title}",
+    "compare_none": "inga",
+    "compare_more": "(+{count} till)",
+    "compare_foot": "Det här är grannar i grafen, inte en rekommendation.",
+    "profile_empty": (
+        "Jag vet inte mycket om dig än. Berätta ditt nuvarande yrke (”jag är …”) "
+        "eller ett yrke du siktar på (”mitt mål är …”) så noterar jag det."
+    ),
+    "profile_head": "Det här har du berättat för mig:",
+    "profile_foot": (
+        "Det är allt jag sparar om dig. Berätta ditt mål eller nuvarande yrke för att ändra det."
+    ),
+    "profile_goal": "Mål: {title}",
+    "profile_current": "Nuvarande yrke ({suite}): {title}",
+    "profile_rejected": "Inte ditt yrke (enligt dig): {title}",
+    "noted_not_job": "Noterat: {titles} är inte längre sparat som ditt nuvarande yrke.",
+    "compare_needs_pick": (
+        "För att jämföra {first} och {second} behöver jag först veta vilken {subject} du menar."
+    ),
+    "comparing": "Jämför {first} med {second}:",
+    "still_waiting": "{suite} behöver också ett val för att jämföra där:",
+    "bound_many": "Valda: {titles}.",
+    "one_per_suite": "Välj högst en titel per taxonomi, t.ex. {example}.",
+    "pick_per_suite": (
+        "Du kan välja en titel från varje lista i ett och samma svar, t.ex. {example}."
+    ),
+}
+
+_TABLES: dict[str, dict[str, str]] = {"en": _EN, "es": _ES, "sv": _SV}
 
 
 def normalize_language(code: object) -> str | None:
-    """A two-letter code we write sentences in, or None."""
+    """The two-letter language code of a message ("es-MX" -> "es"), or None.
+
+    Any language is kept, so the model is told the right one; ``t`` falls back
+    to English sentences for a language without a table.
+    """
     if not isinstance(code, str):
         return None
-    code = code.strip().casefold()[:2]
-    return code if code in SUPPORTED else None
+    match = _LANGUAGE_CODE.fullmatch(code.strip().casefold())
+    return match.group(1) if match else None
 
 
 def set_language(code: object) -> None:
-    """The language of this turn's code-written sentences (English if unknown)."""
+    """The language of this turn's reply (English if unknown)."""
     _LANG.set(normalize_language(code) or "en")
 
 

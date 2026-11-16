@@ -727,8 +727,12 @@ def _locate_fact_line(result: AgentResult) -> str:
     if not result.nodes:
         return ""
     top = result.nodes[0]
-    confidence = f", confidence {result.confidence:.0%}" if result.confidence is not None else ""
-    return f"Map record: **{top.pref_label}** ({top.kind}{confidence})"
+    confidence = (
+        t("map_confidence", percent=f"{result.confidence:.0%}")
+        if result.confidence is not None
+        else ""
+    )
+    return t("map_record", title=top.pref_label, kind=top.kind, confidence=confidence)
 
 
 def _render_unique_block(

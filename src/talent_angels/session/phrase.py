@@ -58,7 +58,16 @@ Rules:
   Swedish). Still write in the user's language (see "Reply language"),
   keeping those titles as written."""
 
-_LANGUAGE_NAMES = {"en": "English", "es": "Spanish", "sv": "Swedish"}
+_LANGUAGE_NAMES = {
+    "en": "English",
+    "es": "Spanish",
+    "sv": "Swedish",
+    "de": "German",
+    "fr": "French",
+    "pt": "Portuguese",
+    "it": "Italian",
+    "nl": "Dutch",
+}
 
 
 def _reply_language_line() -> str:

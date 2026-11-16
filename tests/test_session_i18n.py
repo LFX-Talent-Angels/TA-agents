@@ -7,7 +7,7 @@ from talent_angels.assistant.planning import build_plan_for_capability
 from talent_angels.assistant.turn import TurnOutcome
 from talent_angels.contracts import AgentResult, NodeRef
 from talent_angels.runlog import RunLogRecord
-from talent_angels.session.i18n import _EN, _ES, language, set_language, t
+from talent_angels.session.i18n import _EN, _ES, _SV, language, set_language, t
 from talent_angels.session.kernel import handle_line
 from talent_angels.session.store import load_session, new_session, save_session
 from talent_angels.tui.render import parse_list_reply
@@ -45,14 +45,30 @@ def _runner(lang: str | None):
     return runner
 
 
-def test_every_sentence_has_a_spanish_version() -> None:
-    assert set(_EN) == set(_ES)
-    for key, text in _EN.items():
-        assert text.count("{") == _ES[key].count("{"), key
+def test_every_sentence_has_a_spanish_and_a_swedish_version() -> None:
+    for table in (_ES, _SV):
+        assert set(_EN) == set(table)
+        for key, text in _EN.items():
+            assert text.count("{") == table[key].count("{"), key
 
 
-def test_unknown_languages_fall_back_to_english() -> None:
-    set_language("xx")
+def test_swedish_sentences_and_the_reply_language_line() -> None:
+    from talent_angels.session.phrase import _reply_language_line
+
+    set_language("sv")
+    assert t("bound", title="Barnmorska") == "Vald: Barnmorska."
+    assert "Swedish" in _reply_language_line()
+    set_language("en")
+
+
+def test_a_language_without_sentences_is_still_the_reply_language() -> None:
+    from talent_angels.session.phrase import _reply_language_line
+
+    set_language("de")
+    assert language() == "de"
+    assert t("bound", title="Bäcker") == "Bound Bäcker."
+    assert "German" in _reply_language_line()
+    set_language("not a language")
     assert language() == "en"
     set_language("es-MX")
     assert language() == "es"

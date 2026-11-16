@@ -127,8 +127,9 @@ profile_intent rules:
 - Leave null for all other questions.
 
 suite_override rules:
-- Set suite_override to the suite name (lowercase: "onet", "esco", "sfia", "bls") when the
-  user asks to see results on a specific taxonomy or switch the view to a different source.
+- Set suite_override to the suite name (lowercase: "onet", "esco", "sfia", "bls",
+  "jobtech") when the user asks to see results on a specific taxonomy or switch the view to
+  a different source.
   Examples: "now show me the same on ESCO" → suite_override="esco",
   "show me this on O*NET" → suite_override="onet",
   "can I see the ESCO version?" → suite_override="esco",

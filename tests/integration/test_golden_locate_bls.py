@@ -8,8 +8,8 @@ from pathlib import Path
 import pytest
 
 pytest.importorskip(
-    "ta_taxonomies",
-    reason="TA-taxonomies is not installed; install the sibling package for integration tests",
+    "ta_taxonomies.suites.bls.tools",
+    reason="the installed ta-taxonomies has no BLS suite; update the pin",
 )
 
 from talent_angels.evals import LocateMetrics  # noqa: E402
@@ -45,8 +45,8 @@ pytestmark = [
 
 @pytest.fixture(autouse=True)
 def _no_query_model(monkeypatch: pytest.MonkeyPatch) -> None:
-    """BLS has no label vectors yet, so the meaning tier finds nothing anyway;
-    keep it from loading the local embedding model."""
+    """The golden cases are exact titles and codes; keep the local embedding
+    model from loading."""
     monkeypatch.setattr("ta_taxonomies.suites.bls.tools._embed_query", lambda _q: None)
 
 

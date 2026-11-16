@@ -208,3 +208,15 @@ def test_generic_profile_default_kind_tags_every_non_root_row() -> None:
     assert not any(s.reason == "metadata" for s in skipped)
     assert units  # every non-root/non-heading row was tagged
     assert all(unit.kind == "item" for unit in units)
+
+
+def test_generic_profile_rows_with_children_are_still_headings() -> None:
+    """A parent's children share its `default_kind`, so they are its steps:
+    under `depth: leaves` the parent is a heading, not tagged as a leaf."""
+    doc = read_document(FIXTURE)
+    profile = load_profile(name="generic").model_copy(update={"depth": "leaves"})
+    profile.model_post_init(None)
+    units, _ = select_units(doc, profile)
+    parents = {row.parent_id for row in doc.rows}
+    assert units
+    assert all(unit.row_id not in parents for unit in units)

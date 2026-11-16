@@ -67,3 +67,15 @@ def test_answered_in_code_from_the_graph(monkeypatch: pytest.MonkeyPatch) -> Non
     reply = handle_line(state, "how much do they earn?", runner=runner)  # type: ignore[arg-type]
     assert "Median annual wage: $37,160 (BLS, May 2025)" in reply.text
     assert "ESCO publishes no pay, outlook or education figures" in reply.text
+
+
+def test_a_bound_job_without_figures_says_so() -> None:
+    # Legislators (no EP data) or a JobTech job: never generic advice.
+    state = new_session()
+    state.bindings = {"esco": BAKER_ESCO}
+
+    def runner(*_a: object, **_k: object) -> object:
+        pytest.fail("a facts follow-up must not search again")
+
+    reply = handle_line(state, "is it a growing job?", runner=runner)  # type: ignore[arg-type]
+    assert "ESCO publishes no pay, outlook or education figures" in reply.text

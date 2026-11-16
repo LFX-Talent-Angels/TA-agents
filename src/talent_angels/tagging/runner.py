@@ -283,8 +283,9 @@ def _input_warnings(path: Path) -> list[str]:
 
 
 def _needs_rewrite(unit: TagUnit) -> bool:
-    """Occupation rows with seed phrases use code-derived queries; no model call."""
-    return not (unit.role == "row_rule" and unit.seed_phrases)
+    """Units with seed phrases (split occupation lists, `verbatim_kinds`) are
+    searched as written; no model call."""
+    return not unit.seed_phrases
 
 
 def _rewrite_phase(
@@ -412,9 +413,12 @@ def run(
     model = str(getattr(llm_client, "model", "") or "none") if llm_on else "none"
     pinned_versions = versions(model)
 
-    suite_names = (
-        list(opts.suites) if opts.suites is not None else default_tag_suites(registry.available)
-    )
+    suite_names = [
+        registry.resolve(name)
+        for name in (
+            list(opts.suites) if opts.suites is not None else default_tag_suites(registry.available)
+        )
+    ]
     unknown = [name for name in suite_names if name not in registry.available]
     if unknown:
         available = ", ".join(registry.available)

@@ -1,0 +1,104 @@
+{
+  "suite": "jobtech",
+  "note": "Expected values from the full JobTech Taxonomy v31 graph (2,105 occupations, 6,752 skills, SSYK 2012 groups). Labels are Swedish: English questions are not golden cases here (known limit). Additive truncated / match_count_capped / ambiguous / vector_index_missing warnings are allowed. '7612' is an SSYK unit-group code; 'XugJ_6hw_wVV' a JobTech concept id.",
+  "cases": [
+    {
+      "question": "Barnmorska",
+      "kind": "occupation",
+      "expected_top_id": "jobtech:occupation:DEDi_wap_ntF",
+      "expected_confidence": 0.95,
+      "expected_method": "exact_pref",
+      "expected_warnings": []
+    },
+    {
+      "question": "barnmorska",
+      "kind": null,
+      "expected_top_id": "jobtech:occupation:DEDi_wap_ntF",
+      "expected_confidence": 0.85,
+      "expected_method": "casefold_pref",
+      "expected_warnings": []
+    },
+    {
+      "question": "Bagare/Konditor",
+      "kind": "occupation",
+      "expected_top_id": "jobtech:occupation:XugJ_6hw_wVV",
+      "expected_confidence": 0.95,
+      "expected_method": "exact_pref",
+      "expected_warnings": []
+    },
+    {
+      "question": "Bagare",
+      "kind": null,
+      "expected_top_id": "jobtech:occupation:XugJ_6hw_wVV",
+      "expected_confidence": 0.9,
+      "expected_method": "exact_alt",
+      "expected_warnings": []
+    },
+    {
+      "question": "Konditor",
+      "kind": "occupation",
+      "expected_top_id": "jobtech:occupation:XugJ_6hw_wVV",
+      "expected_confidence": 0.9,
+      "expected_method": "exact_alt",
+      "expected_warnings": []
+    },
+    {
+      "question": "Sjuksköterska, grundutbildad",
+      "kind": "occupation",
+      "expected_top_id": "jobtech:occupation:bXNH_MNX_dUR",
+      "expected_confidence": 0.95,
+      "expected_method": "exact_pref",
+      "expected_warnings": []
+    },
+    {
+      "question": "Mjukvaruutvecklare",
+      "kind": "occupation",
+      "expected_top_id": "jobtech:occupation:rQds_YGd_quU",
+      "expected_confidence": 0.95,
+      "expected_method": "exact_pref",
+      "expected_warnings": []
+    },
+    {
+      "question": "Programmerare",
+      "kind": "occupation",
+      "expected_top_id": "jobtech:occupation:fg7B_yov_smw",
+      "expected_confidence": 0.9,
+      "expected_method": "exact_alt",
+      "expected_warnings": []
+    },
+    {
+      "question": "7612",
+      "kind": null,
+      "expected_top_id": "jobtech:ssyk:7612",
+      "expected_confidence": 0.95,
+      "expected_method": "exact_code",
+      "expected_warnings": []
+    },
+    {
+      "question": "XugJ_6hw_wVV",
+      "kind": null,
+      "expected_top_id": "jobtech:occupation:XugJ_6hw_wVV",
+      "expected_confidence": 0.95,
+      "expected_method": "exact_code",
+      "expected_warnings": []
+    },
+    {
+      "question": "Matbröd",
+      "kind": "skill",
+      "expected_top_id": "jobtech:skill:gzxa_drN_Uud",
+      "expected_confidence": 0.95,
+      "expected_method": "exact_pref",
+      "expected_warnings": []
+    },
+    {
+      "question": "zzqxv plonkwurst",
+      "kind": "occupation",
+      "expected_top_id": null,
+      "expected_confidence": null,
+      "expected_method": null,
+      "expected_warnings": [
+        "not_found"
+      ]
+    }
+  ]
+}

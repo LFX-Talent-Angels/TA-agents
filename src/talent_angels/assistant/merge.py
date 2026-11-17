@@ -16,6 +16,7 @@ _HEADINGS = {
     "onet": "O*NET",
     "sfia": "SFIA",
     "bls": "BLS",
+    "jobtech": "JobTech",
 }
 
 

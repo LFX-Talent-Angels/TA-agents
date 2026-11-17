@@ -17,7 +17,8 @@ from talent_angels.llm.protocol import uses_chat_phrasing
 from talent_angels.memory.agent_notes import notes_prefix
 from talent_angels.memory.profile import profile_prefix
 from talent_angels.session.followup import relation_tags
-from talent_angels.skills.locate.rank import code_facts
+from talent_angels.session.i18n import language
+from talent_angels.skills.locate.rank import code_facts, published_facts
 
 _CHAT_SYSTEM = """You are LFX Talent Angels, a concise assistant in a terminal.
 Warm and useful. You look up occupations and skills on a taxonomy map.
@@ -48,10 +49,34 @@ Rules:
 - A fact the card does not hold (a code, a group, pay, outlook) is not known:
   say the card does not include it. Never state it from memory, and never
   correct yourself mid-answer.
-- ESCO and O*NET are separate taxonomies with no official link here: never say
-  a record in one maps to, equals, or is the equivalent of one in the other.
+- Each taxonomy (ESCO, O*NET, SFIA, BLS, JobTech) is separate, with no official
+  link here: never say a record in one maps to, equals, or is the equivalent of
+  one in another.
 - Write in the same language as the user's message; keep job and skill titles
-  exactly as the card writes them."""
+  exactly as the card writes them.
+- A card may hold titles and descriptions in another language (JobTech is
+  Swedish). Still write in the user's language (see "Reply language"),
+  keeping those titles as written."""
+
+_LANGUAGE_NAMES = {
+    "en": "English",
+    "es": "Spanish",
+    "sv": "Swedish",
+    "de": "German",
+    "fr": "French",
+    "pt": "Portuguese",
+    "it": "Italian",
+    "nl": "Dutch",
+}
+
+
+def _reply_language_line() -> str:
+    """Anchor the reply to the user's words, not the card's (JobTech cards are Swedish)."""
+    guess = _LANGUAGE_NAMES.get(language(), language())
+    return (
+        f"Reply language: the language of the User line above (app's guess: {guess}); "
+        "never switch to the language of the card."
+    )
 
 
 def phrase_chat(
@@ -107,7 +132,10 @@ def phrase_map(
             role="system",
             content=(profile_prefix() + notes_prefix() + _MAP_SYSTEM),
         ),
-        Message(role="user", content=f"User: {question}\n\nFACT CARD:\n{card}"),
+        Message(
+            role="user",
+            content=f"User: {question}\n{_reply_language_line()}\n\nFACT CARD:\n{card}",
+        ),
     ]
     try:
         llm_result, _ = measure_complete(client, messages, stage="phrase")
@@ -159,6 +187,19 @@ def connect_card(result: AgentResult, *, shown: int = CONNECT_PREVIEW_CAP) -> st
     ]
     if center.description:
         lines.append(f"description: {center.description}")
+    lines.extend(published_facts(center))
+    none_marked = next((w for w in result.warnings if w.startswith("none_marked:")), None)
+    if none_marked:
+        lines.append(
+            f"the taxonomy marks none of these as {none_marked.split(':', 1)[1]}; "
+            "all of them are shown"
+        )
+    filtered = next((w for w in result.warnings if w.startswith("filtered:")), None)
+    if filtered:
+        _, kind, total = filtered.split(":", 2)
+        lines.append(
+            f"only the {kind} ones are shown, as the user asked; the job has {total} in all"
+        )
     lines.extend(
         [
             "shown skills: " + "; ".join(skills) if skills else "shown skills: none",
@@ -254,4 +295,11 @@ def _looks_like_invented_miss(text: str) -> bool:
         return True
     if re.search(r"(?m)^\s*[-*]\s+\S", text):
         return True
-    return False
+    # A miss that names a title in bold, quotes a code, or blames "access":
+    # the model answering from memory ("**SSYK 7612 – Skorstensfejare**").
+    if "**" in text or _CODE_IN_TEXT.search(text):
+        return True
+    return any(marker in lowered for marker in ("access to", "real time", "real-time"))
+
+
+_CODE_IN_TEXT = re.compile(r"\b\d{2}-\d{4}\b|\bSSYK\s*\d|\bISCO[- ]?\d|\b\d{4}\b")

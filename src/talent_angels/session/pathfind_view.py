@@ -4,11 +4,14 @@ Essential/optional/software are not separate AgentResult fields (ADR-0008:
 no new contract type beyond ``routes``) — reconstructed here from the
 target's own edges, the same way ``synthesize._connect_line`` already
 splits software from skills. A node in ``result.nodes[2:]`` with no edge
-to the target is a route-bridge node, not part of the gap.
+to the target is a route-bridge node, not part of the gap — this is only
+reliable because ``dispatch.py`` keeps ``result.edges`` to exactly the
+gap's own edges and never mixes a route's edges into it (#93).
 """
 
 from __future__ import annotations
 
+from talent_angels.assistant.merge import suite_heading
 from talent_angels.contracts import AgentResult, NodeRef, Route
 from talent_angels.session.i18n import t
 
@@ -66,6 +69,12 @@ def _route_line(number: int, route: Route, labels: dict[str, str]) -> str:
     return t("pathfind_route", number=number, chain=" → ".join(names))
 
 
+def _confidence_line(result: AgentResult) -> str:
+    """Matches ``locate_card``'s own "confidence: X%" / "unknown" format."""
+    conf = f"{result.confidence:.0%}" if result.confidence is not None else "unknown"
+    return t("pathfind_confidence", suite=suite_heading(result.suite), confidence=conf)
+
+
 def render_pathfind(result: AgentResult) -> str:
     start, target = result.nodes[0], result.nodes[1]
     essential, optional, software = _gap_buckets(result)
@@ -73,6 +82,7 @@ def render_pathfind(result: AgentResult) -> str:
 
     lines = [
         t("pathfind_head", start=start.pref_label, target=target.pref_label),
+        _confidence_line(result),
         "",
         _gap_line(t("pathfind_essential"), essential, empty_key="pathfind_gap_none"),
         _gap_line(t("pathfind_optional"), optional, empty_key="pathfind_gap_none"),

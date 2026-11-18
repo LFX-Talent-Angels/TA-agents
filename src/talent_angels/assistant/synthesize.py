@@ -139,7 +139,11 @@ def _pathfind_line(result: AgentResult) -> str:
     route_text = f"{len(result.routes)} route(s)" if result.routes else "no route found"
     retrain = "; full retrain" if "gap_too_large" in result.warnings else ""
     gap_text = " + ".join(parts)
-    return f"{start.pref_label} -> {target.pref_label} — {gap_text} missing, {route_text}{retrain}"
+    conf = f"{result.confidence:.0%}" if result.confidence is not None else "unknown"
+    return (
+        f"{start.pref_label} -> {target.pref_label} — {gap_text} missing, "
+        f"{route_text}{retrain} (confidence: {conf})"
+    )
 
 
 def _suite_line(result: AgentResult, *, list_ambiguous: bool = True) -> str | None:

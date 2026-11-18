@@ -105,6 +105,13 @@ def pathfind_one(
     missing_ids = {
         node.id for node in (*gap.essential_missing, *gap.optional_missing, *gap.software_missing)
     }
+    # ``edges`` stays exactly this set, always — never extended with a
+    # route's own edges below. A route can bridge through a skill both sides
+    # already share (so it is not in ``missing_ids``); if that route edge
+    # happened to touch target too, a renderer scanning "every edge that
+    # touches target" would wrongly count a shared skill as missing (#93).
+    # Each route's own edges are still kept in full, independently, in
+    # ``route_models`` below — nothing about route rendering is lost.
     gap_edges = [
         edge
         for edge in target_result.edges
@@ -134,13 +141,19 @@ def pathfind_one(
                 if node.id not in seen_ids:
                     seen_ids.add(node.id)
                     nodes.append(node)
-            edges.extend(route.edges)
             route_models.append(
                 Route(node_ids=[node.id for node in route.nodes], edges=list(route.edges))
             )
         for warning in routes.warnings:
             if warning not in warnings:
                 warnings.append(warning)
+
+    # The weaker of the two sides' own Locate confidence — honest about the
+    # less certain match, never averaged or invented (#93).
+    side_confidences = [
+        c for c in (start_result.confidence, target_result.confidence) if c is not None
+    ]
+    confidence = min(side_confidences) if side_confidences else None
 
     evidence = [*start_result.evidence, *target_result.evidence]
     result = AgentResult(
@@ -149,6 +162,7 @@ def pathfind_one(
         nodes=nodes,
         edges=edges,
         evidence=evidence,
+        confidence=confidence,
         warnings=warnings,
         routes=route_models,
     )

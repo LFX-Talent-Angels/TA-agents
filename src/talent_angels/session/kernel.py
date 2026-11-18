@@ -62,7 +62,12 @@ from talent_angels.session.followup import (
     skill_index_by_label,
 )
 from talent_angels.session.i18n import normalize_language, set_language, t
-from talent_angels.session.lead import compare_side_subject, lead, pick_intent
+from talent_angels.session.lead import (
+    compare_side_subject,
+    lead,
+    pathfind_side_subject,
+    pick_intent,
+)
 from talent_angels.session.models import (
     AreaChoice,
     LastBinding,
@@ -1209,10 +1214,14 @@ def _from_outcome(
             any_hit = True
             choices = _renumber_pending(choices_from_result(result), start=len(pending_all) + 1)
             omitted = max(0, len(result.nodes) - len(choices))
-            # A compare can be ambiguous on either side per suite — never the
-            # loop's shared "searched" value, or one suite's list can be
-            # headed with the other side's subject.
-            picker_searched = compare_side_subject(result, _draft) or searched
+            # A compare or pathfind can be ambiguous on either side per suite
+            # — never the loop's shared "searched" value, or one suite's list
+            # can be headed with the other side's subject (#91).
+            picker_searched = (
+                compare_side_subject(result, _draft)
+                or pathfind_side_subject(result, _draft)
+                or searched
+            )
             # Written in code: a model call per suite for one fixed sentence
             # cost 4-9 seconds each and said nothing the list does not.
             intro = (

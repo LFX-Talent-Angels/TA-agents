@@ -127,6 +127,9 @@ _EN: dict[str, str] = {
     "compare_needs_pick": (
         "To compare {first} and {second}, I first need to know which {subject} you mean."
     ),
+    "pathfind_needs_pick": (
+        "To find the path from {first} to {second}, I first need to know which {subject} you mean."
+    ),
     "comparing": "Comparing {first} with {second}:",
     "still_waiting": "{suite} still needs a pick to compare there too:",
     "bound_many": "Bound {titles}.",
@@ -236,6 +239,10 @@ _ES: dict[str, str] = {
     "noted_not_job": "Anotado: {titles} ya no está guardado como tu trabajo actual.",
     "compare_needs_pick": (
         "Para comparar {first} y {second}, primero necesito saber a qué {subject} te refieres."
+    ),
+    "pathfind_needs_pick": (
+        "Para encontrar el camino de {first} a {second}, primero necesito saber a qué "
+        "{subject} te refieres."
     ),
     "comparing": "Comparando {first} con {second}:",
     "still_waiting": "{suite} todavía necesita que elijas uno para comparar ahí también:",
@@ -350,6 +357,10 @@ _SV: dict[str, str] = {
     "noted_not_job": "Noterat: {titles} är inte längre sparat som ditt nuvarande yrke.",
     "compare_needs_pick": (
         "För att jämföra {first} och {second} behöver jag först veta vilken {subject} du menar."
+    ),
+    "pathfind_needs_pick": (
+        "För att hitta vägen från {first} till {second} behöver jag först veta vilken "
+        "{subject} du menar."
     ),
     "comparing": "Jämför {first} med {second}:",
     "still_waiting": "{suite} behöver också ett val för att jämföra där:",

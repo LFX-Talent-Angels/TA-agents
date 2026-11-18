@@ -50,16 +50,16 @@ _MAX_REALISTIC_GAP_SKILLS_BY_SUITE: dict[str, int] = {
     "jobtech": MAX_REALISTIC_GAP_SKILLS,
 }
 
-#: Share of the target's skills (essential + optional + software) the start
-#: already has, below which the gap is a full retrain regardless of the
-#: essential-only count (PF-2 amendment) — catches a target with few
-#: essential links but a huge optional gap (ESCO "data analyst" ->
-#: "general practitioner": 10 essential-missing, under threshold, but 0%
-#: coverage once optional is counted too). Deliberately conservative: only
-#: the clear 0-15% cases measured so far are below it. One live pair
-#: ("civil engineer" -> "construction engineer", 27%) sits close above this
-#: line and was deliberately left unflagged pending a wider golden pairs set
-#: — not yet confirmed either way.
+#: Share of the target's non-software skills (essential + optional, never
+#: software — #90) the start already has, below which the gap is a full
+#: retrain regardless of the essential-only count (PF-2 amendment) — catches
+#: a target with few essential links but a huge optional gap (ESCO
+#: "data analyst" -> "general practitioner": 10 essential-missing, under
+#: threshold, but 0% coverage once optional is counted too). Deliberately
+#: conservative: only the clear 0-15% cases measured so far are below it.
+#: One live pair ("civil engineer" -> "construction engineer", 27%) sits
+#: close above this line and was deliberately left unflagged pending a wider
+#: golden pairs set — not yet confirmed either way.
 MIN_REALISTIC_COVERAGE = 0.20
 
 GAP_TOO_LARGE_WARNING = "gap_too_large"
@@ -118,6 +118,12 @@ def compute_gap(
     Ordering within each bucket is inherited from ``target``'s own node
     order, which ``connect()`` already ranks by O*NET importance where
     present — nothing here re-sorts.
+
+    ``coverage`` excludes software on both sides of the ratio (#90): O*NET
+    lists dozens to hundreds of named tools per occupation, so counting them
+    the same as skills let tool overlap alone decide "full retrain" — the
+    software split above already says a tool is not a skill or knowledge
+    signal, and the coverage floor should not quietly readmit it.
     """
     overlap = skill_overlap(compare_result(start, target))
     target_center_id = target.nodes[0].id
@@ -135,8 +141,13 @@ def compute_gap(
         else:
             essential.append(node)
 
-    total = len(overlap.shared) + len(overlap.only_b)
-    coverage = len(overlap.shared) / total if total else 1.0
+    shared_non_software = [
+        node
+        for node in overlap.shared
+        if target_edges.get(node.id, (None, None))[0] not in SOFTWARE_REL_TYPES
+    ]
+    total = len(shared_non_software) + len(essential) + len(optional)
+    coverage = len(shared_non_software) / total if total else 1.0
 
     threshold = _MAX_REALISTIC_GAP_SKILLS_BY_SUITE.get(target.suite, MAX_REALISTIC_GAP_SKILLS)
     return SkillGap(

@@ -204,3 +204,20 @@ only the clearest 0–15% cases sit below it. One pair, ESCO "civil
 engineer" → "construction engineer" at 27%, sits close above the line
 and was left unflagged — a genuine judgement call, not yet confirmed
 either way by enough data to move the number with confidence.
+
+**2026-11-18 — #90: `coverage` excludes software on both sides of the
+ratio.** The amendment above shipped `coverage` counting software same as
+skills — exactly the problem the software split itself names a few
+paragraphs up: O\*NET lists dozens to hundreds of named tools per
+occupation, so a tool-heavy pair's coverage ratio ends up decided almost
+entirely by tool overlap, not by the real essential/optional skill gap the
+floor is meant to protect. `compute_gap` now computes `coverage` as
+`shared-skills / (shared-skills + essential-missing + optional-missing)`,
+with every `USES_SOFTWARE` node — shared or missing — left out of both
+sides of that ratio. The 0.20 floor and the live pairs it was measured
+against (above) were themselves already software-free in every case: the
+PF-2 finding was that software was 100% of those pairs' *first-amendment*
+combined count, not that it was present in the non-software skill/
+knowledge counts those pairs are flagged on, so this fix changes no
+existing live pair's `gap_too_large` verdict — it only stops a
+software-tool-heavy pair from silently buying its way past the floor.

@@ -3,7 +3,11 @@
 from __future__ import annotations
 
 from talent_angels.contracts import AgentResult, EdgeRef, NodeRef
-from talent_angels.skills.pathfind.gap import MAX_REALISTIC_GAP_SKILLS, compute_gap
+from talent_angels.skills.pathfind.gap import (
+    MAX_REALISTIC_GAP_SKILLS,
+    MIN_REALISTIC_COVERAGE,
+    compute_gap,
+)
 
 
 def _node(label: str, kind: str = "Skill", suite: str = "esco") -> NodeRef:
@@ -192,6 +196,36 @@ def test_high_coverage_is_not_flagged_even_with_some_essential_gap() -> None:
 
     assert gap.coverage > 0.6
     assert gap.gap_too_large is False
+
+
+def test_coverage_excludes_software_on_both_sides_of_the_ratio() -> None:
+    """#90: a tool-heavy O*NET pair must not buy its way past the coverage
+    floor just by sharing many named tools — only real skills count.
+
+    start and target share every one of 20 software tools (so, counted in,
+    that overlap alone would push coverage to 21/26 = 0.81, well above the
+    0.20 floor) but only 1 of their 6 real skills overlaps."""
+    tools = [f"tool-{i}" for i in range(20)]
+    start = _connect("nurse", [("care", "essential")], software=tools)
+    target = _connect(
+        "data scientist",
+        [
+            ("care", "essential"),
+            ("statistics", "essential"),
+            ("sql", "essential"),
+            ("python lang", "essential"),
+            ("r lang", "essential"),
+            ("ml", "essential"),
+        ],
+        software=tools,
+    )
+
+    gap = compute_gap(start, target)
+
+    assert gap.software_missing == ()  # every tool shared, none missing
+    assert len(gap.essential_missing) == 5  # statistics, sql, python, r, ml
+    assert gap.coverage < MIN_REALISTIC_COVERAGE
+    assert gap.gap_too_large is True
 
 
 def test_onet_uses_its_own_higher_threshold_than_esco() -> None:

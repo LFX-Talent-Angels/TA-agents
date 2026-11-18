@@ -313,12 +313,26 @@ _PATHFIND_BECOME_RE = re.compile(
 _BARE_PATHFIND_RE = re.compile(rf"^{_A}(.+?)\s+to\s+{_A}(.+)$", re.IGNORECASE)
 _NOT_A_BARE_TITLE = re.compile(
     r"^(?:i|we|you|he|she|they|how|what|where|when|why|who|which|is|are|was|were|"
-    r"do|does|did|can|could|would|will|should|my|our|your|his|her|their)\b",
+    r"do|does|did|can|could|would|will|should|my|our|your|his|her|their|"
+    # A side that is itself one of these common directive/course words is the
+    # verb or heading of a sentence, not an occupation title ("Introduction
+    # to Python", "switch to bls" — neither "Introduction"/"switch" nor
+    # "Python"/"bls" is a job title, but nothing above caught them, #92).
+    r"introduction|intro|guide|welcome|switch|change|move|go|going|upgrade|"
+    r"update|convert|migrate|transition|port)\b",
     re.IGNORECASE,
 )
 
 
-def _pathfind_heuristic(question: str) -> PlanDraft | None:
+def _pathfind_heuristic(question: str, *, include_bare: bool = True) -> PlanDraft | None:
+    """``include_bare=False`` drops the marker-less "X to Y" fallback (#92):
+    it is permissive by design ("tried last" above) and reads ordinary
+    phrases with a bare "to" in them ("Introduction to Python", "switch to
+    bls") as two occupation titles. Good enough as a last-resort planner
+    fallback when there is no LLM to ask, wrong as a signal for
+    ``is_statement()``, which decides whether such a phrase should instead
+    be read as a hint about an open pick-list.
+    """
     text = question.strip()
     for pattern in _PATHFIND_RES:
         m = pattern.match(text)
@@ -343,6 +357,8 @@ def _pathfind_heuristic(question: str) -> PlanDraft | None:
                 secondary_subject=destination,
                 kind="occupation",
             )
+    if not include_bare:
+        return None
     m = _BARE_PATHFIND_RE.match(text)
     if m and not text.endswith("?"):
         start = _strip_suite_suffix(m.group(1).strip())
@@ -368,9 +384,11 @@ def denied_subject(question: str) -> str | None:
     return m.group(1).strip().rstrip("?.!") if m else None
 
 
-def _profile_intent_heuristic(question: str) -> PlanDraft | None:
+def _profile_intent_heuristic(
+    question: str, *, include_bare_pathfind: bool = True
+) -> PlanDraft | None:
     """A PlanDraft for pathfind/compare/goal/reject/standing patterns when the LLM planner fails."""
-    pathfind = _pathfind_heuristic(question)
+    pathfind = _pathfind_heuristic(question, include_bare=include_bare_pathfind)
     if pathfind is not None:
         return pathfind
     compare = _compare_heuristic(question)
@@ -418,8 +436,13 @@ def is_trivial_subject(subject: str | None) -> bool:
 
 
 def is_statement(question: str) -> bool:
-    """A compare, or a statement about the user ("I am a X", "my goal is X")."""
-    return _profile_intent_heuristic(question) is not None
+    """A compare, or a statement about the user ("I am a X", "my goal is X").
+
+    Never by the bare "X to Y" pathfind fallback (#92) — it is a last-resort
+    planner guess, too permissive to also decide whether an open pick-list
+    should stop narrowing.
+    """
+    return _profile_intent_heuristic(question, include_bare_pathfind=False) is not None
 
 
 def uses_llm_planner(client: LLMClient) -> bool:

@@ -10,6 +10,7 @@ from talent_angels.assistant.llm_plan import (
     _profile_intent_heuristic,
     interpret_question,
     is_compare,
+    is_statement,
     parse_plan_text,
     uses_llm_planner,
 )
@@ -250,11 +251,30 @@ def test_a_suite_qualifier_is_stripped_from_either_end(
         "I want to move to data analyst",
         "how do I get to data analyst",
         "what does a chef need to become a baker",
+        # The bare "X to Y" fallback used to read these as two occupation
+        # titles — neither side is a job title (#92).
+        "Introduction to Python",
+        "switch to bls",
     ],
 )
 def test_one_ended_questions_are_not_pathfind(question: str) -> None:
     draft = _profile_intent_heuristic(question)
     assert draft is None or draft.target != "pathfind"
+
+
+@pytest.mark.parametrize(
+    "question",
+    [
+        "plumber to electrician",
+        "Data analyst to general practitioner",
+    ],
+)
+def test_is_statement_ignores_the_bare_pathfind_fallback(question: str) -> None:
+    """#92: the bare "X to Y" fallback is a last-resort planner guess, too
+    permissive to also decide whether an open pick-list keeps narrowing —
+    is_statement must not treat a bare-matched phrase as a statement."""
+    assert _profile_intent_heuristic(question) is not None  # still a valid planner fallback
+    assert is_statement(question) is False
 
 
 def test_planner_prompt_teaches_the_compare_shape() -> None:

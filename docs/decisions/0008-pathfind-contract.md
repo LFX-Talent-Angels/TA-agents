@@ -284,3 +284,33 @@ No new threshold or heuristic was added here to paper over this; O\*NET
 pathfind through Pathfind honestly shows no essential/optional gap and
 never claims a full retrain, which is better than a borrowed software-
 overlap number standing in for a skill signal that was never measured.
+
+**2026-11-18 — #95: JobTech Pathfind does not work through chat yet.** The
+gap above already means `pathfind_one` only ever works with JobTech's own
+native (Swedish) titles — it has no English-title rescue. In chat this was
+worse than that: `PLAN_SYSTEM` told the planner to translate every
+subject/secondary_subject to English before Locate ever ran, with no
+exception, so even a user typing JobTech's own correct Swedish title
+("Frontend-utvecklare") had it rewritten to an English guess first, which
+then either matched nothing in JobTech or matched a different suite's
+unrelated node — a silent wrong answer, not an honest refusal.
+
+The prompt now carves out an exception: when the user's message names
+JobTech ("jobtech", "arbetsförmedlingen") the planner keeps the title in
+the user's own wording rather than translating it, which should make a
+question that explicitly says "...in jobtech" alongside both titles
+resolve correctly. But the ordinary phrasing a user actually types —
+JobTech's own titles with no suite word in the sentence at all ("path
+from Frontend-utvecklare to Systemutvecklare/Programmerare") — still has
+nothing in the planner's prompt to say "these are Swedish, not English":
+the carve-out only fires on the literal word, so the translation still
+happens. `select_suites` has the same blind spot one level up — with no
+suite named it falls back to every attached suite, not whichever suite
+was bound earlier in the conversation. Closing that needs either
+threading the turn's selected suite(s) into the planner's own prompt
+(today only the raw question text and profile line are sent — see
+`planner_message`), or wiring `rescue_jobtech` into `pathfind_one` as the
+paragraph above already flags. Neither is done here: JobTech Pathfind
+through chat should be treated as not supported for ordinary phrasing.
+`tests/integration/test_live_behaviour.py::test_pathfind_through_chat_in_jobtech`
+is `xfail` for exactly this case.

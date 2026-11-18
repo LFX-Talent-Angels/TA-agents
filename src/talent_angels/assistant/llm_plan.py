@@ -78,7 +78,12 @@ If the user asks for skills, neighbors, or what someone needs, target MUST be
 connect, not locate. Put only the occupation or skill name in subject — never
 the whole sentence. "Be" and "become" are the same wrapper.
 The map's titles are in English: write subject and secondary_subject in English,
-translating them if the user wrote another language ("enfermero" → "nurse").
+translating them if the user wrote another language ("enfermero" → "nurse") —
+EXCEPT when the user names JobTech ("jobtech", "arbetsförmedlingen") or sets
+suites to ["jobtech"]: JobTech's own titles are Swedish, not English, so keep
+a JobTech subject/secondary_subject exactly as the user wrote it; translating
+it to English breaks the match (#95 — JobTech Pathfind does not yet work
+through chat for any other phrasing, see ADR-0008).
 
 Do not invent node IDs. Do not write Cypher.
 

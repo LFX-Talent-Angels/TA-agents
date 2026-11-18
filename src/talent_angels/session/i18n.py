@@ -121,6 +121,16 @@ _EN: dict[str, str] = {
     "pathfind_route": "Route {number}: {chain}",
     "pathfind_more_routes": "(+{count} more routes)",
     "pathfind_no_route": "No route found within {steps} steps. The gap above still stands.",
+    "pathfind_unknown_job": (
+        'I don\'t know your current job yet. Tell me with "I am a ..." and ask again.'
+    ),
+    "pathfind_unknown_goal": (
+        'I don\'t know your goal yet. Tell me with "my goal is ..." and ask again.'
+    ),
+    "pathfind_unknown_both": (
+        'I don\'t know your current job or your goal yet. Tell me with "I am a ..." '
+        'and "my goal is ...", then ask again.'
+    ),
     # profile
     "profile_empty": (
         'I don\'t have much about you yet. Tell me your current job ("I am a …") '
@@ -243,6 +253,16 @@ _ES: dict[str, str] = {
     "pathfind_more_routes": "(+{count} rutas más)",
     "pathfind_no_route": (
         "No se encontró ninguna ruta en {steps} pasos. La brecha de arriba sigue siendo válida."
+    ),
+    "pathfind_unknown_job": (
+        'Todavía no sé cuál es tu trabajo actual. Dímelo con "soy ..." y pregunta otra vez.'
+    ),
+    "pathfind_unknown_goal": (
+        'Todavía no sé cuál es tu meta. Dímelo con "mi meta es ..." y pregunta otra vez.'
+    ),
+    "pathfind_unknown_both": (
+        "Todavía no sé cuál es tu trabajo actual ni tu meta. Dímelo con "
+        '"soy ..." y "mi meta es ...", y pregunta otra vez.'
     ),
     "profile_empty": (
         'Aún no sé mucho de ti. Dime tu trabajo actual ("soy …") o el trabajo al '
@@ -372,6 +392,16 @@ _SV: dict[str, str] = {
     "pathfind_more_routes": "(+{count} rutter till)",
     "pathfind_no_route": (
         "Ingen rutt hittades inom {steps} steg. Kompetensklyftan ovan gäller fortfarande."
+    ),
+    "pathfind_unknown_job": (
+        'Jag vet inte ditt nuvarande jobb än. Säg det med "jag är ..." och fråga igen.'
+    ),
+    "pathfind_unknown_goal": (
+        'Jag vet inte ditt mål än. Säg det med "mitt mål är ..." och fråga igen.'
+    ),
+    "pathfind_unknown_both": (
+        "Jag vet inte ditt nuvarande jobb eller ditt mål än. Säg det med "
+        '"jag är ..." och "mitt mål är ...", och fråga igen.'
     ),
     "profile_empty": (
         "Jag vet inte mycket om dig än. Berätta ditt nuvarande yrke (”jag är …”) "

@@ -31,7 +31,7 @@ from talent_angels.contracts import AgentResult, NodeRef
 from talent_angels.llm import LLMClient
 from talent_angels.llm.protocol import uses_chat_phrasing
 from talent_angels.memory.paths import checkpoint_db_path as _checkpoint_db_path
-from talent_angels.memory.profile import resolve_pathfind_subject
+from talent_angels.memory.profile import pathfind_reference_kind, resolve_pathfind_subject
 from talent_angels.runlog import usage_from_stage
 from talent_angels.skills.connect import connect
 from talent_angels.skills.locate import ESCO_SUITE_NAME, locate
@@ -231,6 +231,23 @@ def _dispatch_heuristic(
             }
         start_subject = resolve_pathfind_subject(draft.subject, suite_name=suite_name)
         target_subject = resolve_pathfind_subject(draft.secondary_subject, suite_name=suite_name)
+        unknown = [
+            f"pathfind_profile_unknown:{kind}"
+            for original, resolved in (
+                (draft.subject, start_subject),
+                (draft.secondary_subject, target_subject),
+            )
+            if resolved is None and (kind := pathfind_reference_kind(original)) is not None
+        ]
+        if unknown:
+            # "my job"/"my goal" named but nothing saved yet: an honest "I
+            # don't know that yet", never Locate searching the literal
+            # phrase (#94).
+            return {
+                "result": AgentResult(capability=capability, suite=suite_name, warnings=unknown),
+                "tool_calls": [],
+            }
+        assert start_subject is not None and target_subject is not None  # unknown is empty
         result, tool_calls = pathfind_one(suite, suite_name, start_subject, target_subject)
         return {"result": result, "tool_calls": tool_calls}
 

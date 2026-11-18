@@ -35,10 +35,35 @@ def test_a_real_title_is_returned_unchanged() -> None:
     assert resolve_pathfind_subject("software developer", suite_name="esco") == "software developer"
 
 
-def test_my_job_with_nothing_saved_falls_back_to_the_literal_text() -> None:
-    """No STANDING for this suite: Locate reports an honest miss on "my job"
-    rather than this guessing a title (ADR-0008: never invent)."""
-    assert resolve_pathfind_subject("my job", suite_name="esco") == "my job"
+def test_my_job_with_nothing_saved_returns_none_not_the_literal_phrase() -> None:
+    """No STANDING for this suite: returning the literal phrase would have
+    Locate search for "my job" and report a misleading "no node for that
+    phrase" miss — the real cause is we don't know the job yet, not a bad
+    search (#94)."""
+    assert resolve_pathfind_subject("my job", suite_name="esco") is None
+    assert resolve_pathfind_subject("my goal", suite_name="esco") is None
+
+
+def test_pathfind_reference_kind_identifies_job_and_goal_phrases() -> None:
+    from talent_angels.memory.profile import pathfind_reference_kind
+
+    assert pathfind_reference_kind("my job") == "job"
+    assert pathfind_reference_kind("my current role") == "job"
+    assert pathfind_reference_kind("my goal") == "goal"
+    assert pathfind_reference_kind("my career goal") == "goal"
+    assert pathfind_reference_kind("software developer") is None
+
+
+def test_my_job_and_goal_phrases_also_match_spanish_and_swedish() -> None:
+    _saved(
+        "STANDING[esco]: nurse  [esco:n1]   since: 2026-10-07",
+        "GOAL: midwife  [esco:m1]",
+    )
+
+    assert resolve_pathfind_subject("mi trabajo actual", suite_name="esco") == "nurse"
+    assert resolve_pathfind_subject("mitt nuvarande jobb", suite_name="esco") == "nurse"
+    assert resolve_pathfind_subject("mi meta", suite_name="esco") == "midwife"
+    assert resolve_pathfind_subject("mitt mål", suite_name="esco") == "midwife"
 
 
 def test_dispatch_heuristic_resolves_my_job_and_my_goal() -> None:
@@ -82,3 +107,44 @@ def test_dispatch_heuristic_resolves_my_job_and_my_goal() -> None:
 
     assert seen == ["nurse", "midwife"]
     assert [n.pref_label for n in out["result"].nodes[:2]] == ["nurse", "midwife"]
+
+
+def test_dispatch_heuristic_never_searches_my_job_or_my_goal_literally() -> None:
+    """Nothing saved: dispatch must report an honest "unknown" warning and
+    never call search_nodes with the literal phrase "my job"/"my goal" (#94)."""
+    from talent_angels.assistant.graph import _dispatch_heuristic
+    from talent_angels.assistant.llm_plan import PlanDraft
+    from talent_angels.assistant.planning import build_plan_for_capability
+    from talent_angels.suites.schema import SuiteSchema
+    from tests.fakes.taxonomy import FakeToolResult
+
+    schema = SuiteSchema(
+        skill_rel_types=("HAS_SKILL",),
+        optional_rel_values=frozenset({"optional"}),
+        group_rel_type=None,
+        group_node_kinds=frozenset(),
+    )
+    seen: list[str] = []
+
+    class _Suite:
+        suite_schema = schema
+
+        def search_nodes(self, text: str, kind: str | None = None) -> FakeToolResult:
+            seen.append(text)
+            return FakeToolResult()
+
+        def get_neighbors(self, node_id: str, rel_types: list[str] | None = None) -> FakeToolResult:
+            return FakeToolResult(warnings=["no_neighbors"])
+
+        def enumerate_paths(self, *a: object, **k: object) -> FakeToolResult:
+            return FakeToolResult(warnings=["no_path"])
+
+    plan = build_plan_for_capability("pathfind", suites=("esco",))
+    draft = PlanDraft(target="pathfind", subject="my job", secondary_subject="data analyst")
+    state = {"question": "path from my job to data analyst", "plan": plan, "plan_draft": draft}
+
+    out = _dispatch_heuristic(state, suite=_Suite(), suite_name="esco")
+
+    assert seen == []
+    assert out["result"].warnings == ["pathfind_profile_unknown:job"]
+    assert out["result"].nodes == []

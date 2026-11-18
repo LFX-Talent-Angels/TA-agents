@@ -273,20 +273,60 @@ def profile_entries() -> list[tuple[str, str, str]]:
 
 #: "my job"/"my goal" as a reference ("path from my job to data analyst"),
 #: not the GOAL_RE/STANDING_RE declaration forms ("my goal is X") those
-#: regexes already own (llm_plan.py). Checked case-insensitively.
+#: regexes already own (llm_plan.py). Checked case-insensitively. Spanish and
+#: Swedish equivalents included (#94) — i18n.py's own "you" strings aren't
+#: reused here since these are fixed reference phrases, not template text.
 _MY_JOB_PHRASES = frozenset(
-    {"my job", "my current job", "my current role", "my current occupation"}
+    {
+        "my job",
+        "my current job",
+        "my current role",
+        "my current occupation",
+        "mi trabajo",
+        "mi trabajo actual",
+        "mi puesto actual",
+        "mi ocupación actual",
+        "mitt jobb",
+        "mitt nuvarande jobb",
+        "min nuvarande roll",
+        "mitt nuvarande yrke",
+    }
 )
-_MY_GOAL_PHRASES = frozenset({"my goal", "my career goal"})
+_MY_GOAL_PHRASES = frozenset(
+    {
+        "my goal",
+        "my career goal",
+        "mi meta",
+        "mi objetivo",
+        "mi meta profesional",
+        "mi objetivo profesional",
+        "mitt mål",
+        "mitt karriärmål",
+    }
+)
 
 
-def resolve_pathfind_subject(text: str, *, suite_name: str) -> str:
+def pathfind_reference_kind(text: str) -> str | None:
+    """ "job" or "goal" when ``text`` is a "my job"/"my goal" reference, else None."""
+    normalized = text.strip().casefold()
+    if normalized in _MY_JOB_PHRASES:
+        return "job"
+    if normalized in _MY_GOAL_PHRASES:
+        return "goal"
+    return None
+
+
+def resolve_pathfind_subject(text: str, *, suite_name: str) -> str | None:
     """ "my job" / "my goal" -> the saved profile title for this suite; unchanged otherwise.
 
     "my job" resolves against this suite's own ``STANDING[suite_name]``; "my
     goal" resolves against ``GOAL`` (suite-free text, reused for any suite).
-    Falls back to the original text when nothing is saved — Locate then
-    reports an honest miss on "my job" rather than this guessing a title.
+    Returns None — never the literal phrase — when the reference has nothing
+    saved yet (#94): running "my job" through Locate as if it were a title
+    produced an honest-looking but misleading "no node for that phrase" miss,
+    blaming the search for not knowing the user's job. The caller is
+    expected to turn None into a reply that asks for "I am a ..." / "my goal
+    is ..." instead (``pathfind_reference_kind`` says which one).
     """
     normalized = text.strip().casefold()
     if normalized in _MY_JOB_PHRASES:
@@ -296,10 +336,10 @@ def resolve_pathfind_subject(text: str, *, suite_name: str) -> str:
                 for kind, suite, title in profile_entries()
                 if kind == "current" and suite == suite_name
             ),
-            text,
+            None,
         )
     if normalized in _MY_GOAL_PHRASES:
-        return next((title for kind, _, title in profile_entries() if kind == "goal"), text)
+        return next((title for kind, _, title in profile_entries() if kind == "goal"), None)
     return text
 
 

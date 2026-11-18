@@ -833,6 +833,20 @@ def _searched_for(question: str, draft: PlanDraft | None) -> str:
     return subject.strip() if subject and subject.strip() else question
 
 
+def _pathfind_unknown_profile_message(warnings: Sequence[str]) -> str | None:
+    """None, or the honest "I don't know that yet" for a "my job"/"my goal"
+    pathfind reference with nothing saved — never Locate's generic miss
+    text, which blames the search for not knowing the user's job (#94)."""
+    kinds = {w.split(":", 1)[1] for w in warnings if w.startswith("pathfind_profile_unknown:")}
+    if not kinds:
+        return None
+    if kinds == {"job"}:
+        return t("pathfind_unknown_job")
+    if kinds == {"goal"}:
+        return t("pathfind_unknown_goal")
+    return t("pathfind_unknown_both")
+
+
 def _from_single_outcome(
     state: SessionState,
     result: AgentResult,
@@ -923,6 +937,8 @@ def _from_single_outcome(
     elif result.capability == CAPABILITY_PATHFIND and len(result.nodes) >= 2:
         state.pending = []
         text = render_pathfind(result)
+    elif (unknown_profile := _pathfind_unknown_profile_message(result.warnings)) is not None:
+        text = unknown_profile
     elif "no_subject" in result.warnings:
         text = t("no_subject")
     else:
@@ -1246,7 +1262,7 @@ def _from_outcome(
         if not result.nodes or "not_found" in result.warnings:
             # A follow-up ("its skills") with nothing chosen in this suite is
             # not a search miss: the user still has to pick from its list.
-            message = (
+            message = _pathfind_unknown_profile_message(result.warnings) or (
                 f"No {heading} occupation is chosen yet. Pick one from its list or name one, "
                 "then ask again."
                 if {"bind_required", "no_subject"} & set(result.warnings)

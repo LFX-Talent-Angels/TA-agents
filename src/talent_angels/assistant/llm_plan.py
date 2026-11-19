@@ -19,6 +19,11 @@ from talent_angels.assistant.llm_call import measure_complete
 from talent_angels.assistant.planning import ExecutionPlan, build_plan, build_plan_for_capability
 from talent_angels.llm import LLMClient, Message
 from talent_angels.memory.plan_cache import get_plan, plan_key, set_plan
+from talent_angels.memory.profile import (
+    find_pathfind_references,
+    pathfind_reference_kind,
+    pathfind_reference_language,
+)
 from talent_angels.runlog import StageUsage
 from talent_angels.skills.connect.models import ConnectRequest
 from talent_angels.skills.locate import ESCO_SUITE_NAME
@@ -324,6 +329,97 @@ _NOT_A_BARE_TITLE = re.compile(
 )
 
 
+#: "path to X" (no "from"): a one-sided pathfind naming only the
+#: destination — the start is implied as "my job" (#94), never "my goal":
+#: a saved goal silently filling the start showed the wrong person's path.
+_PATHFIND_TARGET_ONLY_RE = re.compile(
+    rf"^(?:(?:skill\s+)?gap|path|route|career\s+path|learning\s+path)\s+to\s+{_A}(.+)$",
+    re.IGNORECASE,
+)
+#: "path from X" (no "to"): the mirror case, target implied as "my goal".
+_PATHFIND_START_ONLY_RE = re.compile(
+    rf"^(?:(?:skill\s+)?gap|path|route|career\s+path|learning\s+path)\s+from\s+{_A}(.+)$",
+    re.IGNORECASE,
+)
+
+
+def _profile_reference_pathfind(question: str) -> PlanDraft | None:
+    """A deterministic PlanDraft when a pathfind names "my job"/"my goal" —
+    literally on either side, or implied by naming only one side (#94).
+
+    Checked before any LLM call, with or without one configured: which
+    profile field fills which side must never depend on a model's prompt
+    compliance (observed live: a free model sometimes drops the subject
+    entirely for "path from my job to my goal", and has no instruction at
+    all for a bare "path to X" — it both silently started that from a
+    saved *goal* and, separately, mis-read the whole question as a title
+    search). AGENTS.md pushes this kind of resolution into code, not a
+    model call; ``resolve_pathfind_subject`` already refuses to guess a
+    real title for either placeholder.
+    """
+    text = question.strip()
+
+    def draft(start: str, target: str) -> PlanDraft:
+        # Bypassing the LLM means it never reads this message's language
+        # either — set it from whichever side is a known reference phrase,
+        # so set_language (session/kernel.py) still gets a real answer
+        # instead of silently staying on whatever language the last turn
+        # left it in.
+        lang = pathfind_reference_language(start) or pathfind_reference_language(target) or "en"
+        return PlanDraft(
+            target=CAPABILITY_PATHFIND,
+            subject=start,
+            secondary_subject=target,
+            kind="occupation",
+            language=lang,
+        )
+
+    for pattern in _PATHFIND_RES:
+        m = pattern.match(text)
+        if m:
+            start = _strip_suite_suffix(m.group(1).strip())
+            target = _strip_suite_suffix(_COMPARE_TAIL.sub("", m.group(2)).strip())
+            if (
+                start
+                and target
+                and (pathfind_reference_kind(start) or pathfind_reference_kind(target))
+            ):
+                return draft(start, target)
+            return None
+    m = _PATHFIND_BECOME_RE.match(text)
+    if m:
+        target = _strip_suite_suffix(m.group(1).strip())
+        start = _strip_suite_suffix(_COMPARE_TAIL.sub("", m.group(2)).strip())
+        if start and target and (pathfind_reference_kind(start) or pathfind_reference_kind(target)):
+            return draft(start, target)
+        return None
+    m = _PATHFIND_TARGET_ONLY_RE.match(text)
+    if m:
+        target = _strip_suite_suffix(_COMPARE_TAIL.sub("", m.group(1)).strip().rstrip("?.!"))
+        if target and " to " not in target.casefold():
+            return draft("my job", target)
+        return None
+    m = _PATHFIND_START_ONLY_RE.match(text)
+    if m:
+        start = _strip_suite_suffix(m.group(1).strip().rstrip("?.!"))
+        if start and " to " not in start.casefold():
+            return draft(start, "my goal")
+        return None
+    # No English marker matched: the sentence may still name both a job and
+    # a goal reference in another language/structure ("¿cómo paso de mi
+    # trabajo a mi meta?") — no per-language sentence regex owns that shape,
+    # so fall back to finding both phrases directly and ordering them by
+    # whichever appears first in the text (the side named first is the
+    # start, in every phrasing this covers).
+    job_ref, goal_ref = find_pathfind_references(text)
+    if job_ref and goal_ref:
+        start, target = (
+            (job_ref[0], goal_ref[0]) if job_ref[1] < goal_ref[1] else (goal_ref[0], job_ref[0])
+        )
+        return draft(start, target)
+    return None
+
+
 def _pathfind_heuristic(question: str, *, include_bare: bool = True) -> PlanDraft | None:
     """``include_bare=False`` drops the marker-less "X to Y" fallback (#92):
     it is permissive by design ("tried last" above) and reads ordinary
@@ -502,6 +598,16 @@ def interpret_question(
         return InterpretedPlan(
             plan=build_plan_for_capability(forced_capability, suites=selected),
             draft=None,
+            heuristic=True,
+            stage=None,
+        )
+    # Never left to the model, with or without one configured (#94) — see
+    # _profile_reference_pathfind's own docstring.
+    profile_draft = _profile_reference_pathfind(question)
+    if profile_draft is not None:
+        return InterpretedPlan(
+            plan=build_plan_for_capability(profile_draft.target, suites=selected),
+            draft=profile_draft,
             heuristic=True,
             stage=None,
         )

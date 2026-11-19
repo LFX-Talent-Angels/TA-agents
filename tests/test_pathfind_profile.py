@@ -3,7 +3,11 @@
 from __future__ import annotations
 
 from talent_angels.memory.paths import user_md
-from talent_angels.memory.profile import resolve_pathfind_subject
+from talent_angels.memory.profile import (
+    find_pathfind_references,
+    pathfind_reference_language,
+    resolve_pathfind_subject,
+)
 
 
 def _saved(*lines: str) -> None:
@@ -64,6 +68,28 @@ def test_my_job_and_goal_phrases_also_match_spanish_and_swedish() -> None:
     assert resolve_pathfind_subject("mitt nuvarande jobb", suite_name="esco") == "nurse"
     assert resolve_pathfind_subject("mi meta", suite_name="esco") == "midwife"
     assert resolve_pathfind_subject("mitt mål", suite_name="esco") == "midwife"
+
+
+def test_pathfind_reference_language_identifies_each_supported_language() -> None:
+    assert pathfind_reference_language("my job") == "en"
+    assert pathfind_reference_language("mi trabajo actual") == "es"
+    assert pathfind_reference_language("mitt mål") == "sv"
+    assert pathfind_reference_language("software developer") is None
+
+
+def test_find_pathfind_references_orders_by_position_in_the_sentence() -> None:
+    job, goal = find_pathfind_references("¿cómo paso de mi trabajo a mi meta en ESCO?")
+    assert job is not None and goal is not None
+    assert job[0] == "mi trabajo"
+    assert goal[0] == "mi meta"
+    assert job[1] < goal[1]
+
+    # the reverse order: goal named first
+    job2, goal2 = find_pathfind_references("mi meta es X, mi trabajo es Y")
+    assert job2 is not None and goal2 is not None
+    assert goal2[1] < job2[1]
+
+    assert find_pathfind_references("software developer") == (None, None)
 
 
 def test_dispatch_heuristic_resolves_my_job_and_my_goal() -> None:

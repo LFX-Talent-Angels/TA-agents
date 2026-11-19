@@ -124,6 +124,73 @@ def test_planner_prompt_asks_for_english_subjects() -> None:
     assert '("enfermero" → "nurse")' in PLAN_SYSTEM
 
 
+# --- #94: "my job"/"my goal" references never left to the planner --------
+
+
+@pytest.mark.parametrize(
+    ("question", "subject", "secondary_subject", "language"),
+    [
+        ("path from my job to my goal in ESCO", "my job", "my goal", "en"),
+        ("skill gap from my job to my goal", "my job", "my goal", "en"),
+        ("how to become my goal from my job", "my job", "my goal", "en"),
+        ("path to data analyst in ESCO", "my job", "data analyst", "en"),
+        ("path from data analyst in ESCO", "data analyst", "my goal", "en"),
+    ],
+)
+def test_profile_reference_pathfind_never_calls_the_llm(
+    question: str, subject: str, secondary_subject: str, language: str
+) -> None:
+    """#94: which profile field fills which side must be deterministic —
+    the LLM is not even called for these, so a weak/free model dropping the
+    subject or filling the wrong side from a saved goal cannot happen."""
+    client = ScriptedLLMClient('{"target":"locate","subject":"should not be used"}')
+
+    interpreted = interpret_question(question, suite_name="esco", llm_client=client)
+
+    assert interpreted.heuristic is True
+    assert interpreted.draft is not None
+    assert (interpreted.draft.subject, interpreted.draft.secondary_subject) == (
+        subject,
+        secondary_subject,
+    )
+    assert interpreted.draft.target == "pathfind"
+    assert interpreted.draft.language == language
+    assert client.calls == []  # the LLM was never asked
+
+
+def test_profile_reference_pathfind_reads_a_spanish_sentence_shape_too() -> None:
+    """No English marker regex owns "¿cómo paso de X a Y?" — fall back to
+    finding both phrases directly, in the order they appear."""
+    client = ScriptedLLMClient('{"target":"locate","subject":"should not be used"}')
+
+    interpreted = interpret_question(
+        "¿cómo paso de mi trabajo a mi meta en ESCO?", suite_name="esco", llm_client=client
+    )
+
+    assert interpreted.draft is not None
+    assert (interpreted.draft.subject, interpreted.draft.secondary_subject) == (
+        "mi trabajo",
+        "mi meta",
+    )
+    assert interpreted.draft.language == "es"
+    assert client.calls == []
+
+
+def test_an_ordinary_two_title_pathfind_still_asks_the_llm() -> None:
+    """Only a "my job"/"my goal" reference is intercepted — a pathfind
+    between two real titles keeps using the LLM as before."""
+    client = ScriptedLLMClient(
+        '{"target":"pathfind","subject":"nurse","secondary_subject":"data analyst"}'
+    )
+
+    interpreted = interpret_question(
+        "path from nurse to data analyst in ESCO", suite_name="esco", llm_client=client
+    )
+
+    assert interpreted.heuristic is False
+    assert len(client.calls) == 1
+
+
 @pytest.mark.parametrize(
     ("question", "intent", "subject"),
     [

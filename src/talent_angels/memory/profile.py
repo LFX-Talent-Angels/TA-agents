@@ -276,34 +276,47 @@ def profile_entries() -> list[tuple[str, str, str]]:
 #: regexes already own (llm_plan.py). Checked case-insensitively. Spanish and
 #: Swedish equivalents included (#94) — i18n.py's own "you" strings aren't
 #: reused here since these are fixed reference phrases, not template text.
-_MY_JOB_PHRASES = frozenset(
-    {
-        "my job",
-        "my current job",
-        "my current role",
-        "my current occupation",
-        "mi trabajo",
-        "mi trabajo actual",
-        "mi puesto actual",
-        "mi ocupación actual",
-        "mitt jobb",
-        "mitt nuvarande jobb",
-        "min nuvarande roll",
-        "mitt nuvarande yrke",
-    }
+#: Grouped by language (not just one flat set) so a caller that bypasses the
+#: LLM for this phrase — and so never gets the LLM's own ``language`` read
+#: of the message — can still tell ``set_language`` which language it was.
+_PROFILE_REFERENCE_PHRASES: dict[str, dict[str, frozenset[str]]] = {
+    "en": {
+        "job": frozenset({"my job", "my current job", "my current role", "my current occupation"}),
+        "goal": frozenset({"my goal", "my career goal"}),
+    },
+    "es": {
+        "job": frozenset(
+            {"mi trabajo", "mi trabajo actual", "mi puesto actual", "mi ocupación actual"}
+        ),
+        "goal": frozenset(
+            {"mi meta", "mi objetivo", "mi meta profesional", "mi objetivo profesional"}
+        ),
+    },
+    "sv": {
+        "job": frozenset(
+            {"mitt jobb", "mitt nuvarande jobb", "min nuvarande roll", "mitt nuvarande yrke"}
+        ),
+        "goal": frozenset({"mitt mål", "mitt karriärmål"}),
+    },
+}
+_MY_JOB_PHRASES = frozenset().union(
+    *(by_kind["job"] for by_kind in _PROFILE_REFERENCE_PHRASES.values())
 )
-_MY_GOAL_PHRASES = frozenset(
-    {
-        "my goal",
-        "my career goal",
-        "mi meta",
-        "mi objetivo",
-        "mi meta profesional",
-        "mi objetivo profesional",
-        "mitt mål",
-        "mitt karriärmål",
-    }
+_MY_GOAL_PHRASES = frozenset().union(
+    *(by_kind["goal"] for by_kind in _PROFILE_REFERENCE_PHRASES.values())
 )
+_PHRASE_LANGUAGE: dict[str, str] = {
+    phrase: lang
+    for lang, by_kind in _PROFILE_REFERENCE_PHRASES.items()
+    for phrases in by_kind.values()
+    for phrase in phrases
+}
+
+
+def pathfind_reference_language(phrase: str) -> str | None:
+    """The language code a "my job"/"my goal" reference phrase was matched
+    in ("en", "es", "sv"), or None if ``phrase`` is not one of them."""
+    return _PHRASE_LANGUAGE.get(phrase.strip().casefold())
 
 
 def pathfind_reference_kind(text: str) -> str | None:
@@ -314,6 +327,31 @@ def pathfind_reference_kind(text: str) -> str | None:
     if normalized in _MY_GOAL_PHRASES:
         return "goal"
     return None
+
+
+def find_pathfind_references(text: str) -> tuple[tuple[str, int] | None, tuple[str, int] | None]:
+    """The earliest "my job" reference and the earliest "my goal" reference
+    found anywhere in ``text`` (each as ``(phrase, character offset)``, or
+    None if that kind is not named at all).
+
+    For a pathfind phrased in a sentence shape no English regex owns (#94 —
+    e.g. Spanish "¿cómo paso de mi trabajo a mi meta?"), the caller can
+    still recognize a profile reference by scanning the raw text rather
+    than requiring a fixed sentence pattern per language. The offsets let
+    the caller order the two (job before goal, or the reverse) without
+    knowing the sentence's grammar.
+    """
+    normalized = text.casefold()
+
+    def earliest(phrases: frozenset[str]) -> tuple[str, int] | None:
+        best: tuple[str, int] | None = None
+        for phrase in phrases:
+            index = normalized.find(phrase)
+            if index != -1 and (best is None or index < best[1]):
+                best = (phrase, index)
+        return best
+
+    return earliest(_MY_JOB_PHRASES), earliest(_MY_GOAL_PHRASES)
 
 
 def resolve_pathfind_subject(text: str, *, suite_name: str) -> str | None:

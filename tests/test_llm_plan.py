@@ -211,6 +211,35 @@ def test_profile_heuristic_reads_statements(question: str, intent: str, subject:
     assert (draft.profile_intent, draft.subject) == (intent, subject)
 
 
+@pytest.mark.parametrize(
+    ("question", "subject"),
+    [
+        ("I am a web developer in ESCO", "web developer"),
+        ("my goal is software developer in ESCO", "software developer"),
+        ("I work as a nurse in O*NET", "nurse"),
+    ],
+)
+def test_profile_heuristic_strips_the_suite_suffix_too(question: str, subject: str) -> None:
+    """A goal/standing statement is a Locate-then-save, same as a plain
+    lookup: the suite names a graph, not part of the title (observed live —
+    "my goal is X in ESCO" previously saved nothing because Locate searched
+    the whole phrase, including "in ESCO")."""
+    draft = _profile_intent_heuristic(question)
+    assert draft is not None
+    assert draft.subject == subject
+
+
+def test_llm_planner_json_also_gets_the_suite_suffix_stripped() -> None:
+    """Not just the pathfind/compare heuristics: the model's own JSON is
+    not guaranteed to drop "in ESCO" either (observed live for a goal
+    statement) — parse_plan_text strips it from every capability's
+    subject/secondary_subject."""
+    draft = parse_plan_text(
+        '{"target":"locate","subject":"software developer in ESCO","profile_intent":"goal"}'
+    )
+    assert draft.subject == "software developer"
+
+
 @pytest.mark.parametrize("question", ["I am looking for a job", "I'm interested in tech", "chef"])
 def test_profile_heuristic_ignores_non_statements(question: str) -> None:
     assert _profile_intent_heuristic(question) is None

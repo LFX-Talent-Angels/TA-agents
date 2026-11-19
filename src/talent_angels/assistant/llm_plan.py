@@ -494,7 +494,7 @@ def _profile_intent_heuristic(
     if m:
         return PlanDraft(
             target=CAPABILITY_LOCATE,
-            subject=m.group(1).strip(),
+            subject=_strip_suite_suffix(m.group(1).strip()),
             kind="occupation",
             profile_intent="goal",
         )
@@ -510,7 +510,7 @@ def _profile_intent_heuristic(
     if m and m.group(1).split()[0].casefold() not in _NOT_AN_OCCUPATION:
         return PlanDraft(
             target=CAPABILITY_LOCATE,
-            subject=m.group(1).strip().rstrip(".!"),
+            subject=_strip_suite_suffix(m.group(1).strip().rstrip(".!")),
             kind="occupation",
             profile_intent="standing",
         )
@@ -554,7 +554,19 @@ def parse_plan_text(text: str) -> PlanDraft:
     payload = json.loads(match.group(0))
     if not isinstance(payload, dict):
         raise ValueError("planner JSON must be an object")
-    return PlanDraft.model_validate(payload)
+    draft = PlanDraft.model_validate(payload)
+    # A suite suffix ("web developer in ESCO") is reliably stripped by code
+    # for the pathfind/compare regex heuristics below, but the model's own
+    # JSON is not guaranteed to drop it — observed live: a goal/standing
+    # statement ("my goal is X in ESCO") kept the suffix in subject, so
+    # Locate searched the whole phrase and silently failed to resolve or
+    # save it. Strip it here once, for every capability, not only pathfind.
+    update: dict[str, str] = {}
+    if draft.subject:
+        update["subject"] = _strip_suite_suffix(draft.subject)
+    if draft.secondary_subject:
+        update["secondary_subject"] = _strip_suite_suffix(draft.secondary_subject)
+    return draft.model_copy(update=update) if update else draft
 
 
 def connect_request_from_draft(

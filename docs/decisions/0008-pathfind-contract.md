@@ -172,3 +172,75 @@ count measured). Whether this is a genuine graph-structure difference
 between ESCO and O\*NET or an artifact of the suite's own default
 `max_depth=4` is unknown from 4 data points — flagged here as a finding
 for a wider O\*NET golden pairs set to confirm, not a conclusion.
+(Resolved upstream by PF-1: TA-taxonomies fixed `enumerate_paths` for
+O\*NET, and the same pairs now return routes.)
+
+**2026-11-15 — PF-2: software split out of the gap; a coverage floor added
+for the cases essential-count alone misses.** Re-measuring the O\*NET
+pairs above with `essential`/`optional`/`software` tracked separately
+(rather than one combined count) found every one of them had **zero**
+non-software essential/optional gap — the entire count the first
+amendment measured was `USES_SOFTWARE` edges (named tools), not skills or
+knowledge. O*NET's generic skill/knowledge taxonomy barely differentiates
+between occupations at all once software is excluded. `MAX_REALISTIC_GAP_SKILLS["onet"]`
+(60) is left as-is but now rarely fires in practice; it is not removed, in
+case a wider golden pairs set finds real skill/knowledge differentiation
+this one did not.
+
+`SkillGap` gained `software_missing` (always separate, regardless of
+`relation_type` — a software edge never carried essential/optional signal
+to begin with) and `coverage` (share of the target's skills, including
+software, the start already has). A new floor,
+`MIN_REALISTIC_COVERAGE = 0.20`, flags `gap_too_large` when coverage is
+below it, independent of the essential-count check — this is the "share
+already covered" test the original PF-2 ask named, catching the case the
+essential-only threshold missed: ESCO "data analyst" → "general
+practitioner" has only 10 essential-missing (under the threshold of 15)
+but 46 optional-missing and 0% coverage once both are counted.
+
+The floor (0.20) is deliberately conservative: of 16 live pairs measured
+(10 ESCO, 6 O\*NET — the set grown from 10 total per PF-2's own ask),
+only the clearest 0–15% cases sit below it. One pair, ESCO "civil
+engineer" → "construction engineer" at 27%, sits close above the line
+and was left unflagged — a genuine judgement call, not yet confirmed
+either way by enough data to move the number with confidence.
+
+**2026-11-18 — #90: `coverage` excludes software on both sides of the
+ratio.** The amendment above shipped `coverage` counting software same as
+skills — exactly the problem the software split itself names a few
+paragraphs up: O\*NET lists dozens to hundreds of named tools per
+occupation, so a tool-heavy pair's coverage ratio ends up decided almost
+entirely by tool overlap, not by the real essential/optional skill gap the
+floor is meant to protect. `compute_gap` now computes `coverage` as
+`shared-skills / (shared-skills + essential-missing + optional-missing)`,
+with every `USES_SOFTWARE` node — shared or missing — left out of both
+sides of that ratio. The 0.20 floor and the ESCO live pairs it was
+measured against (above) were themselves already software-free in every
+case, so this fix changes none of their `gap_too_large` verdicts. It does
+change O\*NET's — see the next amendment.
+
+**2026-11-19 — #90 follow-up: O\*NET's `gap_too_large` can never fire from
+`compute_gap` data alone.** Re-measuring all 6 live O\*NET golden pairs
+after the fix above confirmed essential-missing and optional-missing were
+already 0 for every one of them before this fix too (PF-2's own finding) —
+O\*NET's generic skill/knowledge taxonomy lists effectively the same set
+for every occupation, so `only_b` outside `USES_SOFTWARE` is empty
+regardless of how unrelated the pair is. With software now excluded from
+`coverage` as well, `coverage` is `shared / (shared + 0 + 0)`, which is
+1.0 whenever the two occupations share even one non-software skill — true
+of every pair measured, including "Registered Nurses" → "Software
+Developers". Two of the six golden pairs (`Registered Nurses` → `Software
+Developers`, 0.114 → 1.0; `Registered Nurses` → `Computer Programmers`,
+0.1494 → 1.0) flip from `gap_too_large: true` to `false`; the other four
+were already above the floor on the old formula and stay `false`.
+`tests/evals/golden_pathfind.json`'s O\*NET entries were re-captured live
+against the same graph (O\*NET 31.0) to match. This is an honest
+consequence of #90, not a new bug: a tool-heavy O\*NET pair no longer
+buys its way past the floor on software overlap (the fix's actual goal),
+but O\*NET currently has no other signal to flag a large gap with — a
+real one needs each skill/knowledge item's `importance`/`level` value,
+which `compute_gap` does not read today (Evaluator work, not Pathfind's).
+No new threshold or heuristic was added here to paper over this; O\*NET
+pathfind through Pathfind honestly shows no essential/optional gap and
+never claims a full retrain, which is better than a borrowed software-
+overlap number standing in for a skill signal that was never measured.

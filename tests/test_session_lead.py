@@ -86,6 +86,29 @@ def test_next_step_follows_the_profile_intent() -> None:
     assert plain.endswith("Pick the one you mean, or tell me more and I'll narrow it.")
 
 
+def test_pathfind_side_names_the_target_when_the_target_is_ambiguous() -> None:
+    """#91: after the start is picked ("surgeon" -> "tree surgeon"), the
+    question is re-asked with the target still bare ("nurse") — the lead
+    sentence must name "nurse", not the already-resolved start."""
+    draft = PlanDraft(target="pathfind", subject="tree surgeon", secondary_subject="nurse")
+    result = _result(
+        "esco", "nurse", "nurse practitioner", warnings=("ambiguous", "pathfind_side:target")
+    )
+    assert understood("path from tree surgeon to nurse", draft, [result]) == (
+        "To find the path from tree surgeon to nurse, I first need to know which nurse you mean."
+    )
+
+
+def test_pathfind_side_names_the_start_when_the_start_is_ambiguous() -> None:
+    draft = PlanDraft(target="pathfind", subject="surgeon", secondary_subject="nurse")
+    result = _result(
+        "esco", "surgeon", "tree surgeon", warnings=("ambiguous", "pathfind_side:start")
+    )
+    assert understood("path from surgeon to nurse", draft, [result]) == (
+        "To find the path from surgeon to nurse, I first need to know which surgeon you mean."
+    )
+
+
 def test_suggestions_are_not_saved_as_the_current_job() -> None:
     from talent_angels.session.lead import pick_intent
 

@@ -2,8 +2,9 @@
 
 Skipped (not failed) when Neo4j isn't reachable, per CONTRIBUTING.md. This
 is also the set ADR-0008 decision 5 names as the source of truth for
-MAX_REALISTIC_GAP_SKILLS — see tests/evals/golden_pathfind.json's note and
-skills/pathfind/gap.py's module comment for how these numbers were used.
+MAX_REALISTIC_GAP_SKILLS and (PF-2) MIN_REALISTIC_COVERAGE — see
+tests/evals/golden_pathfind.json's note and skills/pathfind/gap.py's module
+comments for how these numbers were used.
 """
 
 from __future__ import annotations
@@ -104,6 +105,8 @@ def test_golden_pathfind_case(case: dict) -> None:
 
     assert len(gap.essential_missing) == case["expected_essential_missing"]
     assert len(gap.optional_missing) == case["expected_optional_missing"]
+    assert len(gap.software_missing) == case["expected_software_missing"]
+    assert round(gap.coverage, 4) == case["expected_coverage"]
     assert gap.gap_too_large == case["expected_gap_too_large"]
     assert (len(routes.routes) > 0) == case["expected_has_route"]
     assert sorted(routes.warnings) == case["expected_route_warnings"]

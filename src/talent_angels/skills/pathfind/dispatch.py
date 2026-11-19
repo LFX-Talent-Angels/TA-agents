@@ -8,11 +8,11 @@ connect each, and report which side needs a pick rather than guessing one.
 
 from __future__ import annotations
 
-from talent_angels.contracts import AgentResult, EdgeRef, NodeRef
+from talent_angels.contracts import AgentResult, EdgeRef, NodeRef, Route
 from talent_angels.runlog import ToolCall
 from talent_angels.skills.connect import ConnectRequest, connect
 from talent_angels.skills.locate import locate
-from talent_angels.skills.locate.rank import group_and_sort_locate
+from talent_angels.skills.locate.rank import _near_pref_label, group_and_sort_locate
 from talent_angels.skills.pathfind.gap import compute_gap
 from talent_angels.skills.pathfind.routes import find_routes, supports_enumerate_paths
 from talent_angels.suites.measured import MeasuredSuite
@@ -34,6 +34,14 @@ def _locate_and_connect(
         group_rel_type=schema.group_rel_type,
         group_node_kinds=schema.group_node_kinds,
     )
+    if located.nodes and "ambiguous" not in located.warnings:
+        if not _near_pref_label(subject, located.nodes[0]) and len(found.nodes) > 1:
+            # Not the title the user typed ("surgeon" -> "tree surgeon"): a
+            # pathfind never picks a side for the user, same rule compare_one
+            # already follows.
+            located = found.model_copy(
+                update={"warnings": list(dict.fromkeys([*found.warnings, "ambiguous"]))}
+            )
     if not located.nodes or "ambiguous" in located.warnings:
         # Which side needs a pick — a pathfind never guesses one for the user.
         marked = located.model_copy(
@@ -94,20 +102,31 @@ def pathfind_one(
 
     gap = compute_gap(start_result, target_result, optional_rel_values=schema.optional_rel_values)
 
-    missing_ids = {node.id for node in (*gap.essential_missing, *gap.optional_missing)}
+    missing_ids = {
+        node.id for node in (*gap.essential_missing, *gap.optional_missing, *gap.software_missing)
+    }
     gap_edges = [
         edge
         for edge in target_result.edges
         if edge.source_node_id in missing_ids or edge.target_node_id in missing_ids
     ]
 
-    nodes: list[NodeRef] = [start_node, target_node, *gap.essential_missing, *gap.optional_missing]
+    # Skills and knowledge first, named software tools last (PF-2) — never
+    # mixed into the essential/optional counts above them.
+    nodes: list[NodeRef] = [
+        start_node,
+        target_node,
+        *gap.essential_missing,
+        *gap.optional_missing,
+        *gap.software_missing,
+    ]
     edges: list[EdgeRef] = list(gap_edges)
     seen_ids = {node.id for node in nodes}
     warnings = list(dict.fromkeys([*start_result.warnings, *target_result.warnings]))
     if gap.gap_too_large:
         warnings.append("gap_too_large")
 
+    route_models: list[Route] = []
     if supports_enumerate_paths(measured):
         routes = find_routes(measured, suite_name, start_node.id, target_node.id)
         for route in routes.routes:
@@ -116,6 +135,9 @@ def pathfind_one(
                     seen_ids.add(node.id)
                     nodes.append(node)
             edges.extend(route.edges)
+            route_models.append(
+                Route(node_ids=[node.id for node in route.nodes], edges=list(route.edges))
+            )
         for warning in routes.warnings:
             if warning not in warnings:
                 warnings.append(warning)
@@ -128,5 +150,6 @@ def pathfind_one(
         edges=edges,
         evidence=evidence,
         warnings=warnings,
+        routes=route_models,
     )
     return result, measured.tool_calls

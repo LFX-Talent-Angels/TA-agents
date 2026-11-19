@@ -52,6 +52,26 @@ def compare_side_subject(result: AgentResult, draft: PlanDraft | None) -> str | 
     return draft.subject if side == "1" else draft.secondary_subject
 
 
+def pathfind_side_subject(result: AgentResult, draft: PlanDraft | None) -> str | None:
+    """Which named subject this result's pathfind-side ambiguity is about, if any.
+
+    A pathfind with both sides ambiguous resolves one side at a time: once
+    the start is picked, the question is re-asked with that side resolved
+    and the target still a bare name (or the other way round). The side
+    must be read per result's own ``pathfind_side:`` warning — assuming it
+    is always the start named "I looked up" the side already picked, not
+    the one the list in front of the user is actually about (#91).
+    """
+    if draft is None or not draft.subject or not draft.secondary_subject:
+        return None
+    side = next(
+        (w.split(":", 1)[1] for w in result.warnings if w.startswith("pathfind_side:")), None
+    )
+    if side is None:
+        return None
+    return draft.subject if side == "start" else draft.secondary_subject
+
+
 def understood(question: str, draft: PlanDraft | None, results: Sequence[AgentResult] = ()) -> str:
     """ "I read "SWE" as software engineer, software developer or web developer."
 
@@ -70,6 +90,18 @@ def understood(question: str, draft: PlanDraft | None, results: Sequence[AgentRe
             first=draft.subject,
             second=draft.secondary_subject,
             subject=waiting,
+        )
+    pathfind_waiting = next(
+        (subject for result in results if (subject := pathfind_side_subject(result, draft))),
+        None,
+    )
+    if pathfind_waiting and draft is not None and draft.subject and draft.secondary_subject:
+        # "path from nurse to doctor": say which side (start or target) needs a pick.
+        return t(
+            "pathfind_needs_pick",
+            first=draft.subject,
+            second=draft.secondary_subject,
+            subject=pathfind_waiting,
         )
     subject = (draft.subject or "").strip() if draft is not None else ""
     subject = subject or said

@@ -214,10 +214,33 @@ entirely by tool overlap, not by the real essential/optional skill gap the
 floor is meant to protect. `compute_gap` now computes `coverage` as
 `shared-skills / (shared-skills + essential-missing + optional-missing)`,
 with every `USES_SOFTWARE` node — shared or missing — left out of both
-sides of that ratio. The 0.20 floor and the live pairs it was measured
-against (above) were themselves already software-free in every case: the
-PF-2 finding was that software was 100% of those pairs' *first-amendment*
-combined count, not that it was present in the non-software skill/
-knowledge counts those pairs are flagged on, so this fix changes no
-existing live pair's `gap_too_large` verdict — it only stops a
-software-tool-heavy pair from silently buying its way past the floor.
+sides of that ratio. The 0.20 floor and the ESCO live pairs it was
+measured against (above) were themselves already software-free in every
+case, so this fix changes none of their `gap_too_large` verdicts. It does
+change O\*NET's — see the next amendment.
+
+**2026-11-19 — #90 follow-up: O\*NET's `gap_too_large` can never fire from
+`compute_gap` data alone.** Re-measuring all 6 live O\*NET golden pairs
+after the fix above confirmed essential-missing and optional-missing were
+already 0 for every one of them before this fix too (PF-2's own finding) —
+O\*NET's generic skill/knowledge taxonomy lists effectively the same set
+for every occupation, so `only_b` outside `USES_SOFTWARE` is empty
+regardless of how unrelated the pair is. With software now excluded from
+`coverage` as well, `coverage` is `shared / (shared + 0 + 0)`, which is
+1.0 whenever the two occupations share even one non-software skill — true
+of every pair measured, including "Registered Nurses" → "Software
+Developers". Two of the six golden pairs (`Registered Nurses` → `Software
+Developers`, 0.114 → 1.0; `Registered Nurses` → `Computer Programmers`,
+0.1494 → 1.0) flip from `gap_too_large: true` to `false`; the other four
+were already above the floor on the old formula and stay `false`.
+`tests/evals/golden_pathfind.json`'s O\*NET entries were re-captured live
+against the same graph (O\*NET 31.0) to match. This is an honest
+consequence of #90, not a new bug: a tool-heavy O\*NET pair no longer
+buys its way past the floor on software overlap (the fix's actual goal),
+but O\*NET currently has no other signal to flag a large gap with — a
+real one needs each skill/knowledge item's `importance`/`level` value,
+which `compute_gap` does not read today (Evaluator work, not Pathfind's).
+No new threshold or heuristic was added here to paper over this; O\*NET
+pathfind through Pathfind honestly shows no essential/optional gap and
+never claims a full retrain, which is better than a borrowed software-
+overlap number standing in for a skill signal that was never measured.

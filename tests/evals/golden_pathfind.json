@@ -1,5 +1,5 @@
 {
-  "note": "Expected values captured from a live run against ESCO v1.2.1 and O*NET 31.0 (2026-11-15), via skills/pathfind/dispatch.py's own locate+connect+compute_gap+find_routes calls (not pathfind_one's merged AgentResult, to keep essential/optional/software/route counts separable). PF-2: the gap is split into essential, optional and software (named tools, e.g. O*NET USES_SOFTWARE) \u2014 software is never counted as essential/optional. gap_too_large is true when essential-missing exceeds the suite's threshold (skills/pathfind/gap.py) OR coverage (shared / total target skills+software) is below MIN_REALISTIC_COVERAGE (0.20).",
+  "note": "Expected values captured from a live run against ESCO v1.2.1 and O*NET 31.0 (2026-11-15; O*NET coverage/gap_too_large re-captured 2026-11-19 after #90), via skills/pathfind/dispatch.py's own locate+connect+compute_gap+find_routes calls (not pathfind_one's merged AgentResult, to keep essential/optional/software/route counts separable). PF-2: the gap is split into essential, optional and software (named tools, e.g. O*NET USES_SOFTWARE) \u2014 software is never counted as essential/optional. gap_too_large is true when essential-missing exceeds the suite's threshold (skills/pathfind/gap.py) OR coverage is below MIN_REALISTIC_COVERAGE (0.20). #90: coverage is shared-skills / (shared-skills + essential-missing + optional-missing) \u2014 software is excluded from both sides, not just essential/optional. On O*NET every occupation lists the same generic skill/knowledge set, so essential-missing and optional-missing are always 0 and coverage is always 1.0 here; see ADR-0008's #90 amendment for why gap_too_large can never fire on O*NET from this data alone.",
   "cases": [
     {
       "suite": "esco",
@@ -150,7 +150,7 @@
       "expected_essential_missing": 0,
       "expected_optional_missing": 0,
       "expected_software_missing": 194,
-      "expected_coverage": 0.5828,
+      "expected_coverage": 1.0,
       "expected_gap_too_large": false,
       "expected_has_route": true,
       "expected_route_warnings": []
@@ -164,8 +164,8 @@
       "expected_essential_missing": 0,
       "expected_optional_missing": 0,
       "expected_software_missing": 412,
-      "expected_coverage": 0.114,
-      "expected_gap_too_large": true,
+      "expected_coverage": 1.0,
+      "expected_gap_too_large": false,
       "expected_has_route": true,
       "expected_route_warnings": []
     },
@@ -178,7 +178,7 @@
       "expected_essential_missing": 0,
       "expected_optional_missing": 0,
       "expected_software_missing": 51,
-      "expected_coverage": 0.8903,
+      "expected_coverage": 1.0,
       "expected_gap_too_large": false,
       "expected_has_route": true,
       "expected_route_warnings": []
@@ -192,8 +192,8 @@
       "expected_essential_missing": 0,
       "expected_optional_missing": 0,
       "expected_software_missing": 279,
-      "expected_coverage": 0.1494,
-      "expected_gap_too_large": true,
+      "expected_coverage": 1.0,
+      "expected_gap_too_large": false,
       "expected_has_route": true,
       "expected_route_warnings": []
     },
@@ -206,7 +206,7 @@
       "expected_essential_missing": 0,
       "expected_optional_missing": 0,
       "expected_software_missing": 35,
-      "expected_coverage": 0.8776,
+      "expected_coverage": 1.0,
       "expected_gap_too_large": false,
       "expected_has_route": true,
       "expected_route_warnings": []
@@ -220,7 +220,7 @@
       "expected_essential_missing": 0,
       "expected_optional_missing": 0,
       "expected_software_missing": 18,
-      "expected_coverage": 0.6897,
+      "expected_coverage": 1.0,
       "expected_gap_too_large": false,
       "expected_has_route": true,
       "expected_route_warnings": []

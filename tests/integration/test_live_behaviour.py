@@ -256,19 +256,11 @@ def test_pathfind_through_chat_in_bls(chat: Chat) -> None:
     assert "From" in reply.text and "to" in reply.text
 
 
-@pytest.mark.xfail(
-    reason=(
-        "#95: JobTech's own titles are Swedish, not English — the planner's "
-        "English-title rescue for JobTech is not wired into pathfind_one "
-        "(known gap, documented in ADR-0008), so even naming the suite "
-        "explicitly does not yet make this pair resolve through chat. "
-        "Remove this xfail once that gap is closed."
-    ),
-    strict=False,
-)
 def test_pathfind_through_chat_in_jobtech(chat: Chat) -> None:
-    reply = chat.say(
-        "path from Frontend-utvecklare to Systemutvecklare/Programmerare in JobTech"
-    )
+    """Naming the suite explicitly keeps the planner from translating
+    JobTech's own Swedish titles to English (#95) — confirmed live. A bare
+    "path from X to Y" with no suite named is still unsupported for
+    JobTech (ADR-0008's #95 amendment), but that is not what this asks."""
+    reply = chat.say("path from Frontend-utvecklare to Systemutvecklare/Programmerare in JobTech")
     assert reply.source_note == "JobTech"
     assert "Essential skills needed" in reply.text

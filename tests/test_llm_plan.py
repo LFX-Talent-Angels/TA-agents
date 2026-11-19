@@ -10,6 +10,7 @@ from talent_angels.assistant.llm_plan import (
     _profile_intent_heuristic,
     interpret_question,
     is_compare,
+    is_statement,
     parse_plan_text,
     uses_llm_planner,
 )
@@ -211,6 +212,10 @@ def test_pathfind_with_two_ends_is_not_a_compare() -> None:
         ("from nurse to data analyst", "nurse", "data analyst"),
         ("how to become a data analyst from a nurse", "nurse", "data analyst"),
         ("how do I become a data scientist from an accountant", "accountant", "data scientist"),
+        # Bare "X to Y", no "from"/"path"/"gap" marker at all (PF-4, brief's
+        # own Q4: "Data analyst to general practitioner").
+        ("Data analyst to general practitioner", "Data analyst", "general practitioner"),
+        ("plumber to electrician", "plumber", "electrician"),
     ],
 )
 def test_pathfind_heuristic_reads_both_ends(question: str, start: str, destination: str) -> None:
@@ -222,11 +227,54 @@ def test_pathfind_heuristic_reads_both_ends(question: str, start: str, destinati
 
 
 @pytest.mark.parametrize(
-    "question", ["what skills does a chef need?", "I want to become a web developer"]
+    ("question", "start", "destination"),
+    [
+        ("path from nurse to data analyst in ESCO", "nurse", "data analyst"),
+        ("nurse to data analyst in O*NET", "nurse", "data analyst"),
+    ],
+)
+def test_a_suite_qualifier_is_stripped_from_either_end(
+    question: str, start: str, destination: str
+) -> None:
+    """ "web developer in ESCO" names a graph, not part of the title — Locate
+    must not search the whole phrase including the suite name (PF-4)."""
+    draft = _profile_intent_heuristic(question)
+    assert draft is not None
+    assert (draft.subject, draft.secondary_subject) == (start, destination)
+
+
+@pytest.mark.parametrize(
+    "question",
+    [
+        "what skills does a chef need?",
+        "I want to become a web developer",
+        "I want to move to data analyst",
+        "how do I get to data analyst",
+        "what does a chef need to become a baker",
+        # The bare "X to Y" fallback used to read these as two occupation
+        # titles — neither side is a job title (#92).
+        "Introduction to Python",
+        "switch to bls",
+    ],
 )
 def test_one_ended_questions_are_not_pathfind(question: str) -> None:
     draft = _profile_intent_heuristic(question)
     assert draft is None or draft.target != "pathfind"
+
+
+@pytest.mark.parametrize(
+    "question",
+    [
+        "plumber to electrician",
+        "Data analyst to general practitioner",
+    ],
+)
+def test_is_statement_ignores_the_bare_pathfind_fallback(question: str) -> None:
+    """#92: the bare "X to Y" fallback is a last-resort planner guess, too
+    permissive to also decide whether an open pick-list keeps narrowing —
+    is_statement must not treat a bare-matched phrase as a statement."""
+    assert _profile_intent_heuristic(question) is not None  # still a valid planner fallback
+    assert is_statement(question) is False
 
 
 def test_planner_prompt_teaches_the_compare_shape() -> None:

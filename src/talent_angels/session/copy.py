@@ -49,12 +49,6 @@ UNKNOWN_COMMAND = "{token} isn't a command. /help lists the ones I know."
 
 LOCATE_MISS = "No node for that phrase with today's search. That's a miss, not a maybe."
 
-PATHFIND_REDIRECT = (
-    "Learning paths between two roles aren't available yet — they're coming. "
-    "For now, try 'compare teacher and data analyst' to see which skills they "
-    "share and which only one of them needs."
-)
-
 MAP_NEXT_STEP = "You can ask for essential skills, optional skills, or pick another number."
 
 # GAP F: the initial connect answer previews CONNECT_PREVIEW_CAP skills; beyond

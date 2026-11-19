@@ -261,7 +261,7 @@ Expect JSON with `plan`, `answer`, `tools`, `tokens`, `cost_usd`.
 | Where is *X* | Locate (`search_nodes`) |
 | Essential skills of *X* | Locate then Connect (`get_neighbors`) |
 | Ambiguous *developer* | Locate + clarification, no neighbors |
-| Path / gap from A to B | Honest Pathfind refusal, no fake skill list |
+| Path / gap from A to B | Pathfind: the real skill gap, routes, and a full-retrain flag when the gap is too large |
 
 Batch-tag a whole client document instead of chatting row by row: see [`docs/tagging.md`](./docs/tagging.md) (`ta-agent tag <project>`).
 
@@ -317,7 +317,7 @@ pytest -q tests/integration -rs
 ```
 src/talent_angels/
 ├── assistant/    # LangGraph: intent → plan → tool loop → answer
-├── skills/       # locate / connect / pathfind (skeleton) / evaluate
+├── skills/       # locate / connect / pathfind / evaluate (skeleton)
 ├── contracts/    # AgentResult
 ├── llm/          # LiteLLM + stub
 ├── runlog/       # JSONL + rate card

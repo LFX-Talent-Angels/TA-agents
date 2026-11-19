@@ -50,13 +50,27 @@ class EvidencePointer(BaseModel):
     pointer: str  # citation string from the suite tool, e.g. "esco:search:exact_pref:..."
 
 
-class AgentResult(BaseModel):
-    """Returned by every skill dispatch (locate/connect)."""
+class Route(BaseModel):
+    """One start-to-target chain, in order (Pathfind only).
 
-    capability: str  # locate | connect
+    Pathfinder fills this; the Evaluator only reads it, never changes a route.
+    Every id in ``node_ids`` is also in the result's own ``nodes`` list — this
+    holds the shape, not a second copy of each node. ``edges[i]`` joins
+    ``node_ids[i]`` and ``node_ids[i + 1]``.
+    """
+
+    node_ids: list[str]
+    edges: list[EdgeRef]
+
+
+class AgentResult(BaseModel):
+    """Returned by every skill dispatch (locate/connect/pathfind)."""
+
+    capability: str  # locate | connect | pathfind
     suite: str  # esco | onet | sfia | bls | ...
     nodes: list[NodeRef] = Field(default_factory=list)
     edges: list[EdgeRef] = Field(default_factory=list)
     evidence: list[EvidencePointer] = Field(default_factory=list)
     confidence: float | None = None
     warnings: list[str] = Field(default_factory=list)  # e.g. "ambiguous", "not_found"
+    routes: list[Route] = Field(default_factory=list)  # pathfind only; empty otherwise

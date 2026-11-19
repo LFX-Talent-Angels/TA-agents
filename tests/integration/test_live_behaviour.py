@@ -211,3 +211,16 @@ def test_hint_narrows_the_list_and_a_pick_saves_the_goal(chat: Chat) -> None:
     first = chat.state.pending[0].node.pref_label
     chat.say("1")
     assert f"GOAL: {first}" in profile()
+
+
+# --- Pathfind + saved profile (PF-5, #94) --------------------------------
+
+
+def test_pathfind_with_nothing_saved_says_so_honestly(chat: Chat) -> None:
+    """A fresh profile: "my job"/"my goal" must never be searched as a
+    literal title — that produced a misleading "no node for that phrase"
+    miss that blamed the search instead of saying the job/goal is unknown."""
+    reply = chat.say("path from my job to my goal in ESCO")
+    assert "don't know your current job" in reply.text
+    assert "don't know" in reply.text and "goal" in reply.text
+    assert "No node for that phrase" not in reply.text

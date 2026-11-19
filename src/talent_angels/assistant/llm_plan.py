@@ -13,11 +13,17 @@ from talent_angels.assistant.intent import (
     CAPABILITY_LOCATE,
     CAPABILITY_PATHFIND,
     Capability,
+    _in_suite_suffixes,
 )
 from talent_angels.assistant.llm_call import measure_complete
 from talent_angels.assistant.planning import ExecutionPlan, build_plan, build_plan_for_capability
 from talent_angels.llm import LLMClient, Message
 from talent_angels.memory.plan_cache import get_plan, plan_key, set_plan
+from talent_angels.memory.profile import (
+    find_pathfind_references,
+    pathfind_reference_kind,
+    pathfind_reference_language,
+)
 from talent_angels.runlog import StageUsage
 from talent_angels.skills.connect.models import ConnectRequest
 from talent_angels.skills.locate import ESCO_SUITE_NAME
@@ -101,7 +107,9 @@ Same connect shape for: "what skills does a X need", "what skills I need to be
 a X", "skills I need to become a X".
 Same locate shape for: "what is a X", "what does a X do", "where is X".
 Same pathfind shape for: "path from X to Y", "skill gap from X to Y",
-"how to become X from Y", "how do I move from X to Y".
+"how to become X from Y", "how do I move from X to Y", and a bare "X to Y"
+naming two titles with no other wrapper ("data analyst to general
+practitioner"): X is subject, Y is secondary_subject.
 
 A "Profile:" line, when present, is what the user told you before. Use it only
 to resolve "my job", "my goal" or "jobs like mine"; never search it otherwise.
@@ -274,6 +282,16 @@ def _compare_heuristic(question: str) -> PlanDraft | None:
     return None
 
 
+def _strip_suite_suffix(text: str) -> str:
+    """ "web developer in ESCO" -> "web developer": the suite names a graph,
+    not part of the title, and Locate would otherwise search the whole phrase."""
+    lowered = text.casefold()
+    for suffix in _in_suite_suffixes():
+        if lowered.endswith(suffix):
+            return text[: -len(suffix)].rstrip()
+    return text
+
+
 #: "from X to Y": X is the start, Y is the destination (ADR-0008 decision 1/2).
 _PATHFIND_RES = (
     re.compile(
@@ -293,15 +311,130 @@ _PATHFIND_BECOME_RE = re.compile(
     rf"^how\s+(?:to|do\s+i|can\s+i)\s+become\s+{_A}(.+?)\s+from\s+{_A}(.+)$",
     re.IGNORECASE,
 )
+#: "data analyst to general practitioner": two bare titles, no "from"/"path"/
+#: "gap" marker at all. Tried last, and only when neither side starts with a
+#: word that means this is a sentence, not two titles ("I want to become a
+#: nurse" must not split into start="I want" / destination="become a nurse").
+_BARE_PATHFIND_RE = re.compile(rf"^{_A}(.+?)\s+to\s+{_A}(.+)$", re.IGNORECASE)
+_NOT_A_BARE_TITLE = re.compile(
+    r"^(?:i|we|you|he|she|they|how|what|where|when|why|who|which|is|are|was|were|"
+    r"do|does|did|can|could|would|will|should|my|our|your|his|her|their|"
+    # A side that is itself one of these common directive/course words is the
+    # verb or heading of a sentence, not an occupation title ("Introduction
+    # to Python", "switch to bls" — neither "Introduction"/"switch" nor
+    # "Python"/"bls" is a job title, but nothing above caught them, #92).
+    r"introduction|intro|guide|welcome|switch|change|move|go|going|upgrade|"
+    r"update|convert|migrate|transition|port)\b",
+    re.IGNORECASE,
+)
 
 
-def _pathfind_heuristic(question: str) -> PlanDraft | None:
+#: "path to X" (no "from"): a one-sided pathfind naming only the
+#: destination — the start is implied as "my job" (#94), never "my goal":
+#: a saved goal silently filling the start showed the wrong person's path.
+_PATHFIND_TARGET_ONLY_RE = re.compile(
+    rf"^(?:(?:skill\s+)?gap|path|route|career\s+path|learning\s+path)\s+to\s+{_A}(.+)$",
+    re.IGNORECASE,
+)
+#: "path from X" (no "to"): the mirror case, target implied as "my goal".
+_PATHFIND_START_ONLY_RE = re.compile(
+    rf"^(?:(?:skill\s+)?gap|path|route|career\s+path|learning\s+path)\s+from\s+{_A}(.+)$",
+    re.IGNORECASE,
+)
+
+
+def _profile_reference_pathfind(question: str) -> PlanDraft | None:
+    """A deterministic PlanDraft when a pathfind names "my job"/"my goal" —
+    literally on either side, or implied by naming only one side (#94).
+
+    Checked before any LLM call, with or without one configured: which
+    profile field fills which side must never depend on a model's prompt
+    compliance (observed live: a free model sometimes drops the subject
+    entirely for "path from my job to my goal", and has no instruction at
+    all for a bare "path to X" — it both silently started that from a
+    saved *goal* and, separately, mis-read the whole question as a title
+    search). AGENTS.md pushes this kind of resolution into code, not a
+    model call; ``resolve_pathfind_subject`` already refuses to guess a
+    real title for either placeholder.
+    """
+    text = question.strip()
+
+    def draft(start: str, target: str) -> PlanDraft:
+        # Bypassing the LLM means it never reads this message's language
+        # either — set it from whichever side is a known reference phrase,
+        # so set_language (session/kernel.py) still gets a real answer
+        # instead of silently staying on whatever language the last turn
+        # left it in.
+        lang = pathfind_reference_language(start) or pathfind_reference_language(target) or "en"
+        return PlanDraft(
+            target=CAPABILITY_PATHFIND,
+            subject=start,
+            secondary_subject=target,
+            kind="occupation",
+            language=lang,
+        )
+
+    for pattern in _PATHFIND_RES:
+        m = pattern.match(text)
+        if m:
+            start = _strip_suite_suffix(m.group(1).strip())
+            target = _strip_suite_suffix(_COMPARE_TAIL.sub("", m.group(2)).strip())
+            if (
+                start
+                and target
+                and (pathfind_reference_kind(start) or pathfind_reference_kind(target))
+            ):
+                return draft(start, target)
+            return None
+    m = _PATHFIND_BECOME_RE.match(text)
+    if m:
+        target = _strip_suite_suffix(m.group(1).strip())
+        start = _strip_suite_suffix(_COMPARE_TAIL.sub("", m.group(2)).strip())
+        if start and target and (pathfind_reference_kind(start) or pathfind_reference_kind(target)):
+            return draft(start, target)
+        return None
+    m = _PATHFIND_TARGET_ONLY_RE.match(text)
+    if m:
+        target = _strip_suite_suffix(_COMPARE_TAIL.sub("", m.group(1)).strip().rstrip("?.!"))
+        if target and " to " not in target.casefold():
+            return draft("my job", target)
+        return None
+    m = _PATHFIND_START_ONLY_RE.match(text)
+    if m:
+        start = _strip_suite_suffix(m.group(1).strip().rstrip("?.!"))
+        if start and " to " not in start.casefold():
+            return draft(start, "my goal")
+        return None
+    # No English marker matched: the sentence may still name both a job and
+    # a goal reference in another language/structure ("¿cómo paso de mi
+    # trabajo a mi meta?") — no per-language sentence regex owns that shape,
+    # so fall back to finding both phrases directly and ordering them by
+    # whichever appears first in the text (the side named first is the
+    # start, in every phrasing this covers).
+    job_ref, goal_ref = find_pathfind_references(text)
+    if job_ref and goal_ref:
+        start, target = (
+            (job_ref[0], goal_ref[0]) if job_ref[1] < goal_ref[1] else (goal_ref[0], job_ref[0])
+        )
+        return draft(start, target)
+    return None
+
+
+def _pathfind_heuristic(question: str, *, include_bare: bool = True) -> PlanDraft | None:
+    """``include_bare=False`` drops the marker-less "X to Y" fallback (#92):
+    it is permissive by design ("tried last" above) and reads ordinary
+    phrases with a bare "to" in them ("Introduction to Python", "switch to
+    bls") as two occupation titles. Good enough as a last-resort planner
+    fallback when there is no LLM to ask, wrong as a signal for
+    ``is_statement()``, which decides whether such a phrase should instead
+    be read as a hint about an open pick-list.
+    """
     text = question.strip()
     for pattern in _PATHFIND_RES:
         m = pattern.match(text)
         if m:
-            start = m.group(1).strip()
-            destination = _COMPARE_TAIL.sub("", m.group(2)).strip()
+            start = _strip_suite_suffix(m.group(1).strip())
+            destination = _strip_suite_suffix(_COMPARE_TAIL.sub("", m.group(2)).strip())
             if start and destination:
                 return PlanDraft(
                     target=CAPABILITY_PATHFIND,
@@ -311,9 +444,27 @@ def _pathfind_heuristic(question: str) -> PlanDraft | None:
                 )
     m = _PATHFIND_BECOME_RE.match(text)
     if m:
-        destination = m.group(1).strip()
-        start = _COMPARE_TAIL.sub("", m.group(2)).strip()
+        destination = _strip_suite_suffix(m.group(1).strip())
+        start = _strip_suite_suffix(_COMPARE_TAIL.sub("", m.group(2)).strip())
         if start and destination:
+            return PlanDraft(
+                target=CAPABILITY_PATHFIND,
+                subject=start,
+                secondary_subject=destination,
+                kind="occupation",
+            )
+    if not include_bare:
+        return None
+    m = _BARE_PATHFIND_RE.match(text)
+    if m and not text.endswith("?"):
+        start = _strip_suite_suffix(m.group(1).strip())
+        destination = _strip_suite_suffix(_COMPARE_TAIL.sub("", m.group(2)).strip())
+        if (
+            start
+            and destination
+            and not _NOT_A_BARE_TITLE.match(start)
+            and not _NOT_A_BARE_TITLE.match(destination)
+        ):
             return PlanDraft(
                 target=CAPABILITY_PATHFIND,
                 subject=start,
@@ -329,9 +480,11 @@ def denied_subject(question: str) -> str | None:
     return m.group(1).strip().rstrip("?.!") if m else None
 
 
-def _profile_intent_heuristic(question: str) -> PlanDraft | None:
+def _profile_intent_heuristic(
+    question: str, *, include_bare_pathfind: bool = True
+) -> PlanDraft | None:
     """A PlanDraft for pathfind/compare/goal/reject/standing patterns when the LLM planner fails."""
-    pathfind = _pathfind_heuristic(question)
+    pathfind = _pathfind_heuristic(question, include_bare=include_bare_pathfind)
     if pathfind is not None:
         return pathfind
     compare = _compare_heuristic(question)
@@ -341,7 +494,7 @@ def _profile_intent_heuristic(question: str) -> PlanDraft | None:
     if m:
         return PlanDraft(
             target=CAPABILITY_LOCATE,
-            subject=m.group(1).strip(),
+            subject=_strip_suite_suffix(m.group(1).strip()),
             kind="occupation",
             profile_intent="goal",
         )
@@ -357,7 +510,7 @@ def _profile_intent_heuristic(question: str) -> PlanDraft | None:
     if m and m.group(1).split()[0].casefold() not in _NOT_AN_OCCUPATION:
         return PlanDraft(
             target=CAPABILITY_LOCATE,
-            subject=m.group(1).strip().rstrip(".!"),
+            subject=_strip_suite_suffix(m.group(1).strip().rstrip(".!")),
             kind="occupation",
             profile_intent="standing",
         )
@@ -379,8 +532,13 @@ def is_trivial_subject(subject: str | None) -> bool:
 
 
 def is_statement(question: str) -> bool:
-    """A compare, or a statement about the user ("I am a X", "my goal is X")."""
-    return _profile_intent_heuristic(question) is not None
+    """A compare, or a statement about the user ("I am a X", "my goal is X").
+
+    Never by the bare "X to Y" pathfind fallback (#92) — it is a last-resort
+    planner guess, too permissive to also decide whether an open pick-list
+    should stop narrowing.
+    """
+    return _profile_intent_heuristic(question, include_bare_pathfind=False) is not None
 
 
 def uses_llm_planner(client: LLMClient) -> bool:
@@ -396,7 +554,19 @@ def parse_plan_text(text: str) -> PlanDraft:
     payload = json.loads(match.group(0))
     if not isinstance(payload, dict):
         raise ValueError("planner JSON must be an object")
-    return PlanDraft.model_validate(payload)
+    draft = PlanDraft.model_validate(payload)
+    # A suite suffix ("web developer in ESCO") is reliably stripped by code
+    # for the pathfind/compare regex heuristics below, but the model's own
+    # JSON is not guaranteed to drop it — observed live: a goal/standing
+    # statement ("my goal is X in ESCO") kept the suffix in subject, so
+    # Locate searched the whole phrase and silently failed to resolve or
+    # save it. Strip it here once, for every capability, not only pathfind.
+    update: dict[str, str] = {}
+    if draft.subject:
+        update["subject"] = _strip_suite_suffix(draft.subject)
+    if draft.secondary_subject:
+        update["secondary_subject"] = _strip_suite_suffix(draft.secondary_subject)
+    return draft.model_copy(update=update) if update else draft
 
 
 def connect_request_from_draft(
@@ -440,6 +610,16 @@ def interpret_question(
         return InterpretedPlan(
             plan=build_plan_for_capability(forced_capability, suites=selected),
             draft=None,
+            heuristic=True,
+            stage=None,
+        )
+    # Never left to the model, with or without one configured (#94) — see
+    # _profile_reference_pathfind's own docstring.
+    profile_draft = _profile_reference_pathfind(question)
+    if profile_draft is not None:
+        return InterpretedPlan(
+            plan=build_plan_for_capability(profile_draft.target, suites=selected),
+            draft=profile_draft,
             heuristic=True,
             stage=None,
         )

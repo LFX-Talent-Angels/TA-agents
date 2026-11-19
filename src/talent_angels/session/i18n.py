@@ -75,11 +75,6 @@ _EN: dict[str, str] = {
         "Which occupation or skill do you mean? For example: "
         "“What skills does a nurse need?” or “Where is data scientist?”"
     ),
-    "pathfind": (
-        "Learning paths between two roles aren't available yet — they're coming. "
-        "For now, try 'compare teacher and data analyst' to see which skills they "
-        "share and which only one of them needs."
-    ),
     # skill lists and compares
     "skill": "skill",
     "skills": "skills",
@@ -113,6 +108,29 @@ _EN: dict[str, str] = {
     "compare_none": "none",
     "compare_more": "(+{count} more)",
     "compare_foot": "These are graph neighbours, not a recommendation.",
+    "pathfind_head": "**From {start} to {target}:**",
+    "pathfind_confidence": "{suite} · confidence: {confidence}",
+    "pathfind_essential": "Essential skills needed",
+    "pathfind_optional": "Optional skills needed",
+    "pathfind_software": "Software/tools needed",
+    "pathfind_gap_none": "none",
+    "pathfind_more": "(+{count} more)",
+    "pathfind_full_retrain": (
+        "This gap is large enough to be a full retrain, not a quick transition."
+    ),
+    "pathfind_route": "Route {number}: {chain}",
+    "pathfind_more_routes": "(+{count} more routes)",
+    "pathfind_no_route": "No route found within {steps} steps. The gap above still stands.",
+    "pathfind_unknown_job": (
+        'I don\'t know your current job yet. Tell me with "I am a ..." and ask again.'
+    ),
+    "pathfind_unknown_goal": (
+        'I don\'t know your goal yet. Tell me with "my goal is ..." and ask again.'
+    ),
+    "pathfind_unknown_both": (
+        'I don\'t know your current job or your goal yet. Tell me with "I am a ..." '
+        'and "my goal is ...", then ask again.'
+    ),
     # profile
     "profile_empty": (
         'I don\'t have much about you yet. Tell me your current job ("I am a …") '
@@ -126,6 +144,9 @@ _EN: dict[str, str] = {
     "noted_not_job": "Noted: {titles} is no longer saved as your current job.",
     "compare_needs_pick": (
         "To compare {first} and {second}, I first need to know which {subject} you mean."
+    ),
+    "pathfind_needs_pick": (
+        "To find the path from {first} to {second}, I first need to know which {subject} you mean."
     ),
     "comparing": "Comparing {first} with {second}:",
     "still_waiting": "{suite} still needs a pick to compare there too:",
@@ -185,11 +206,6 @@ _ES: dict[str, str] = {
         "¿A qué ocupación o habilidad te refieres? Por ejemplo: "
         "“¿Qué habilidades necesita una enfermera?” o “¿Qué es un científico de datos?”"
     ),
-    "pathfind": (
-        "Las rutas de aprendizaje entre dos puestos aún no están disponibles; pronto lo "
-        "estarán. Mientras tanto, prueba 'compara docente y analista de datos' para ver "
-        "qué habilidades comparten y cuáles necesita solo uno."
-    ),
     "skill": "habilidad",
     "skills": "habilidades",
     "tool": "herramienta",
@@ -222,6 +238,32 @@ _ES: dict[str, str] = {
     "compare_none": "ninguna",
     "compare_more": "(+{count} más)",
     "compare_foot": "Son vecinos en el grafo, no una recomendación.",
+    "pathfind_head": "**De {start} a {target}:**",
+    "pathfind_confidence": "{suite} · confianza: {confidence}",
+    "pathfind_essential": "Habilidades esenciales necesarias",
+    "pathfind_optional": "Habilidades opcionales necesarias",
+    "pathfind_software": "Software/herramientas necesarias",
+    "pathfind_gap_none": "ninguna",
+    "pathfind_more": "(+{count} más)",
+    "pathfind_full_retrain": (
+        "Esta brecha es lo bastante grande como para ser una reconversión "
+        "completa, no una transición rápida."
+    ),
+    "pathfind_route": "Ruta {number}: {chain}",
+    "pathfind_more_routes": "(+{count} rutas más)",
+    "pathfind_no_route": (
+        "No se encontró ninguna ruta en {steps} pasos. La brecha de arriba sigue siendo válida."
+    ),
+    "pathfind_unknown_job": (
+        'Todavía no sé cuál es tu trabajo actual. Dímelo con "soy ..." y pregunta otra vez.'
+    ),
+    "pathfind_unknown_goal": (
+        'Todavía no sé cuál es tu meta. Dímelo con "mi meta es ..." y pregunta otra vez.'
+    ),
+    "pathfind_unknown_both": (
+        "Todavía no sé cuál es tu trabajo actual ni tu meta. Dímelo con "
+        '"soy ..." y "mi meta es ...", y pregunta otra vez.'
+    ),
     "profile_empty": (
         'Aún no sé mucho de ti. Dime tu trabajo actual ("soy …") o el trabajo al '
         'que aspiras ("mi meta es …") y lo anotaré.'
@@ -236,6 +278,10 @@ _ES: dict[str, str] = {
     "noted_not_job": "Anotado: {titles} ya no está guardado como tu trabajo actual.",
     "compare_needs_pick": (
         "Para comparar {first} y {second}, primero necesito saber a qué {subject} te refieres."
+    ),
+    "pathfind_needs_pick": (
+        "Para encontrar el camino de {first} a {second}, primero necesito saber a qué "
+        "{subject} te refieres."
     ),
     "comparing": "Comparando {first} con {second}:",
     "still_waiting": "{suite} todavía necesita que elijas uno para comparar ahí también:",
@@ -299,11 +345,6 @@ _SV: dict[str, str] = {
         "Vilket yrke eller vilken kompetens menar du? Till exempel: "
         "”Vilka kompetenser behöver en sjuksköterska?” eller ”Var finns data scientist?”"
     ),
-    "pathfind": (
-        "Karriärvägar mellan två yrken finns inte än — de kommer. Prova tills vidare "
-        "”jämför lärare och dataanalytiker” för att se vilka kompetenser de delar och "
-        "vilka bara den ena behöver."
-    ),
     "skill": "kompetens",
     "skills": "kompetenser",
     "tool": "verktyg",
@@ -336,6 +377,32 @@ _SV: dict[str, str] = {
     "compare_none": "inga",
     "compare_more": "(+{count} till)",
     "compare_foot": "Det här är grannar i grafen, inte en rekommendation.",
+    "pathfind_head": "**Från {start} till {target}:**",
+    "pathfind_confidence": "{suite} · tillförlitlighet: {confidence}",
+    "pathfind_essential": "Nödvändiga kärnkompetenser",
+    "pathfind_optional": "Valfria kompetenser som behövs",
+    "pathfind_software": "Programvara/verktyg som behövs",
+    "pathfind_gap_none": "inga",
+    "pathfind_more": "(+{count} till)",
+    "pathfind_full_retrain": (
+        "Den här kompetensklyftan är stor nog för att vara en fullständig "
+        "omskolning, inte en snabb övergång."
+    ),
+    "pathfind_route": "Rutt {number}: {chain}",
+    "pathfind_more_routes": "(+{count} rutter till)",
+    "pathfind_no_route": (
+        "Ingen rutt hittades inom {steps} steg. Kompetensklyftan ovan gäller fortfarande."
+    ),
+    "pathfind_unknown_job": (
+        'Jag vet inte ditt nuvarande jobb än. Säg det med "jag är ..." och fråga igen.'
+    ),
+    "pathfind_unknown_goal": (
+        'Jag vet inte ditt mål än. Säg det med "mitt mål är ..." och fråga igen.'
+    ),
+    "pathfind_unknown_both": (
+        "Jag vet inte ditt nuvarande jobb eller ditt mål än. Säg det med "
+        '"jag är ..." och "mitt mål är ...", och fråga igen.'
+    ),
     "profile_empty": (
         "Jag vet inte mycket om dig än. Berätta ditt nuvarande yrke (”jag är …”) "
         "eller ett yrke du siktar på (”mitt mål är …”) så noterar jag det."
@@ -350,6 +417,10 @@ _SV: dict[str, str] = {
     "noted_not_job": "Noterat: {titles} är inte längre sparat som ditt nuvarande yrke.",
     "compare_needs_pick": (
         "För att jämföra {first} och {second} behöver jag först veta vilken {subject} du menar."
+    ),
+    "pathfind_needs_pick": (
+        "För att hitta vägen från {first} till {second} behöver jag först veta vilken "
+        "{subject} du menar."
     ),
     "comparing": "Jämför {first} med {second}:",
     "still_waiting": "{suite} behöver också ett val för att jämföra där:",

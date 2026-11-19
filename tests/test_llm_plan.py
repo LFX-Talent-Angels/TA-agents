@@ -10,6 +10,7 @@ from talent_angels.assistant.llm_plan import (
     _profile_intent_heuristic,
     interpret_question,
     is_compare,
+    is_statement,
     parse_plan_text,
     uses_llm_planner,
 )
@@ -123,6 +124,73 @@ def test_planner_prompt_asks_for_english_subjects() -> None:
     assert '("enfermero" → "nurse")' in PLAN_SYSTEM
 
 
+# --- #94: "my job"/"my goal" references never left to the planner --------
+
+
+@pytest.mark.parametrize(
+    ("question", "subject", "secondary_subject", "language"),
+    [
+        ("path from my job to my goal in ESCO", "my job", "my goal", "en"),
+        ("skill gap from my job to my goal", "my job", "my goal", "en"),
+        ("how to become my goal from my job", "my job", "my goal", "en"),
+        ("path to data analyst in ESCO", "my job", "data analyst", "en"),
+        ("path from data analyst in ESCO", "data analyst", "my goal", "en"),
+    ],
+)
+def test_profile_reference_pathfind_never_calls_the_llm(
+    question: str, subject: str, secondary_subject: str, language: str
+) -> None:
+    """#94: which profile field fills which side must be deterministic —
+    the LLM is not even called for these, so a weak/free model dropping the
+    subject or filling the wrong side from a saved goal cannot happen."""
+    client = ScriptedLLMClient('{"target":"locate","subject":"should not be used"}')
+
+    interpreted = interpret_question(question, suite_name="esco", llm_client=client)
+
+    assert interpreted.heuristic is True
+    assert interpreted.draft is not None
+    assert (interpreted.draft.subject, interpreted.draft.secondary_subject) == (
+        subject,
+        secondary_subject,
+    )
+    assert interpreted.draft.target == "pathfind"
+    assert interpreted.draft.language == language
+    assert client.calls == []  # the LLM was never asked
+
+
+def test_profile_reference_pathfind_reads_a_spanish_sentence_shape_too() -> None:
+    """No English marker regex owns "¿cómo paso de X a Y?" — fall back to
+    finding both phrases directly, in the order they appear."""
+    client = ScriptedLLMClient('{"target":"locate","subject":"should not be used"}')
+
+    interpreted = interpret_question(
+        "¿cómo paso de mi trabajo a mi meta en ESCO?", suite_name="esco", llm_client=client
+    )
+
+    assert interpreted.draft is not None
+    assert (interpreted.draft.subject, interpreted.draft.secondary_subject) == (
+        "mi trabajo",
+        "mi meta",
+    )
+    assert interpreted.draft.language == "es"
+    assert client.calls == []
+
+
+def test_an_ordinary_two_title_pathfind_still_asks_the_llm() -> None:
+    """Only a "my job"/"my goal" reference is intercepted — a pathfind
+    between two real titles keeps using the LLM as before."""
+    client = ScriptedLLMClient(
+        '{"target":"pathfind","subject":"nurse","secondary_subject":"data analyst"}'
+    )
+
+    interpreted = interpret_question(
+        "path from nurse to data analyst in ESCO", suite_name="esco", llm_client=client
+    )
+
+    assert interpreted.heuristic is False
+    assert len(client.calls) == 1
+
+
 @pytest.mark.parametrize(
     ("question", "intent", "subject"),
     [
@@ -141,6 +209,35 @@ def test_profile_heuristic_reads_statements(question: str, intent: str, subject:
     draft = _profile_intent_heuristic(question)
     assert draft is not None
     assert (draft.profile_intent, draft.subject) == (intent, subject)
+
+
+@pytest.mark.parametrize(
+    ("question", "subject"),
+    [
+        ("I am a web developer in ESCO", "web developer"),
+        ("my goal is software developer in ESCO", "software developer"),
+        ("I work as a nurse in O*NET", "nurse"),
+    ],
+)
+def test_profile_heuristic_strips_the_suite_suffix_too(question: str, subject: str) -> None:
+    """A goal/standing statement is a Locate-then-save, same as a plain
+    lookup: the suite names a graph, not part of the title (observed live —
+    "my goal is X in ESCO" previously saved nothing because Locate searched
+    the whole phrase, including "in ESCO")."""
+    draft = _profile_intent_heuristic(question)
+    assert draft is not None
+    assert draft.subject == subject
+
+
+def test_llm_planner_json_also_gets_the_suite_suffix_stripped() -> None:
+    """Not just the pathfind/compare heuristics: the model's own JSON is
+    not guaranteed to drop "in ESCO" either (observed live for a goal
+    statement) — parse_plan_text strips it from every capability's
+    subject/secondary_subject."""
+    draft = parse_plan_text(
+        '{"target":"locate","subject":"software developer in ESCO","profile_intent":"goal"}'
+    )
+    assert draft.subject == "software developer"
 
 
 @pytest.mark.parametrize("question", ["I am looking for a job", "I'm interested in tech", "chef"])
@@ -211,6 +308,10 @@ def test_pathfind_with_two_ends_is_not_a_compare() -> None:
         ("from nurse to data analyst", "nurse", "data analyst"),
         ("how to become a data analyst from a nurse", "nurse", "data analyst"),
         ("how do I become a data scientist from an accountant", "accountant", "data scientist"),
+        # Bare "X to Y", no "from"/"path"/"gap" marker at all (PF-4, brief's
+        # own Q4: "Data analyst to general practitioner").
+        ("Data analyst to general practitioner", "Data analyst", "general practitioner"),
+        ("plumber to electrician", "plumber", "electrician"),
     ],
 )
 def test_pathfind_heuristic_reads_both_ends(question: str, start: str, destination: str) -> None:
@@ -222,11 +323,54 @@ def test_pathfind_heuristic_reads_both_ends(question: str, start: str, destinati
 
 
 @pytest.mark.parametrize(
-    "question", ["what skills does a chef need?", "I want to become a web developer"]
+    ("question", "start", "destination"),
+    [
+        ("path from nurse to data analyst in ESCO", "nurse", "data analyst"),
+        ("nurse to data analyst in O*NET", "nurse", "data analyst"),
+    ],
+)
+def test_a_suite_qualifier_is_stripped_from_either_end(
+    question: str, start: str, destination: str
+) -> None:
+    """ "web developer in ESCO" names a graph, not part of the title — Locate
+    must not search the whole phrase including the suite name (PF-4)."""
+    draft = _profile_intent_heuristic(question)
+    assert draft is not None
+    assert (draft.subject, draft.secondary_subject) == (start, destination)
+
+
+@pytest.mark.parametrize(
+    "question",
+    [
+        "what skills does a chef need?",
+        "I want to become a web developer",
+        "I want to move to data analyst",
+        "how do I get to data analyst",
+        "what does a chef need to become a baker",
+        # The bare "X to Y" fallback used to read these as two occupation
+        # titles — neither side is a job title (#92).
+        "Introduction to Python",
+        "switch to bls",
+    ],
 )
 def test_one_ended_questions_are_not_pathfind(question: str) -> None:
     draft = _profile_intent_heuristic(question)
     assert draft is None or draft.target != "pathfind"
+
+
+@pytest.mark.parametrize(
+    "question",
+    [
+        "plumber to electrician",
+        "Data analyst to general practitioner",
+    ],
+)
+def test_is_statement_ignores_the_bare_pathfind_fallback(question: str) -> None:
+    """#92: the bare "X to Y" fallback is a last-resort planner guess, too
+    permissive to also decide whether an open pick-list keeps narrowing —
+    is_statement must not treat a bare-matched phrase as a statement."""
+    assert _profile_intent_heuristic(question) is not None  # still a valid planner fallback
+    assert is_statement(question) is False
 
 
 def test_planner_prompt_teaches_the_compare_shape() -> None:

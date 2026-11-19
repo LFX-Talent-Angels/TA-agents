@@ -451,6 +451,41 @@ def normalize_language(code: object) -> str | None:
     return match.group(1) if match else None
 
 
+#: Words that frame a question, never part of a job or skill title. Words two
+#: languages share ("a", "en", "i") are left out, so a hit is unambiguous.
+_FRAME_WORDS: dict[str, frozenset[str]] = {
+    "en": frozenset(
+        "path from to in what where is the does do how which skills skill need "
+        "needs my of for go get become job jobs and with me show can are who".split()
+    ),
+    "es": frozenset(
+        "qué que cómo como de del la el los las un una es para mi paso cuál "
+        "dónde donde necesita necesito hace habilidades puedo soy trabajo meta".split()
+    ),
+    "sv": frozenset(
+        "hur vad var från till jag ett är och för vilka vilken behöver finns "
+        "min mitt enligt går kompetenser yrke jobb".split()
+    ),
+}
+_WORD = re.compile(r"[^\W\d_]+")
+
+
+def frame_language(text: str) -> str | None:
+    """The language of the words around the titles, when they say so clearly.
+
+    "path from Backend-utvecklare to Mjukvaruutvecklare" is English even though
+    both titles are Swedish; the planner reads such a question as Swedish. Two
+    frame words of one language and none of another decide it; anything less
+    is left to the planner.
+    """
+    words = _WORD.findall(text.casefold())
+    hits = {lang: sum(w in frame for w in words) for lang, frame in _FRAME_WORDS.items()}
+    found = [lang for lang, n in hits.items() if n]
+    if len(found) == 1 and hits[found[0]] >= 2:
+        return found[0]
+    return None
+
+
 def set_language(code: object) -> None:
     """The language of this turn's reply (English if unknown)."""
     _LANG.set(normalize_language(code) or "en")

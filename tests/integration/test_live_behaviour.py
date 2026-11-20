@@ -211,3 +211,56 @@ def test_hint_narrows_the_list_and_a_pick_saves_the_goal(chat: Chat) -> None:
     first = chat.state.pending[0].node.pref_label
     chat.say("1")
     assert f"GOAL: {first}" in profile()
+
+
+# --- Pathfind + saved profile (PF-5, #94) --------------------------------
+
+
+def test_pathfind_with_nothing_saved_says_so_honestly(chat: Chat) -> None:
+    """A fresh profile: "my job"/"my goal" must never be searched as a
+    literal title — that produced a misleading "no node for that phrase"
+    miss that blamed the search instead of saying the job/goal is unknown."""
+    reply = chat.say("path from my job to my goal in ESCO")
+    assert "don't know your current job" in reply.text
+    assert "don't know" in reply.text and "goal" in reply.text
+    assert "No node for that phrase" not in reply.text
+
+
+# --- Pathfind through chat, one golden pair per suite (PF-6, #95) -------------
+#
+# Titles are the same live pairs measured in tests/evals/golden_pathfind.json.
+# SFIA is not in that golden set and is not exercised here — it has no
+# occupation-to-occupation gap data for Pathfind to work with. Every
+# question names its suite explicitly ("... in ESCO" etc.): a bare "path
+# from X to Y" with no suite named fans out to every attached suite
+# instead (by design, out of scope for #95 — see the review brief), so
+# reply.source_note would be "ESCO · O*NET · BLS · JobTech", not one suite.
+
+
+def test_pathfind_through_chat_in_esco(chat: Chat) -> None:
+    reply = chat.say("path from web developer to software developer in ESCO")
+    assert reply.source_note == "ESCO"
+    assert "Essential skills needed" in reply.text
+
+
+def test_pathfind_through_chat_in_onet(chat: Chat) -> None:
+    reply = chat.say("path from Computer Programmers to Software Developers in O*NET")
+    assert reply.source_note == "O*NET"
+    assert "Essential skills needed" in reply.text
+
+
+def test_pathfind_through_chat_in_bls(chat: Chat) -> None:
+    """BLS shows published facts, not a gap or routes (PF-6)."""
+    reply = chat.say("path from Web Developers to Software Developers in BLS")
+    assert reply.source_note == "BLS"
+    assert "From" in reply.text and "to" in reply.text
+
+
+def test_pathfind_through_chat_in_jobtech(chat: Chat) -> None:
+    """Naming the suite explicitly keeps the planner from translating
+    JobTech's own Swedish titles to English (#95) — confirmed live. A bare
+    "path from X to Y" with no suite named is still unsupported for
+    JobTech (ADR-0008's #95 amendment), but that is not what this asks."""
+    reply = chat.say("path from Frontend-utvecklare to Systemutvecklare/Programmerare in JobTech")
+    assert reply.source_note == "JobTech"
+    assert "Essential skills needed" in reply.text

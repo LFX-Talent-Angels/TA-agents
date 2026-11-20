@@ -1,0 +1,95 @@
+{
+  "note": "Golden eval for skills/locate/rank.py::group_and_sort_locate — the rerank/auto-select/ISCO-grouping layer that runs on every Locate hit before a user sees it. Fully offline: candidates and the ISCO parent graph are declared in-line, no TA-taxonomies fixture needed. Complements tests/test_locate_rank.py (which pins individual code paths in detail) with an aggregate, trackable accuracy metric per Sprint 6/7's 'golden eval suite for hybrid search + reranking — doesn't exist yet'. Cases 1-4 port the exact scenarios already proven correct by tests/test_locate_rank.py's unit tests; cases 5-6 are new and were verified by running group_and_sort_locate directly before being written down (see data/session-notes/2026-09-25-situation.md #17).",
+  "cases": [
+    {
+      "name": "auto_select_pref_token_beats_alt_substring",
+      "query": "developer",
+      "candidates": [
+        {"id": "esco:occupation:1", "label": "3D modeller", "alts": ["3D developer"], "group": "sw"},
+        {"id": "esco:occupation:2", "label": "web developer", "alts": [], "group": "sw"}
+      ],
+      "groups": {"sw": "Software and applications developers"},
+      "expected_ambiguous": false,
+      "expected_top_id": "esco:occupation:2",
+      "expected_confidence": 0.9,
+      "expected_extra": 1,
+      "expected_group_label": "Software and applications developers"
+    },
+    {
+      "name": "auto_select_exact_alt_beats_generic_pref",
+      "query": "Software Engineer",
+      "candidates": [
+        {"id": "onet:occupation:1", "label": "Blockchain Engineers", "alts": [], "group": null},
+        {"id": "onet:occupation:2", "label": "Software Developers", "alts": ["Software Engineer"], "group": null}
+      ],
+      "groups": {},
+      "expected_ambiguous": false,
+      "expected_top_id": "onet:occupation:2",
+      "expected_confidence": 0.9,
+      "expected_extra": 1,
+      "expected_group_label": null
+    },
+    {
+      "name": "auto_select_singular_query_matches_plural_pref",
+      "query": "software developer",
+      "candidates": [
+        {"id": "onet:occupation:1", "label": "Blockchain Engineers", "alts": [], "group": null},
+        {"id": "onet:occupation:2", "label": "Software Developers", "alts": [], "group": null}
+      ],
+      "groups": {},
+      "expected_ambiguous": false,
+      "expected_top_id": "onet:occupation:2",
+      "expected_confidence": 0.9,
+      "expected_extra": 1,
+      "expected_group_label": null
+    },
+    {
+      "name": "ambiguous_two_exact_pref_hits_stay_ambiguous",
+      "query": "developer",
+      "candidates": [
+        {"id": "esco:occupation:1", "label": "developer", "alts": [], "group": null},
+        {"id": "esco:occupation:2", "label": "developer", "alts": [], "group": null}
+      ],
+      "groups": {},
+      "expected_ambiguous": true,
+      "expected_top_id": null,
+      "expected_confidence": null,
+      "expected_extra": null,
+      "expected_group_label": null
+    },
+    {
+      "name": "ambiguous_three_way_tie_orders_by_group_then_lexical_rank",
+      "query": "developer",
+      "candidates": [
+        {"id": "esco:occupation:1", "label": "software developer", "alts": [], "group": "sw"},
+        {"id": "esco:occupation:2", "label": "web developer", "alts": [], "group": "sw"},
+        {"id": "esco:occupation:3", "label": "hardware developer", "alts": [], "group": "hw"}
+      ],
+      "groups": {"sw": "Software professionals", "hw": "Hardware professionals"},
+      "expected_ambiguous": true,
+      "expected_top_id": null,
+      "expected_confidence": null,
+      "expected_extra": null,
+      "expected_group_label": null,
+      "expected_ordered_ids": [
+        "esco:occupation:2",
+        "esco:occupation:1",
+        "esco:occupation:3"
+      ]
+    },
+    {
+      "name": "ambiguous_exact_alt_tie_stays_ambiguous",
+      "query": "Coder",
+      "candidates": [
+        {"id": "onet:occupation:4", "label": "Software Developers", "alts": ["Coder"], "group": null},
+        {"id": "onet:occupation:5", "label": "App Developers", "alts": ["Coder"], "group": null}
+      ],
+      "groups": {},
+      "expected_ambiguous": true,
+      "expected_top_id": null,
+      "expected_confidence": null,
+      "expected_extra": null,
+      "expected_group_label": null
+    }
+  ]
+}

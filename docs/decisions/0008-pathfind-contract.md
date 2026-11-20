@@ -1,0 +1,317 @@
+# ADR-0008: Pathfind — start/target shape, output, and the honest-refusal rules
+
+- **Status:** Accepted (this repo)
+- **Date:** 2026-10-11
+- **Deciders:** mentee team, finalizing the proposal in `HANDOVER-2026-10-01.md` Part 6.2/6.4
+- **Mirrors:** none yet — mirror to `TA-memory/decisions/` on mentor acceptance
+
+## Context
+
+Pathfind ("how do I get from *nurse* to *data analyst*?") is the one skill the
+assistant still refuses outright: `capability_not_implemented:pathfind` on
+every path. The suite contract already has what Pathfind needs —
+`enumerate_paths(from_id, to_id, max_depth, max_paths)` and `score_paths` are
+real methods on `Suite`, already passed through by `MeasuredSuite` and
+`CachedSuite`, already exposed by the MCP edge — but nothing in TA-agents
+calls them. `score_paths` is a stub upstream; treating its output as a real
+ranking would violate "deterministic work lives in code, never invented" the
+same way an un-cited skill list would.
+
+The handover document proposes starting Pathfind from **a set of skills**,
+not only one occupation, so the same tool later serves a business's
+certification criteria (Phase 2) without a redesign. That proposal needs a
+concrete decision before any code: what exactly "the start" and "the output"
+are, and what happens when no reasonable route exists — because "no route"
+must read as a finding, not a missing feature.
+
+## Decision
+
+**Pathfind takes a start that is always a skill-ID set, a target that is
+always one occupation node, and returns two things: a skill gap always, a
+set of bridge routes only when the start also names one occupation.**
+
+**1. Start: a skill-ID set, derived two ways.**
+- *Occupation start* ("nurse → data analyst"): Locate resolves "nurse" to one
+  occupation node, Connect reads its essential skills, that skill-ID set
+  becomes the start. The occupation node ID is kept alongside — it is what
+  `enumerate_paths` needs for routes.
+- *Bare skill-set start* (not wired into the assistant yet — the chat surface
+  only ever produces the occupation form; this shape exists so Evaluate and
+  the Phase 2 enrichment pipeline can call the same function with a
+  certification's skill IDs without a second code path): skill IDs passed
+  directly, no occupation node. Routes are skipped (see 3) — there is no
+  graph node to pathfind *from*.
+
+**2. Target: one occupation node, in the same suite as the start.**
+Resolved through the same Locate call every other skill uses — ambiguous or
+not-found endpoints return the same `ambiguous`/`not_found` warnings Locate
+already produces, not a Pathfind-specific error. If Locate resolves "nurse"
+and "data analyst" into *different* suites (one only in ESCO, one only in
+O\*NET), Pathfind is not attempted for that suite pair — each attached suite
+is dispatched independently, exactly as Locate/Connect already do for a
+multi-suite question, and a suite that cannot resolve both endpoints reports
+its own honest miss rather than a crosswalk nobody built (rule 4,
+`ARCHITECTURE.md`: no silent cross-suite identity).
+
+**3. Output part one — the skill gap. Always computed, never skipped.**
+`target's essential skills ∪ optional skills` minus `start's skill-ID set`,
+as plain set difference over suite-scoped IDs — no embedding, no LLM, no
+fuzzy matching between skill labels. Essential-missing skills are listed
+before optional-missing ones; within essential, O\*NET's `importance` edge
+property orders the list where present, ESCO (which has no such property)
+keeps graph return order and says so. A target with zero skill edges
+(`no_neighbors` from Connect) returns a gap of zero with that warning
+attached, not a silent empty list.
+
+**4. Output part two — routes. Only when the start has an occupation node.**
+`enumerate_paths(start_occupation_id, target_occupation_id, max_depth=4,
+max_paths=20)` — the suite's own defaults, not re-tuned here. Each returned
+path becomes a typed `NodeRef`/`EdgeRef` chain through the *existing*
+`AgentResult.nodes`/`.edges` lists (no new contract type: a path is just
+nodes connected by cited edges, which is what those fields already hold).
+**`score_paths` is never called.** Routes are listed in whatever order
+`enumerate_paths` returns them — unscored, because the only scorer that
+exists is a stub, and showing a stub's number as a real rank is exactly the
+invented-fact failure `ARCHITECTURE.md` rule 1 exists to prevent. Ranking
+routes under a named policy is Evaluate's job (a separate, later skill).
+
+**5. The disqualifier is a warning, not an error.** When the essential-skill
+gap is larger than `MAX_REALISTIC_GAP_SKILLS` (provisional: **8** — picked to
+be clearly "most of a career retrain," not tuned against data yet; the
+golden pairs set (PR 6 of this stack) is what should move this number, not a
+guess revised twice), the result carries a `gap_too_large` warning alongside
+the full gap list. The assistant still answers with the real gap — "no
+realistic route" is a thing Pathfind *found*, stated plainly, never a request
+it couldn't fulfil.
+
+**6. Everything above lives in `skills/pathfind/`, in code.** Gap
+computation, the depth/fan-out caps (inherited from `enumerate_paths`'s own
+defaults), and the disqualifier threshold are deterministic Python, called
+the same way Locate and Connect are called — never phrased or decided by a
+prompt. The planner's only job is extracting the two subjects (`subject` /
+`secondary_subject` on `PlanDraft`, already specified for pathfind in
+`llm_plan.py`) and routing to the `pathfind` capability; it never sees a
+skill ID or a path.
+
+## Alternatives considered
+
+- **Start = one occupation only, no skill-set form.** Simpler, matches every
+  worked example in the handover ("nurse → data analyst"). **Rejected** —
+  it would mean a second Pathfind implementation when Phase 2's
+  certification-skills case arrives, instead of the same function called
+  with a different start. The skill-set form costs one extra parameter now
+  and avoids a rewrite later.
+- **Always attempt routes, even from a bare skill set.** `enumerate_paths`
+  needs a graph node to start from; a skill set has no single node by
+  construction. Synthesizing a fake "virtual occupation" node to pathfind
+  from would invent a node that is not in the taxonomy. **Rejected** — gap
+  without routes is an honest, smaller answer; a fabricated start node is not.
+- **Call `score_paths` and label its number "experimental."** Still shows an
+  invented-looking number next to real graph facts, and every other skill in
+  this codebase treats a labeled-but-still-shown stub value as a trap users
+  stop reading labels around. **Rejected**, matches existing project
+  practice (MENTEE-HANDOFF.md, ADR-0007's own "do not invent a ranking"
+  framing).
+- **Tune `MAX_REALISTIC_GAP_SKILLS` now, against intuition.** No data exists
+  yet to tune it against. **Deferred** to the golden pairs set — the number
+  here is provisional and explicitly flagged as such, not presented as
+  measured.
+
+## Consequences
+
+**Easier.** Pathfind reuses every existing typed boundary — `NodeRef`,
+`EdgeRef`, `AgentResult`, the per-suite dispatch loop, the Locate honesty
+rules for ambiguous/not-found endpoints. No change to `contracts/` (so no
+code-owner review gate on this stack), no new persisted-state type (so no
+`checkpoint.py::PERSISTED_TYPES` entry).
+
+**Harder.** The skill-set start form is unused until Evaluate or Phase 2
+enrichment calls it — it is tested directly (unit tests calling the skill
+function with a bare skill-ID set) but has no chat-reachable path yet, so it
+is dead code from the assistant's point of view until one of those lands.
+That is an accepted, named cost, not an oversight: the alternative is
+rewriting the function signature later under time pressure.
+
+**Risks.** `MAX_REALISTIC_GAP_SKILLS = 8` is a guess. If the golden pairs
+set shows it is badly wrong (too many "no realistic route" answers for pairs
+a person would actually consider, or too few for pairs that clearly aren't
+realistic), the number moves — that is the set's job, not a sign the
+disqualifier itself is wrong.
+
+## Amendments
+
+**2026-10-11 — `MAX_REALISTIC_GAP_SKILLS` moved from a guess to a measured,
+per-suite threshold.** PR 6's golden pairs set (`tests/evals/golden_pathfind.json`,
+10 real occupation pairs against live ESCO v1.2.1 / O\*NET 31.0) measured
+essential-missing counts of 10-36 for ESCO pairs and 51-412 for O\*NET pairs
+— confirming the provisional guess of 8 flagged *every* pair tested as
+`gap_too_large`, including near-duplicate titles ("web developer" →
+"software developer": 11 essential-missing). The two suites are not on the
+same scale: O\*NET's `HAS_SKILL`/`USES_SOFTWARE` edges include named
+software tools ESCO does not model as skills, so its counts run an order
+of magnitude higher.
+
+The threshold is now per-suite (`skills/pathfind/gap.py`,
+`_MAX_REALISTIC_GAP_SKILLS_BY_SUITE`), derived from the already-passed
+`AgentResult.suite` field rather than a new parameter: **ESCO 15** (rests
+on 6 pairs with a clean split between same-family title variants, 10-11,
+and genuine transitions, 19+) and **O\*NET 60** (rests on only 4 pairs,
+all of which happened to have no bridge route within `max_depth=4` — this
+number is the weaker of the two and should be revisited first if more
+O\*NET golden pairs land). `SuiteSchema` was deliberately not extended for
+this — it is canonically owned by the external `ta_taxonomies` package, so
+threading the threshold through it would require a change to that other
+repository; a small suite-keyed dict in this repo is the smaller, correct
+move for what decision 5 asked for ("move this number from measurement").
+
+A second finding, not acted on in this PR: all 4 O\*NET pairs tested came
+back `no_path` from `enumerate_paths`, including occupations that are
+obviously close in practice ("Software Quality Assurance Analysts and
+Testers" → "Software Developers", essential-missing 51, the lowest O\*NET
+count measured). Whether this is a genuine graph-structure difference
+between ESCO and O\*NET or an artifact of the suite's own default
+`max_depth=4` is unknown from 4 data points — flagged here as a finding
+for a wider O\*NET golden pairs set to confirm, not a conclusion.
+(Resolved upstream by PF-1: TA-taxonomies fixed `enumerate_paths` for
+O\*NET, and the same pairs now return routes.)
+
+**2026-11-15 — PF-2: software split out of the gap; a coverage floor added
+for the cases essential-count alone misses.** Re-measuring the O\*NET
+pairs above with `essential`/`optional`/`software` tracked separately
+(rather than one combined count) found every one of them had **zero**
+non-software essential/optional gap — the entire count the first
+amendment measured was `USES_SOFTWARE` edges (named tools), not skills or
+knowledge. O*NET's generic skill/knowledge taxonomy barely differentiates
+between occupations at all once software is excluded. `MAX_REALISTIC_GAP_SKILLS["onet"]`
+(60) is left as-is but now rarely fires in practice; it is not removed, in
+case a wider golden pairs set finds real skill/knowledge differentiation
+this one did not.
+
+`SkillGap` gained `software_missing` (always separate, regardless of
+`relation_type` — a software edge never carried essential/optional signal
+to begin with) and `coverage` (share of the target's skills, including
+software, the start already has). A new floor,
+`MIN_REALISTIC_COVERAGE = 0.20`, flags `gap_too_large` when coverage is
+below it, independent of the essential-count check — this is the "share
+already covered" test the original PF-2 ask named, catching the case the
+essential-only threshold missed: ESCO "data analyst" → "general
+practitioner" has only 10 essential-missing (under the threshold of 15)
+but 46 optional-missing and 0% coverage once both are counted.
+
+The floor (0.20) is deliberately conservative: of 16 live pairs measured
+(10 ESCO, 6 O\*NET — the set grown from 10 total per PF-2's own ask),
+only the clearest 0–15% cases sit below it. One pair, ESCO "civil
+engineer" → "construction engineer" at 27%, sits close above the line
+and was left unflagged — a genuine judgement call, not yet confirmed
+either way by enough data to move the number with confidence.
+
+**2026-11-16 — PF-6: BLS has no measurable skill-gap signal at all;
+pathfind shows its published facts instead.** Measuring 4 live BLS
+pairs — including clearly unrelated ones ("Electricians" →
+"Software Developers") — essential, optional and software-missing were
+all **zero** and coverage was **1.00** every time. This is not a
+threshold problem: BLS's own skill taxonomy is ~17 broad skills shared
+by every occupation it has, so `compute_gap` and the coverage floor
+both structurally cannot distinguish a real transition from an
+unrelated one for this suite. `_MAX_REALISTIC_GAP_SKILLS_BY_SUITE["bls"]`
+(8) is left in place for the same reason O\*NET's was after PF-2 — it
+simply never fires, and removing it would claim a confidence the data
+doesn't support either way.
+
+Rather than show a gap/route section that always reads "nothing
+missing, not a full retrain" regardless of how real the transition is —
+exactly the kind of confidently-wrong signal this ADR's own rules exist
+to prevent — Pathfind renders BLS's actual distinguishing data instead:
+published wage, employment outlook and education figures for both
+occupations (`session/pathfind_view.py::_render_bls_facts`, reusing
+`skills/locate/rank.py::published_facts`, already used for Locate's own
+cards). This was an explicit team decision, not a unilateral call: BLS's
+own purpose in this suite set (per TA-taxonomies' README) is that it is
+the one source with pay/outlook/education data, and that is what it was
+asked to show once the gap route was confirmed to carry no signal.
+
+JobTech, by contrast, needed no new mechanism: its one genuinely distant
+measured pair (ESCO-unrelated "Webbdesigner" → "Redovisningsekonom", 98
+optional-missing, 0% coverage) was already caught correctly by PF-2's
+coverage floor without any change. JobTech's essential threshold (15)
+is left as a provisional holdover — only one of 4 measured pairs had a
+non-zero essential count (1), too thin to move the number with
+confidence either way.
+
+Also out of scope here, flagged as a known gap: JobTech's English-title
+crosswalk through its ESCO links (`assistant/crosswalk.py::rescue_jobtech`,
+already used by Locate) is not wired into `pathfind_one` — doing so needs
+a suite registry threaded into the pathfind call chain, which today only
+ever holds one suite at a time by design. Golden pairs here use
+JobTech's own official titles directly instead.
+
+**2026-11-18 — #90: `coverage` excludes software on both sides of the
+ratio.** The amendment above shipped `coverage` counting software same as
+skills — exactly the problem the software split itself names a few
+paragraphs up: O\*NET lists dozens to hundreds of named tools per
+occupation, so a tool-heavy pair's coverage ratio ends up decided almost
+entirely by tool overlap, not by the real essential/optional skill gap the
+floor is meant to protect. `compute_gap` now computes `coverage` as
+`shared-skills / (shared-skills + essential-missing + optional-missing)`,
+with every `USES_SOFTWARE` node — shared or missing — left out of both
+sides of that ratio. The 0.20 floor and the ESCO live pairs it was
+measured against (above) were themselves already software-free in every
+case, so this fix changes none of their `gap_too_large` verdicts. It does
+change O\*NET's — see the next amendment.
+
+**2026-11-19 — #90 follow-up: O\*NET's `gap_too_large` can never fire from
+`compute_gap` data alone.** Re-measuring all 6 live O\*NET golden pairs
+after the fix above confirmed essential-missing and optional-missing were
+already 0 for every one of them before this fix too (PF-2's own finding) —
+O\*NET's generic skill/knowledge taxonomy lists effectively the same set
+for every occupation, so `only_b` outside `USES_SOFTWARE` is empty
+regardless of how unrelated the pair is. With software now excluded from
+`coverage` as well, `coverage` is `shared / (shared + 0 + 0)`, which is
+1.0 whenever the two occupations share even one non-software skill — true
+of every pair measured, including "Registered Nurses" → "Software
+Developers". Two of the six golden pairs (`Registered Nurses` → `Software
+Developers`, 0.114 → 1.0; `Registered Nurses` → `Computer Programmers`,
+0.1494 → 1.0) flip from `gap_too_large: true` to `false`; the other four
+were already above the floor on the old formula and stay `false`.
+`tests/evals/golden_pathfind.json`'s O\*NET entries were re-captured live
+against the same graph (O\*NET 31.0) to match. This is an honest
+consequence of #90, not a new bug: a tool-heavy O\*NET pair no longer
+buys its way past the floor on software overlap (the fix's actual goal),
+but O\*NET currently has no other signal to flag a large gap with — a
+real one needs each skill/knowledge item's `importance`/`level` value,
+which `compute_gap` does not read today (Evaluator work, not Pathfind's).
+No new threshold or heuristic was added here to paper over this; O\*NET
+pathfind through Pathfind honestly shows no essential/optional gap and
+never claims a full retrain, which is better than a borrowed software-
+overlap number standing in for a skill signal that was never measured.
+
+**2026-11-18 — #95: JobTech Pathfind does not work through chat yet.** The
+gap above already means `pathfind_one` only ever works with JobTech's own
+native (Swedish) titles — it has no English-title rescue. In chat this was
+worse than that: `PLAN_SYSTEM` told the planner to translate every
+subject/secondary_subject to English before Locate ever ran, with no
+exception, so even a user typing JobTech's own correct Swedish title
+("Frontend-utvecklare") had it rewritten to an English guess first, which
+then either matched nothing in JobTech or matched a different suite's
+unrelated node — a silent wrong answer, not an honest refusal.
+
+The prompt now carves out an exception: when the user's message names
+JobTech ("jobtech", "arbetsförmedlingen") the planner keeps the title in
+the user's own wording rather than translating it. Confirmed live
+(2026-11-19): "path from Frontend-utvecklare to Systemutvecklare/
+Programmerare in JobTech" now resolves correctly end to end through chat
+(`test_pathfind_through_chat_in_jobtech`, no longer `xfail`). But the
+ordinary phrasing a user actually types — JobTech's own titles with no
+suite word in the sentence at all ("path from Frontend-utvecklare to
+Systemutvecklare/Programmerare") — still has nothing in the planner's
+prompt to say "these are Swedish, not English": the carve-out only fires
+on the literal word, so the translation still happens. `select_suites`
+has the same blind spot one level up — with no suite named it falls back
+to every attached suite, not whichever suite was bound earlier in the
+conversation. Closing that needs either threading the turn's selected
+suite(s) into the planner's own prompt (today only the raw question text
+and profile line are sent — see `planner_message`), or wiring
+`rescue_jobtech` into `pathfind_one` as the paragraph above already
+flags. Neither is done here: JobTech Pathfind through chat should be
+treated as not supported for ordinary phrasing that does not name the
+suite.

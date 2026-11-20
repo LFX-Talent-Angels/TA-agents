@@ -1,0 +1,93 @@
+"""Numbered Locate picker: stable choices + bind by index (no shuffle)."""
+
+from __future__ import annotations
+
+from talent_angels.contracts import AgentResult, NodeRef
+from talent_angels.session.i18n import t
+from talent_angels.session.models import PendingChoice
+
+PICKER_LIMIT = 10
+
+
+def choices_from_result(result: AgentResult, *, limit: int = PICKER_LIMIT) -> list[PendingChoice]:
+    """Number 1..N in result.nodes order; cap at ``limit``; never shuffle."""
+    groups = {
+        edge.source_node_id: str(edge.properties.get("group_label") or "")
+        for edge in result.edges
+        if edge.properties.get("group_label")
+    }
+    nodes = result.nodes[:limit]
+    return [
+        PendingChoice(number=i, node=node, group_label=groups.get(node.id, ""))
+        for i, node in enumerate(nodes, start=1)
+    ]
+
+
+def bind_pick(pending: list[PendingChoice], number: int) -> NodeRef:
+    """Return the NodeRef for a 1-based pick number."""
+    for choice in pending:
+        if choice.number == number:
+            return choice.node
+    raise ValueError(f"no pending choice numbered {number}")
+
+
+def render_picker(
+    question: str,
+    pending: list[PendingChoice],
+    *,
+    omitted: int,
+    intro: str | None = None,
+    include_source: bool = True,
+) -> str:
+    """Markdown numbered list of pref_label; quiet source line; no auto-pick."""
+    heading = intro or t("picker_heading", question=question)
+    if not pending:
+        suite = "unknown"
+        lines = [heading if intro else t("picker_empty", question=question)]
+    else:
+        suite = pending[0].node.suite
+        lines = [
+            heading,
+            "",
+        ]
+        current_group = None
+        for choice in pending:
+            if choice.group_label and choice.group_label != current_group:
+                current_group = choice.group_label
+                # A blank line first: right after a list item, Markdown would
+                # otherwise fold the heading into that item ("1 web developer
+                # Software developers").
+                if lines[-1] != "":
+                    lines.append("")
+                lines.append(f"**{choice.group_label}**")
+                # And a blank line after: Markdown folds "2. x" straight under a
+                # paragraph into it ("Engineering professionals 2. quality engineer").
+                lines.append("")
+            lines.append(f"{choice.number}. {choice.node.pref_label}")
+        lines.append("")
+        first = pending[0].number
+        last = pending[-1].number
+        if first == last:
+            hint = t("picker_one", first=first)
+        else:
+            hint = t("picker_range", first=first, last=last)
+        lines.append(hint)
+
+    # Separate paragraphs: single newlines are soft wraps in Markdown and ran
+    # the hint, the count and the source together on one line.
+    if omitted > 0:
+        lines.extend(
+            [
+                "",
+                t(
+                    "picker_showing",
+                    shown=len(pending),
+                    total=len(pending) + omitted,
+                    omitted=omitted,
+                ),
+            ]
+        )
+
+    if include_source:
+        lines.extend(["", f"source: {suite}"])
+    return "\n".join(lines)

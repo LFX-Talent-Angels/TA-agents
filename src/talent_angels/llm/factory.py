@@ -11,10 +11,22 @@ import os
 from talent_angels.llm.protocol import LLMClient
 from talent_angels.llm.stub_client import StubLLMClient
 
-SUPPORTED_PROVIDERS = ("none", "anthropic")
+SUPPORTED_PROVIDERS = ("none", "anthropic", "litellm")
+KEY_PLACEHOLDER = "ADD_REPLACEMENT_KEY_HERE"
 
 
-def get_llm_client() -> LLMClient:
+def get_answer_mode() -> str:
+    """Return the configured answer shape; default is zero-token structured text."""
+    return os.environ.get("ANSWER_MODE", "structured").strip() or "structured"
+
+
+def get_llm_client(*, reasoning_enabled: bool | None = None) -> LLMClient:
+    """Build the configured client; `reasoning_enabled` overrides the env flag.
+
+    `None` keeps today's behaviour (`LLM_REASONING_ENABLED`). Tagging passes
+    `False`: `max_tokens` is fixed at 1024 and reasoning tokens can eat the
+    whole budget, truncating the JSON a model-step prompt expects back.
+    """
     provider = os.environ.get("LLM_PROVIDER", "none").strip().lower()
     model = os.environ.get("LLM_MODEL", "").strip()
 
@@ -27,6 +39,23 @@ def get_llm_client() -> LLMClient:
         from talent_angels.llm.anthropic_client import AnthropicLLMClient
 
         return AnthropicLLMClient(model=model)
+
+    if provider == "litellm":
+        if not model:
+            raise ValueError("LLM_MODEL must be set when LLM_PROVIDER=litellm")
+        if model.startswith("openrouter/"):
+            openrouter_key = os.environ.get("OPENROUTER_API_KEY", "").strip()
+            if not openrouter_key or openrouter_key == KEY_PLACEHOLDER:
+                raise ValueError("LiteLLM OpenRouter models require OPENROUTER_API_KEY to be set")
+        from talent_angels.llm.litellm_client import LiteLLMClient
+
+        if reasoning_enabled is None:
+            env_flag = os.environ.get("LLM_REASONING_ENABLED", "false").strip().lower()
+            reasoning_enabled = env_flag in {"1", "true", "yes", "on"}
+        return LiteLLMClient(
+            model=model,
+            reasoning_enabled=reasoning_enabled,
+        )
 
     raise ValueError(
         f"Unsupported LLM_PROVIDER={provider!r}; supported: {', '.join(SUPPORTED_PROVIDERS)}"

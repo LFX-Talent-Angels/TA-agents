@@ -17,7 +17,9 @@ class StubLLMClient:
     def __init__(self, model: str = "stub") -> None:
         self.model = model
 
-    def complete(self, messages: list[Message]) -> LLMResult:
+    def complete(
+        self, messages: list[Message], *, tools: list[dict[str, object]] | None = None
+    ) -> LLMResult:
         last_user = next((m.content for m in reversed(messages) if m.role == "user"), "")
         return LLMResult(
             text=last_user,

@@ -1,0 +1,855 @@
+"""Main-assistant tool loop tests."""
+
+from __future__ import annotations
+
+from talent_angels.assistant.agent_loop import (
+    _compact_result,
+    parse_loop_turn,
+    run_tool_loop,
+)
+from talent_angels.assistant.graph import build_graph
+from talent_angels.contracts import AgentResult, EdgeRef, NodeRef
+from talent_angels.llm.protocol import LLMResult, LLMUsage, Message
+from talent_angels.suites.schema import SuiteSchema
+from tests.fakes.taxonomy import (
+    FakeCandidate,
+    FakeEdge,
+    FakeNode,
+    FakePath,
+    FakePruning,
+    FakeToolResult,
+)
+
+_DEFAULT_SCHEMA = SuiteSchema(
+    skill_rel_types=("HAS_SKILL", "USES_SOFTWARE"),
+    optional_rel_values=frozenset({"optional", "transferable"}),
+    group_rel_type=None,
+    group_node_kinds=frozenset(),
+)
+
+
+class FakeSuite:
+    def __init__(
+        self, result: FakeToolResult, neighbor_result: FakeToolResult | None = None
+    ) -> None:
+        self._result = result
+        self._neighbor_result = neighbor_result or FakeToolResult(warnings=["no_neighbors"])
+        self.search_calls: list[tuple[str, str | None]] = []
+        self.neighbor_calls: list[tuple[str, list[str] | None]] = []
+
+    @property
+    def suite_schema(self) -> SuiteSchema:
+        return _DEFAULT_SCHEMA
+
+    def search_nodes(self, text: str, kind: str | None = None) -> FakeToolResult:
+        self.search_calls.append((text, kind))
+        return self._result
+
+    def get_neighbors(self, node_id: str, rel_types: list[str] | None = None) -> FakeToolResult:
+        self.neighbor_calls.append((node_id, rel_types))
+        return self._neighbor_result
+
+
+class ScriptedToolClient:
+    provider = "litellm"
+    model = "openrouter/nvidia/nemotron-3-ultra-550b-a55b:free"
+
+    def __init__(self, replies: list[LLMResult]) -> None:
+        self.replies = list(replies)
+        self.calls: list[tuple[list[Message], list[dict[str, object]] | None]] = []
+
+    def complete(
+        self, messages: list[Message], *, tools: list[dict[str, object]] | None = None
+    ) -> LLMResult:
+        self.calls.append((messages, tools))
+        return self.replies.pop(0)
+
+
+def _occupation() -> FakeNode:
+    return FakeNode(
+        id="esco:occupation:fixture-1",
+        kind="Occupation",
+        label="software developer",
+        source="esco",
+        source_id="http://data.europa.eu/esco/occupation/fixture-1",
+        properties={},
+    )
+
+
+def test_parse_loop_turn_reads_laguna_xml_tool_call() -> None:
+    text = (
+        "<tool_call>get_neighbors"
+        "<arg_key>node_id</arg_key>"
+        "<arg_value>esco:occupation:f2b15a0e-e65a-438a-affb-29b9d50b77d1</arg_value>"
+        "<arg_key>rel_types</arg_key>"
+        '<arg_value>["HAS_SKILL"]</arg_value>'
+        "<arg_key>relation_filter</arg_key>"
+        "<arg_value>essential</arg_value>"
+        "</tool_call>"
+    )
+
+    invocations, final = parse_loop_turn(text)
+
+    assert final is None
+    assert invocations[0].name == "get_neighbors"
+    assert invocations[0].arguments["node_id"] == (
+        "esco:occupation:f2b15a0e-e65a-438a-affb-29b9d50b77d1"
+    )
+    assert invocations[0].arguments["rel_types"] == ["HAS_SKILL"]
+    assert invocations[0].arguments["relation_filter"] == "essential"
+
+
+class _BoomClient:
+    """Any call proves the pathfind guard didn't fire before touching the model."""
+
+    provider = "litellm"
+    model = "should-never-be-called"
+
+    def complete(self, messages: list[Message], **_kwargs: object) -> LLMResult:
+        raise AssertionError("run_tool_loop must not call the model for a pathfind question")
+
+
+class _BoomSuite:
+    """Any call proves the pathfind guard didn't fire before touching the suite."""
+
+    @property
+    def suite_schema(self) -> SuiteSchema:
+        return _DEFAULT_SCHEMA
+
+    def search_nodes(self, text: str, kind: str | None = None) -> FakeToolResult:
+        raise AssertionError("run_tool_loop must not search for a pathfind question")
+
+    def get_neighbors(self, node_id: str, rel_types: list[str] | None = None) -> FakeToolResult:
+        raise AssertionError("run_tool_loop must not fetch neighbors for a pathfind question")
+
+
+def test_tool_loop_gates_pathfind_intent_before_touching_model_or_suite() -> None:
+    """Regression: the tool loop used to fall through to get_neighbors on a
+    pathfind-intent question and return a plain skills list. _dispatch_heuristic
+    (assistant/graph.py) already guarded this; run_tool_loop did not.
+
+    No subject_hint/secondary_subject_hint here (the planner found neither
+    end) — Pathfind reports that honestly rather than guessing, and still
+    never touches the model or suite to do so.
+    """
+    outcome = run_tool_loop(
+        question="What is the career path from nurse to software developer?",
+        suite=_BoomSuite(),
+        suite_name="esco",
+        llm_client=_BoomClient(),
+    )
+
+    assert outcome.result.capability == "pathfind"
+    assert outcome.result.warnings == ["pathfind_missing_subject"]
+    assert outcome.result.nodes == []
+    assert outcome.stages == []
+    assert outcome.tool_calls == []
+    assert outcome.plan.capabilities == ("pathfind",)
+
+
+_NURSE = FakeNode(
+    id="esco:occupation:nurse",
+    kind="Occupation",
+    label="nurse",
+    source="esco",
+    source_id="urn:esco:occupation:nurse",
+    properties={},
+)
+_ANALYST = FakeNode(
+    id="esco:occupation:analyst",
+    kind="Occupation",
+    label="data analyst",
+    source="esco",
+    source_id="urn:esco:occupation:analyst",
+    properties={},
+)
+_CARE = FakeNode(
+    id="esco:skill:care",
+    kind="Skill",
+    label="patient care",
+    source="esco",
+    source_id="urn:esco:skill:care",
+    properties={},
+)
+_STATISTICS = FakeNode(
+    id="esco:skill:statistics",
+    kind="Skill",
+    label="statistics",
+    source="esco",
+    source_id="urn:esco:skill:statistics",
+    properties={},
+)
+_SQL = FakeNode(
+    id="esco:skill:sql",
+    kind="Skill",
+    label="SQL",
+    source="esco",
+    source_id="urn:esco:skill:sql",
+    properties={},
+)
+_NURSE_HAS_CARE = FakeEdge(
+    type="HAS_SKILL", from_id=_NURSE.id, to_id=_CARE.id, properties={"relation_type": "essential"}
+)
+_ANALYST_HAS_STATS = FakeEdge(
+    type="HAS_SKILL",
+    from_id=_ANALYST.id,
+    to_id=_STATISTICS.id,
+    properties={"relation_type": "essential"},
+)
+_ANALYST_HAS_SQL = FakeEdge(
+    type="HAS_SKILL", from_id=_ANALYST.id, to_id=_SQL.id, properties={"relation_type": "optional"}
+)
+_BRIDGE_EDGE = FakeEdge(
+    type="HAS_SKILL",
+    from_id=_NURSE.id,
+    to_id=_STATISTICS.id,
+    properties={"relation_type": "optional"},
+)
+
+
+class _PathfindSuite:
+    """Nurse and data analyst, bridged by one shared skill (statistics)."""
+
+    @property
+    def suite_schema(self) -> SuiteSchema:
+        return _DEFAULT_SCHEMA
+
+    def search_nodes(self, text: str, kind: str | None = None) -> FakeToolResult:
+        if text == "nurse":
+            return FakeToolResult(
+                candidates=[FakeCandidate(node=_NURSE, confidence=0.95, method="exact_pref")],
+                nodes=[_NURSE],
+                evidence=["fake:search:exact_pref:nurse"],
+            )
+        if text == "data analyst":
+            return FakeToolResult(
+                candidates=[FakeCandidate(node=_ANALYST, confidence=0.95, method="exact_pref")],
+                nodes=[_ANALYST],
+                evidence=["fake:search:exact_pref:data analyst"],
+            )
+        return FakeToolResult(warnings=["not_found"])
+
+    def get_neighbors(self, node_id: str, rel_types: list[str] | None = None) -> FakeToolResult:
+        if node_id == _NURSE.id:
+            return FakeToolResult(
+                nodes=[_NURSE, _CARE], edges=[_NURSE_HAS_CARE], evidence=["fake:neighbors:nurse"]
+            )
+        if node_id == _ANALYST.id:
+            return FakeToolResult(
+                nodes=[_ANALYST, _STATISTICS, _SQL],
+                edges=[_ANALYST_HAS_STATS, _ANALYST_HAS_SQL],
+                evidence=["fake:neighbors:analyst"],
+            )
+        return FakeToolResult(warnings=["node_not_found"])
+
+    def enumerate_paths(
+        self, from_id: str, to_id: str, *, max_depth: int = 4, max_paths: int = 20
+    ) -> FakeToolResult:
+        if {from_id, to_id} != {_NURSE.id, _ANALYST.id}:
+            return FakeToolResult(warnings=["endpoint_not_found"])
+        return FakeToolResult(
+            nodes=[_NURSE, _STATISTICS, _ANALYST],
+            paths=[
+                FakePath(
+                    node_ids=[_NURSE.id, _STATISTICS.id, _ANALYST.id],
+                    edges=[_BRIDGE_EDGE, _ANALYST_HAS_STATS],
+                )
+            ],
+            pruning=FakePruning(considered=3, returned=1, pruned=2),
+            evidence=["fake:paths:nurse->analyst"],
+        )
+
+
+def test_dispatch_heuristic_pathfind_resolves_both_ends_and_returns_gap_and_routes() -> None:
+    from talent_angels.assistant.graph import _dispatch_heuristic
+    from talent_angels.assistant.llm_plan import PlanDraft
+    from talent_angels.assistant.planning import build_plan_for_capability
+
+    plan = build_plan_for_capability("pathfind", suites=("esco",))
+    draft = PlanDraft(target="pathfind", subject="nurse", secondary_subject="data analyst")
+    state = {"question": "path from nurse to data analyst", "plan": plan, "plan_draft": draft}
+
+    out = _dispatch_heuristic(state, suite=_PathfindSuite(), suite_name="esco")
+    result = out["result"]
+
+    assert result.capability == "pathfind"
+    assert "pathfind_missing_subject" not in result.warnings
+    labels = {node.pref_label for node in result.nodes}
+    assert {"nurse", "data analyst", "statistics", "SQL"} <= labels
+    assert any(edge.type == "HAS_SKILL" for edge in result.edges)
+    assert out["tool_calls"]
+
+
+def test_tool_loop_pathfind_resolves_both_ends_when_hints_are_present() -> None:
+    """With both hints, pathfind runs the real locate+connect+gap+routes code —
+    still never the model or the generic search_nodes/get_neighbors loop."""
+    outcome = run_tool_loop(
+        question="path from nurse to data analyst",
+        suite=_PathfindSuite(),
+        suite_name="esco",
+        llm_client=_BoomClient(),
+        subject_hint="nurse",
+        secondary_subject_hint="data analyst",
+    )
+
+    assert outcome.result.capability == "pathfind"
+    assert "pathfind_missing_subject" not in outcome.result.warnings
+    labels = {node.pref_label for node in outcome.result.nodes}
+    assert {"nurse", "data analyst"} <= labels
+    assert outcome.tool_calls
+
+
+def test_pathfind_reports_which_side_is_ambiguous_without_guessing() -> None:
+    from talent_angels.assistant.graph import _dispatch_heuristic
+    from talent_angels.assistant.llm_plan import PlanDraft
+    from talent_angels.assistant.planning import build_plan_for_capability
+
+    plan = build_plan_for_capability("pathfind", suites=("esco",))
+    draft = PlanDraft(target="pathfind", subject="unknown job", secondary_subject="data analyst")
+    state = {"question": "path from unknown job to data analyst", "plan": plan, "plan_draft": draft}
+
+    out = _dispatch_heuristic(state, suite=_PathfindSuite(), suite_name="esco")
+
+    assert "pathfind_side:start" in out["result"].warnings
+
+
+def test_tool_loop_pathfind_gate_matches_heuristic_dispatch_shape() -> None:
+    """Both dispatch paths (heuristic and tool-loop) must produce the same
+    typed result for the same question, so kernel/API/MCP see one contract."""
+    from talent_angels.assistant.graph import _dispatch_heuristic
+    from talent_angels.assistant.planning import build_plan_for_capability
+
+    question = "skill path from nurse to data scientist"
+    plan = build_plan_for_capability("pathfind", suites=("esco",))
+    heuristic_state = {"question": question, "plan": plan}
+    heuristic_out = _dispatch_heuristic(heuristic_state, suite=_BoomSuite(), suite_name="esco")
+
+    loop_out = run_tool_loop(
+        question=question, suite=_BoomSuite(), suite_name="esco", llm_client=_BoomClient()
+    )
+
+    assert heuristic_out["result"].warnings == loop_out.result.warnings
+    assert heuristic_out["result"].capability == loop_out.result.capability
+
+
+def test_tool_loop_executes_xml_get_neighbors_after_search() -> None:
+    occupation = _occupation()
+    skill = FakeNode(
+        id="esco:skill:fixture-2",
+        kind="Skill",
+        label="computer programming",
+        source="esco",
+        source_id="http://data.europa.eu/esco/skill/fixture-2",
+        properties={},
+    )
+    suite = FakeSuite(
+        FakeToolResult(
+            candidates=[FakeCandidate(node=occupation, confidence=0.95, method="exact_pref")],
+            nodes=[occupation],
+            evidence=["esco:search:exact_pref:software developer"],
+        ),
+        FakeToolResult(
+            nodes=[occupation, skill],
+            edges=[
+                FakeEdge(
+                    type="HAS_SKILL",
+                    from_id=occupation.id,
+                    to_id=skill.id,
+                    properties={"relation_type": "essential"},
+                )
+            ],
+            evidence=[f"esco:neighbors:{occupation.id}"],
+        ),
+    )
+    client = ScriptedToolClient(
+        [
+            LLMResult(
+                text='{"tool":"search_nodes","text":"software developer","kind":"occupation"}',
+                provider="litellm",
+                model="actual",
+                usage=LLMUsage(input_tokens=10, output_tokens=4),
+            ),
+            LLMResult(
+                text=(
+                    '{"tool":"get_neighbors","node_id":"'
+                    + occupation.id
+                    + '","rel_types":["HAS_SKILL"],"relation_filter":"essential"}'
+                ),
+                provider="litellm",
+                model="actual",
+                usage=LLMUsage(input_tokens=12, output_tokens=4),
+            ),
+            LLMResult(
+                text='{"final":"A software developer needs computer programming."}',
+                provider="litellm",
+                model="actual",
+                usage=LLMUsage(input_tokens=20, output_tokens=8),
+            ),
+        ]
+    )
+
+    outcome = run_tool_loop(
+        question="What essential skills does a software developer need?",
+        suite=suite,
+        suite_name="esco",
+        llm_client=client,
+    )
+
+    assert outcome.plan.capabilities == ("locate", "connect")
+    assert outcome.result.capability == "connect"
+    assert suite.search_calls == [("software developer", "occupation")]
+    # rel types come from the suite schema, not the model (determinism in code)
+    assert suite.neighbor_calls == [(occupation.id, ["HAS_SKILL", "USES_SOFTWARE"])]
+    assert [stage.stage for stage in outcome.stages] == ["act", "act", "answer"]
+    assert outcome.answer == "A software developer needs computer programming."
+    assert [tool.name for tool in outcome.tool_calls] == ["search_nodes", "get_neighbors"]
+
+
+def test_tool_loop_runs_laguna_xml_get_neighbors() -> None:
+    occupation = _occupation()
+    skill = FakeNode(
+        id="esco:skill:fixture-2",
+        kind="Skill",
+        label="computer programming",
+        source="esco",
+        source_id="http://data.europa.eu/esco/skill/fixture-2",
+        properties={},
+    )
+    suite = FakeSuite(
+        FakeToolResult(
+            candidates=[FakeCandidate(node=occupation, confidence=0.95, method="exact_pref")],
+            nodes=[occupation],
+            evidence=["esco:search:exact_pref:software developer"],
+        ),
+        FakeToolResult(
+            nodes=[occupation, skill],
+            edges=[
+                FakeEdge(
+                    type="HAS_SKILL",
+                    from_id=occupation.id,
+                    to_id=skill.id,
+                    properties={"relation_type": "essential"},
+                )
+            ],
+            evidence=[f"esco:neighbors:{occupation.id}"],
+        ),
+    )
+    xml = (
+        "<tool_call>get_neighbors"
+        "<arg_key>node_id</arg_key>"
+        f"<arg_value>{occupation.id}</arg_value>"
+        "<arg_key>rel_types</arg_key>"
+        '<arg_value>["HAS_SKILL"]</arg_value>'
+        "<arg_key>relation_filter</arg_key>"
+        "<arg_value>essential</arg_value>"
+        "</tool_call>"
+    )
+    client = ScriptedToolClient(
+        [
+            LLMResult(
+                text='{"tool":"search_nodes","text":"software developer","kind":"occupation"}',
+                provider="litellm",
+                model="actual",
+                usage=LLMUsage(input_tokens=8, output_tokens=4),
+            ),
+            LLMResult(
+                text=xml,
+                provider="litellm",
+                model="actual",
+                usage=LLMUsage(input_tokens=12, output_tokens=6),
+            ),
+            LLMResult(
+                text='{"final":"A software developer needs computer programming."}',
+                provider="litellm",
+                model="actual",
+                usage=LLMUsage(input_tokens=15, output_tokens=5),
+            ),
+        ]
+    )
+
+    outcome = run_tool_loop(
+        question="What essential skills does a software developer need?",
+        suite=suite,
+        suite_name="esco",
+        llm_client=client,
+    )
+
+    assert outcome.result.capability == "connect"
+    # rel types come from the suite schema, not the model (determinism in code)
+    assert suite.neighbor_calls == [(occupation.id, ["HAS_SKILL", "USES_SOFTWARE"])]
+    assert "computer programming" in outcome.answer
+    assert "<tool_call>" not in outcome.answer
+
+
+def test_get_neighbors_without_locate_resolves_center_from_bound_node() -> None:
+    occupation = _occupation()
+    skill = FakeNode(
+        id="esco:skill:fixture-2",
+        kind="Skill",
+        label="computer programming",
+        source="esco",
+        source_id="http://data.europa.eu/esco/skill/fixture-2",
+        properties={},
+    )
+    suite = FakeSuite(
+        FakeToolResult(warnings=["not_found"]),
+        FakeToolResult(
+            nodes=[occupation, skill],
+            edges=[
+                FakeEdge(
+                    type="HAS_SKILL",
+                    from_id=occupation.id,
+                    to_id=skill.id,
+                    properties={"relation_type": "essential"},
+                )
+            ],
+            evidence=[f"esco:neighbors:{occupation.id}"],
+        ),
+    )
+    bound = NodeRef(
+        id=occupation.id,
+        suite="esco",
+        source="esco",
+        source_id="http://data.europa.eu/esco/occupation/fixture-1",
+        kind="Occupation",
+        pref_label="software developer",
+    )
+    client = ScriptedToolClient(
+        [
+            LLMResult(
+                text=(
+                    '{"tool":"get_neighbors","node_id":"'
+                    + occupation.id
+                    + '","rel_types":["HAS_SKILL"]}'
+                ),
+                provider="litellm",
+                model="actual",
+                usage=LLMUsage(input_tokens=10, output_tokens=4),
+            ),
+            LLMResult(
+                text='{"final":"Bound software developer has computer programming."}',
+                provider="litellm",
+                model="actual",
+                usage=LLMUsage(input_tokens=20, output_tokens=8),
+            ),
+        ]
+    )
+
+    outcome = run_tool_loop(
+        question="A software developer needs what skills?",
+        suite=suite,
+        suite_name="esco",
+        llm_client=client,
+        bound_node=bound,
+    )
+
+    assert outcome.result.capability == "connect"
+    assert outcome.result.nodes[0].id == bound.id
+    assert outcome.result.nodes[0].pref_label == "software developer"
+    assert outcome.result.nodes[0].source_id == bound.source_id
+
+
+class ExplodingToolClient:
+    provider = "litellm"
+    model = "openrouter/nvidia/nemotron-3-ultra-550b-a55b:free"
+
+    def complete(
+        self, messages: list[Message], *, tools: list[dict[str, object]] | None = None
+    ) -> LLMResult:
+        raise RuntimeError("LiteLLM provider request failed: missing field `function`")
+
+
+def test_graph_falls_back_when_provider_rejects_tools() -> None:
+    occupation = _occupation()
+    skill = FakeNode(
+        id="esco:skill:fixture-2",
+        kind="Skill",
+        label="computer programming",
+        source="esco",
+        source_id="http://data.europa.eu/esco/skill/fixture-2",
+        properties={},
+    )
+    suite = FakeSuite(
+        FakeToolResult(
+            candidates=[FakeCandidate(node=occupation, confidence=0.95, method="exact_pref")],
+            nodes=[occupation],
+            evidence=["esco:search:exact_pref:software developer"],
+        ),
+        FakeToolResult(
+            nodes=[occupation, skill],
+            edges=[
+                FakeEdge(
+                    type="HAS_SKILL",
+                    from_id=occupation.id,
+                    to_id=skill.id,
+                    properties={"relation_type": "essential"},
+                )
+            ],
+            evidence=[f"esco:neighbors:{occupation.id}"],
+        ),
+    )
+    graph = build_graph(suite=suite, llm_client=ExplodingToolClient(), answer_mode="structured")
+
+    final_state = graph.invoke(
+        {"question": "What essential skills does a software developer need?"}
+    )
+
+    assert final_state["capability"] == "connect"
+    assert suite.search_calls == [("software developer", "occupation")]
+    assert suite.neighbor_calls == [(occupation.id, ["HAS_SKILL", "USES_SOFTWARE"])]
+
+
+def test_graph_uses_planner_when_provider_is_not_stub() -> None:
+    occupation = _occupation()
+    suite = FakeSuite(
+        FakeToolResult(
+            candidates=[FakeCandidate(node=occupation, confidence=0.95, method="exact_pref")],
+            nodes=[occupation],
+            evidence=["esco:search:exact_pref:software developer"],
+        )
+    )
+    # interpret_intent (PLAN_SYSTEM) + dispatch_plan tool loop (LOOP_SYSTEM) both use LLM
+    client = ScriptedToolClient(
+        [
+            LLMResult(
+                text='{"target":"locate","subject":"software developer","kind":"occupation"}',
+                provider="litellm",
+                model="actual",
+                usage=LLMUsage(input_tokens=5, output_tokens=2),
+            ),
+            LLMResult(
+                text='{"tool":"search_nodes","text":"software developer","kind":"occupation"}',
+                provider="litellm",
+                model="actual",
+                usage=LLMUsage(input_tokens=10, output_tokens=4),
+            ),
+            LLMResult(
+                text='{"final":"Software developer occupation found."}',
+                provider="litellm",
+                model="actual",
+                usage=LLMUsage(input_tokens=15, output_tokens=5),
+            ),
+        ]
+    )
+    graph = build_graph(suite=suite, llm_client=client, answer_mode="structured")
+
+    final_state = graph.invoke({"question": "Where is software developer in ESCO?"})
+
+    assert final_state["capability"] == "locate"
+    assert "software developer" in final_state["answer"].lower()
+    assert suite.search_calls == [("software developer", "occupation")]
+    # intent stage from interpret_intent + act + answer stages from dispatch_plan tool loop
+    assert [stage.stage for stage in final_state["llm_stages"]] == ["intent", "act", "answer"]
+
+
+def test_ambiguous_search_stops_without_another_lookup() -> None:
+    first = FakeNode(
+        id="esco:occupation:cook",
+        kind="Occupation",
+        label="diet cook",
+        source="esco",
+        source_id="cook",
+        properties={},
+    )
+    second = FakeNode(
+        id="esco:occupation:nanny",
+        kind="Occupation",
+        label="nanny",
+        source="esco",
+        source_id="nanny",
+        properties={},
+    )
+    suite = FakeSuite(
+        FakeToolResult(
+            candidates=[
+                FakeCandidate(node=first, confidence=0.7, method="contains"),
+                FakeCandidate(node=second, confidence=0.7, method="contains"),
+            ],
+            nodes=[first, second],
+            warnings=["ambiguous"],
+        )
+    )
+    client = ScriptedToolClient(
+        [
+            LLMResult(
+                text='{"tool":"search_nodes","text":"what skills I need to become a nurse"}',
+                provider="litellm",
+                model="actual",
+                usage=LLMUsage(input_tokens=4, output_tokens=2),
+            ),
+            LLMResult(
+                text='{"tool":"search_nodes","text":"nursing"}',
+                provider="litellm",
+                model="actual",
+                usage=LLMUsage(input_tokens=4, output_tokens=2),
+            ),
+        ]
+    )
+
+    outcome = run_tool_loop(
+        question="what skills I need to become a nurse",
+        suite=suite,
+        suite_name="esco",
+        llm_client=client,
+    )
+
+    assert suite.search_calls in ([("nurse", "occupation")], [("nurse", None)])
+    assert len(suite.search_calls) == 1
+    assert "ambiguous" in outcome.result.warnings
+    assert "diet cook" in outcome.answer and "clarify" in outcome.answer.lower()
+    assert outcome.answer.lower().count("diet cook") == 1
+    assert "Candidates:" in outcome.answer
+    assert client.calls  # first act ran
+    assert len(client.calls) == 1
+
+
+def test_unique_skills_question_connects_after_locate() -> None:
+    occupation = _occupation()
+    skill = FakeNode(
+        id="esco:skill:fixture-2",
+        kind="Skill",
+        label="computer programming",
+        source="esco",
+        source_id="http://data.europa.eu/esco/skill/fixture-2",
+        properties={},
+    )
+    suite = FakeSuite(
+        FakeToolResult(
+            candidates=[FakeCandidate(node=occupation, confidence=0.95, method="exact_pref")],
+            nodes=[occupation],
+            evidence=["esco:search:exact_pref:software developer"],
+        ),
+        FakeToolResult(
+            nodes=[occupation, skill],
+            edges=[
+                FakeEdge(
+                    type="HAS_SKILL",
+                    from_id=occupation.id,
+                    to_id=skill.id,
+                    properties={"relation_type": "essential"},
+                )
+            ],
+            evidence=[f"esco:neighbors:{occupation.id}"],
+        ),
+    )
+    client = ScriptedToolClient(
+        [
+            LLMResult(
+                text=(
+                    '{"tool":"search_nodes","text":"what skills I need to be a software developer"}'
+                ),
+                provider="litellm",
+                model="actual",
+                usage=LLMUsage(input_tokens=4, output_tokens=2),
+            ),
+            LLMResult(
+                text='{"final":"done"}',
+                provider="litellm",
+                model="actual",
+                usage=LLMUsage(input_tokens=4, output_tokens=2),
+            ),
+        ]
+    )
+
+    outcome = run_tool_loop(
+        question="what skills I need to be a software developer",
+        suite=suite,
+        suite_name="esco",
+        llm_client=client,
+    )
+
+    assert suite.search_calls in (
+        [("software developer", "occupation")],
+        [("software developer", None)],
+    )
+    assert outcome.result.capability == "connect"
+    assert suite.neighbor_calls == [(occupation.id, ["HAS_SKILL", "USES_SOFTWARE"])]
+    assert "computer programming" in outcome.answer
+
+
+def test_compact_result_truncates_neighbors_but_keeps_counts() -> None:
+    center = NodeRef(
+        id="esco:occupation:1",
+        suite="esco",
+        source="esco",
+        source_id="1",
+        kind="Occupation",
+        pref_label="software developer",
+    )
+    skills = [
+        NodeRef(
+            id=f"esco:skill:{index}",
+            suite="esco",
+            source="esco",
+            source_id=str(index),
+            kind="Skill",
+            pref_label=f"skill {index}",
+        )
+        for index in range(20)
+    ]
+    edges = [
+        EdgeRef(
+            type="HAS_SKILL",
+            suite="esco",
+            source_node_id=center.id,
+            target_node_id=skill.id,
+            properties={"relation_type": "essential"},
+        )
+        for skill in skills
+    ]
+    result = AgentResult(
+        capability="connect",
+        suite="esco",
+        nodes=[center, *skills],
+        edges=edges,
+        confidence=0.95,
+    )
+
+    payload = _compact_result(result)
+
+    assert payload["truncated"] is True
+    assert payload["node_count"] == 21
+    assert payload["edge_count"] == 20
+    assert payload["omitted_nodes"] == 13
+    assert payload["omitted_edges"] == 12
+    assert len(payload["nodes"]) == 8
+    assert len(payload["edges"]) == 8
+
+
+def test_loop_is_told_the_planners_english_subject() -> None:
+    client = ScriptedToolClient(
+        [LLMResult(text='{"final":"done"}', provider="litellm", model="m", usage=LLMUsage())]
+    )
+    run_tool_loop(
+        question="enfermero",
+        suite=FakeSuite(FakeToolResult(warnings=["not_found"])),
+        suite_name="esco",
+        llm_client=client,
+        kind="occupation",
+        subject_hint="nurse",
+    )
+    user_message = client.calls[0][0][1].content
+    assert user_message.endswith("kind=occupation\nsubject=nurse")
+
+
+def test_loop_with_a_bound_node_gets_no_subject_line() -> None:
+    client = ScriptedToolClient(
+        [LLMResult(text='{"final":"done"}', provider="litellm", model="m", usage=LLMUsage())]
+    )
+    bound = NodeRef(
+        id="esco:occupation:chef",
+        suite="esco",
+        source="esco",
+        source_id="chef",
+        kind="Occupation",
+        pref_label="chef",
+    )
+    run_tool_loop(
+        question="what skills does it need?",
+        suite=FakeSuite(FakeToolResult(warnings=["not_found"])),
+        suite_name="esco",
+        llm_client=client,
+        bound_node=bound,
+        subject_hint="chef",
+    )
+    assert "subject=" not in client.calls[0][0][1].content

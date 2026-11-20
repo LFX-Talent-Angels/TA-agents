@@ -12,7 +12,13 @@ from typing import Any
 
 import anthropic
 
-from talent_angels.llm.protocol import LLMResult, LLMUsage, Message
+from talent_angels.llm.protocol import (
+    LLMResult,
+    LLMUsage,
+    Message,
+    llm_num_retries,
+    llm_timeout_seconds,
+)
 
 DEFAULT_MAX_TOKENS = 1024
 
@@ -27,9 +33,13 @@ class AnthropicLLMClient:
             raise ValueError(
                 "LLM_PROVIDER=anthropic requires LLM_API_KEY or ANTHROPIC_API_KEY to be set"
             )
-        self._client = anthropic.Anthropic(api_key=key)
+        self._client = anthropic.Anthropic(
+            api_key=key, timeout=llm_timeout_seconds(), max_retries=llm_num_retries()
+        )
 
-    def complete(self, messages: list[Message]) -> LLMResult:
+    def complete(
+        self, messages: list[Message], *, tools: list[dict[str, object]] | None = None
+    ) -> LLMResult:
         system_text = "\n".join(m.content for m in messages if m.role == "system")
         turns: list[dict[str, Any]] = [
             {"role": m.role, "content": m.content} for m in messages if m.role != "system"
@@ -52,4 +62,6 @@ class AnthropicLLMClient:
             cache_creation_input_tokens=getattr(response.usage, "cache_creation_input_tokens", 0)
             or 0,
         )
-        return LLMResult(text=text, provider=self.provider, model=self.model, usage=usage)
+        # The model that answered, which can differ from the one requested.
+        model = str(getattr(response, "model", "") or self.model)
+        return LLMResult(text=text, provider=self.provider, model=model, usage=usage)

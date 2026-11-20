@@ -1,4 +1,4 @@
-"""Golden Locate eval — hit@1 accuracy against the ESCO fixture.
+"""Golden Locate eval — hit@1 / candidate recall against full ESCO.
 
 Skipped (not failed) when Neo4j isn't reachable, per CONTRIBUTING.md.
 """
@@ -15,10 +15,9 @@ pytest.importorskip(
     reason="TA-taxonomies is not installed; install the sibling package for integration tests",
 )
 
-from ta_taxonomies.suites.esco.db import neo4j_driver  # noqa: E402
-from ta_taxonomies.suites.esco.tools import EscoSuite  # noqa: E402
-
-from talent_angels.skills.locate import ESCO_SUITE_NAME, locate  # noqa: E402
+from talent_angels.evals import LocateMetrics  # noqa: E402
+from talent_angels.skills.locate import locate  # noqa: E402
+from talent_angels.suites import default_suite_registry  # noqa: E402
 from tests.integration.support import neo4j_reachable  # noqa: E402
 
 GOLDEN_PATH = Path(__file__).parents[1] / "evals" / "golden_locate.json"
@@ -37,27 +36,40 @@ pytestmark = [
 
 @pytest.mark.parametrize("case", _load_cases(), ids=lambda c: c["question"])
 def test_golden_locate_case(case: dict) -> None:
-    with neo4j_driver() as (driver, database):
-        suite = EscoSuite(driver, database=database)
-        outcome = locate(suite, ESCO_SUITE_NAME, case["question"], kind=case["kind"])
+    with default_suite_registry().open() as runtime:
+        outcome = locate(runtime.suite, runtime.name, case["question"], kind=case["kind"])
 
-    assert outcome.warnings == case["expected_warnings"]
+    # Required warnings must be present. Newer TA-taxonomies may also emit
+    # additive machine warnings such as ``truncated`` when SEARCH_LIMIT cuts
+    # a large match set (full ESCO); fixture runs often will not.
+    actual_warnings = set(outcome.warnings)
+    assert set(case["expected_warnings"]).issubset(actual_warnings)
+    assert actual_warnings - set(case["expected_warnings"]) <= {
+        "truncated",
+        "match_count_capped",
+    }
     assert outcome.confidence == case["expected_confidence"]
     if case["expected_top_id"] is None:
         assert outcome.nodes == []
+    elif case.get("metric", "hit_at_1") == "candidate_recall":
+        assert case["expected_top_id"] in [node.id for node in outcome.nodes]
     else:
         assert outcome.nodes[0].id == case["expected_top_id"]
 
 
-def test_golden_locate_hit_at_1_accuracy() -> None:
-    cases = [c for c in _load_cases() if c["expected_top_id"] is not None]
-    hits = 0
-    with neo4j_driver() as (driver, database):
-        suite = EscoSuite(driver, database=database)
-        for case in cases:
-            outcome = locate(suite, ESCO_SUITE_NAME, case["question"], kind=case["kind"])
-            if outcome.nodes and outcome.nodes[0].id == case["expected_top_id"]:
-                hits += 1
+def test_golden_locate_metrics() -> None:
+    metrics = LocateMetrics()
+    with default_suite_registry().open() as runtime:
+        for case in _load_cases():
+            outcome = locate(runtime.suite, runtime.name, case["question"], kind=case["kind"])
+            metrics.observe(
+                case.get("metric", "hit_at_1"),
+                case["expected_top_id"],
+                [node.id for node in outcome.nodes],
+            )
 
-    accuracy = hits / len(cases)
-    assert accuracy == 1.0, f"hit@1 accuracy {accuracy:.0%} on {len(cases)} golden questions"
+    result = metrics.as_dict()
+    assert result["hit_at_1_accuracy"] == 1.0
+    assert result["hit_at_1_questions"] == 8
+    assert result["candidate_recall"] == 1.0
+    assert result["candidate_recall_questions"] == 3

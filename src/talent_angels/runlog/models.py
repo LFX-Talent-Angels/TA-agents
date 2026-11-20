@@ -22,20 +22,39 @@ class EfficiencyInfo(BaseModel):
     heuristic_intent: bool = True
 
 
+class StageUsage(BaseModel):
+    """One LLM call inside a turn (intent or answer)."""
+
+    stage: str
+    provider_name: str = ""
+    request_model: str = ""
+    response_model: str = ""
+    input_tokens: int = 0
+    output_tokens: int = 0
+    reasoning_tokens: int = 0
+    cache_read_input_tokens: int = 0
+    cache_creation_input_tokens: int = 0
+    latency_ms: float = 0.0
+    calls: int = 1
+
+
 class GenAIUsage(BaseModel):
     provider_name: str = "none"
     request_model: str = ""
     input_tokens: int = 0
     output_tokens: int = 0
+    reasoning_tokens: int = 0
     cache_read_input_tokens: int = 0
     cache_creation_input_tokens: int = 0
     calls: int = 0
+    stages: list[StageUsage] = Field(default_factory=list)
 
 
 class ToolCall(BaseModel):
     name: str
     ms: float
     ok: bool
+    args: dict[str, object] = Field(default_factory=dict)
 
 
 class GraphStats(BaseModel):
@@ -44,6 +63,7 @@ class GraphStats(BaseModel):
 
 
 class CostBreakdown(BaseModel):
+    known: bool = True
     llm: float = 0.0
     llm_with_cache_savings: float = 0.0
     total: float = 0.0
@@ -53,7 +73,14 @@ class CostBreakdown(BaseModel):
 class ResultSummary(BaseModel):
     confidence: float | None = None
     node_ids: list[str] = Field(default_factory=list)
+    node_labels: list[str] = Field(default_factory=list)
     warnings: list[str] = Field(default_factory=list)
+    #: The resolved node(s) of each suite — what the turn was *about* — bounded.
+    #: Episode recall indexes these, not every cited neighbour. Empty on records
+    #: written before this field existed (readers fall back to node_labels[:3]).
+    topic_labels: list[str] = Field(default_factory=list)
+    #: Did at least one suite land on a usable answer? ``None`` on older records.
+    satisfied: bool | None = None
 
 
 class RunLogRecord(BaseModel):

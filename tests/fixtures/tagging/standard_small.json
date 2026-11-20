@@ -1,0 +1,1262 @@
+[
+  {
+    "n": {
+      "identity": 1,
+      "labels": [
+        "Section"
+      ],
+      "properties": {
+        "text": "Section I: General Information"
+      },
+      "elementId": "4:fixture:1"
+    },
+    "r": {
+      "identity": 1001,
+      "start": 1,
+      "end": 0,
+      "type": "IS_PART_OF",
+      "properties": {},
+      "elementId": "5:fixture:1001"
+    },
+    "m": {
+      "identity": 0,
+      "labels": [
+        "Document"
+      ],
+      "properties": {
+        "text": "Bakery Hygiene and Food Safety Standard.json"
+      },
+      "elementId": "4:fixture:0"
+    }
+  },
+  {
+    "n": {
+      "identity": 2,
+      "labels": [
+        "Item"
+      ],
+      "properties": {
+        "text": "Title: Bakery Hygiene and Food Safety Standard"
+      },
+      "elementId": "4:fixture:2"
+    },
+    "r": {
+      "identity": 1002,
+      "start": 2,
+      "end": 1,
+      "type": "IS_PART_OF",
+      "properties": {},
+      "elementId": "5:fixture:1002"
+    },
+    "m": {
+      "identity": 1,
+      "labels": [
+        "Section"
+      ],
+      "properties": {
+        "text": "Section I: General Information"
+      },
+      "elementId": "4:fixture:1"
+    }
+  },
+  {
+    "n": {
+      "identity": 3,
+      "labels": [
+        "Item"
+      ],
+      "properties": {
+        "text": "Purpose of the Standard: To certify competency in bakery hygiene and food safety practices."
+      },
+      "elementId": "4:fixture:3"
+    },
+    "r": {
+      "identity": 1003,
+      "start": 3,
+      "end": 1,
+      "type": "IS_PART_OF",
+      "properties": {},
+      "elementId": "5:fixture:1003"
+    },
+    "m": {
+      "identity": 1,
+      "labels": [
+        "Section"
+      ],
+      "properties": {
+        "text": "Section I: General Information"
+      },
+      "elementId": "4:fixture:1"
+    }
+  },
+  {
+    "n": {
+      "identity": 4,
+      "labels": [
+        "Item"
+      ],
+      "properties": {
+        "text": "Code: 1234"
+      },
+      "elementId": "4:fixture:4"
+    },
+    "r": {
+      "identity": 1004,
+      "start": 4,
+      "end": 1,
+      "type": "IS_PART_OF",
+      "properties": {},
+      "elementId": "5:fixture:1004"
+    },
+    "m": {
+      "identity": 1,
+      "labels": [
+        "Section"
+      ],
+      "properties": {
+        "text": "Section I: General Information"
+      },
+      "elementId": "4:fixture:1"
+    }
+  },
+  {
+    "n": {
+      "identity": 5,
+      "labels": [
+        "Block"
+      ],
+      "properties": {
+        "text": "Occupations Related to this Standard"
+      },
+      "elementId": "4:fixture:5"
+    },
+    "r": {
+      "identity": 1005,
+      "start": 5,
+      "end": 1,
+      "type": "IS_PART_OF",
+      "properties": {},
+      "elementId": "5:fixture:1005"
+    },
+    "m": {
+      "identity": 1,
+      "labels": [
+        "Section"
+      ],
+      "properties": {
+        "text": "Section I: General Information"
+      },
+      "elementId": "4:fixture:1"
+    }
+  },
+  {
+    "n": {
+      "identity": 6,
+      "labels": [
+        "Item"
+      ],
+      "properties": {
+        "text": "Associated Occupations: Baker; Pastry Chef; Bakery Assistant"
+      },
+      "elementId": "4:fixture:6"
+    },
+    "r": {
+      "identity": 1006,
+      "start": 6,
+      "end": 5,
+      "type": "IS_PART_OF",
+      "properties": {},
+      "elementId": "5:fixture:1006"
+    },
+    "m": {
+      "identity": 5,
+      "labels": [
+        "Block"
+      ],
+      "properties": {
+        "text": "Occupations Related to this Standard"
+      },
+      "elementId": "4:fixture:5"
+    }
+  },
+  {
+    "n": {
+      "identity": 7,
+      "labels": [
+        "Block"
+      ],
+      "properties": {
+        "text": "Participating Organizations in the Development of the Standard"
+      },
+      "elementId": "4:fixture:7"
+    },
+    "r": {
+      "identity": 1007,
+      "start": 7,
+      "end": 1,
+      "type": "IS_PART_OF",
+      "properties": {},
+      "elementId": "5:fixture:1007"
+    },
+    "m": {
+      "identity": 1,
+      "labels": [
+        "Section"
+      ],
+      "properties": {
+        "text": "Section I: General Information"
+      },
+      "elementId": "4:fixture:1"
+    }
+  },
+  {
+    "n": {
+      "identity": 8,
+      "labels": [
+        "Item"
+      ],
+      "properties": {
+        "text": "Acme Bakery Supplies Co."
+      },
+      "elementId": "4:fixture:8"
+    },
+    "r": {
+      "identity": 1008,
+      "start": 8,
+      "end": 7,
+      "type": "IS_PART_OF",
+      "properties": {},
+      "elementId": "5:fixture:1008"
+    },
+    "m": {
+      "identity": 7,
+      "labels": [
+        "Block"
+      ],
+      "properties": {
+        "text": "Participating Organizations in the Development of the Standard"
+      },
+      "elementId": "4:fixture:7"
+    }
+  },
+  {
+    "n": {
+      "identity": 9,
+      "labels": [
+        "Item"
+      ],
+      "properties": {
+        "text": "National Bakers Guild"
+      },
+      "elementId": "4:fixture:9"
+    },
+    "r": {
+      "identity": 1009,
+      "start": 9,
+      "end": 7,
+      "type": "IS_PART_OF",
+      "properties": {},
+      "elementId": "5:fixture:1009"
+    },
+    "m": {
+      "identity": 7,
+      "labels": [
+        "Block"
+      ],
+      "properties": {
+        "text": "Participating Organizations in the Development of the Standard"
+      },
+      "elementId": "4:fixture:7"
+    }
+  },
+  {
+    "n": {
+      "identity": 10,
+      "labels": [
+        "Section"
+      ],
+      "properties": {
+        "text": "Section II: Elements Formulating the Standard of Competence"
+      },
+      "elementId": "4:fixture:10"
+    },
+    "r": {
+      "identity": 1010,
+      "start": 10,
+      "end": 0,
+      "type": "IS_PART_OF",
+      "properties": {},
+      "elementId": "5:fixture:1010"
+    },
+    "m": {
+      "identity": 0,
+      "labels": [
+        "Document"
+      ],
+      "properties": {
+        "text": "Bakery Hygiene and Food Safety Standard.json"
+      },
+      "elementId": "4:fixture:0"
+    }
+  },
+  {
+    "n": {
+      "identity": 11,
+      "labels": [
+        "Item"
+      ],
+      "properties": {
+        "text": "Element 1 of 2: Maintain a hygienic work area"
+      },
+      "elementId": "4:fixture:11"
+    },
+    "r": {
+      "identity": 1011,
+      "start": 11,
+      "end": 10,
+      "type": "IS_PART_OF",
+      "properties": {},
+      "elementId": "5:fixture:1011"
+    },
+    "m": {
+      "identity": 10,
+      "labels": [
+        "Section"
+      ],
+      "properties": {
+        "text": "Section II: Elements Formulating the Standard of Competence"
+      },
+      "elementId": "4:fixture:10"
+    }
+  },
+  {
+    "n": {
+      "identity": 12,
+      "labels": [
+        "Item"
+      ],
+      "properties": {
+        "text": "Element 2 of 2: Prepare dough safely"
+      },
+      "elementId": "4:fixture:12"
+    },
+    "r": {
+      "identity": 1012,
+      "start": 12,
+      "end": 10,
+      "type": "IS_PART_OF",
+      "properties": {},
+      "elementId": "5:fixture:1012"
+    },
+    "m": {
+      "identity": 10,
+      "labels": [
+        "Section"
+      ],
+      "properties": {
+        "text": "Section II: Elements Formulating the Standard of Competence"
+      },
+      "elementId": "4:fixture:10"
+    }
+  },
+  {
+    "n": {
+      "identity": 13,
+      "labels": [
+        "Section"
+      ],
+      "properties": {
+        "text": "Section III: Elements Formulating the Standard of Competence"
+      },
+      "elementId": "4:fixture:13"
+    },
+    "r": {
+      "identity": 1013,
+      "start": 13,
+      "end": 0,
+      "type": "IS_PART_OF",
+      "properties": {},
+      "elementId": "5:fixture:1013"
+    },
+    "m": {
+      "identity": 0,
+      "labels": [
+        "Document"
+      ],
+      "properties": {
+        "text": "Bakery Hygiene and Food Safety Standard.json"
+      },
+      "elementId": "4:fixture:0"
+    }
+  },
+  {
+    "n": {
+      "identity": 14,
+      "labels": [
+        "Element"
+      ],
+      "properties": {
+        "text": "Element 1 of 2: Maintain a hygienic work area"
+      },
+      "elementId": "4:fixture:14"
+    },
+    "r": {
+      "identity": 1014,
+      "start": 14,
+      "end": 13,
+      "type": "IS_PART_OF",
+      "properties": {},
+      "elementId": "5:fixture:1014"
+    },
+    "m": {
+      "identity": 13,
+      "labels": [
+        "Section"
+      ],
+      "properties": {
+        "text": "Section III: Elements Formulating the Standard of Competence"
+      },
+      "elementId": "4:fixture:13"
+    }
+  },
+  {
+    "n": {
+      "identity": 15,
+      "labels": [
+        "Block"
+      ],
+      "properties": {
+        "text": "PERFORMANCES"
+      },
+      "elementId": "4:fixture:15"
+    },
+    "r": {
+      "identity": 1015,
+      "start": 15,
+      "end": 14,
+      "type": "IS_PART_OF",
+      "properties": {},
+      "elementId": "5:fixture:1015"
+    },
+    "m": {
+      "identity": 14,
+      "labels": [
+        "Element"
+      ],
+      "properties": {
+        "text": "Element 1 of 2: Maintain a hygienic work area"
+      },
+      "elementId": "4:fixture:14"
+    }
+  },
+  {
+    "n": {
+      "identity": 16,
+      "labels": [
+        "Item"
+      ],
+      "properties": {
+        "text": "1. Cleans the work area:"
+      },
+      "elementId": "4:fixture:16"
+    },
+    "r": {
+      "identity": 1016,
+      "start": 16,
+      "end": 15,
+      "type": "IS_PART_OF",
+      "properties": {},
+      "elementId": "5:fixture:1016"
+    },
+    "m": {
+      "identity": 15,
+      "labels": [
+        "Block"
+      ],
+      "properties": {
+        "text": "PERFORMANCES"
+      },
+      "elementId": "4:fixture:15"
+    }
+  },
+  {
+    "n": {
+      "identity": 17,
+      "labels": [
+        "Item"
+      ],
+      "properties": {
+        "text": "Removing debris from surfaces,"
+      },
+      "elementId": "4:fixture:17"
+    },
+    "r": {
+      "identity": 1017,
+      "start": 17,
+      "end": 16,
+      "type": "IS_PART_OF",
+      "properties": {},
+      "elementId": "5:fixture:1017"
+    },
+    "m": {
+      "identity": 16,
+      "labels": [
+        "Item"
+      ],
+      "properties": {
+        "text": "1. Cleans the work area:"
+      },
+      "elementId": "4:fixture:16"
+    }
+  },
+  {
+    "n": {
+      "identity": 18,
+      "labels": [
+        "Item"
+      ],
+      "properties": {
+        "text": "Sanitizing countertops and equipment,"
+      },
+      "elementId": "4:fixture:18"
+    },
+    "r": {
+      "identity": 1018,
+      "start": 18,
+      "end": 16,
+      "type": "IS_PART_OF",
+      "properties": {},
+      "elementId": "5:fixture:1018"
+    },
+    "m": {
+      "identity": 16,
+      "labels": [
+        "Item"
+      ],
+      "properties": {
+        "text": "1. Cleans the work area:"
+      },
+      "elementId": "4:fixture:16"
+    }
+  },
+  {
+    "n": {
+      "identity": 19,
+      "labels": [
+        "Item"
+      ],
+      "properties": {
+        "text": "Washing hands before handling food,"
+      },
+      "elementId": "4:fixture:19"
+    },
+    "r": {
+      "identity": 1019,
+      "start": 19,
+      "end": 16,
+      "type": "IS_PART_OF",
+      "properties": {},
+      "elementId": "5:fixture:1019"
+    },
+    "m": {
+      "identity": 16,
+      "labels": [
+        "Item"
+      ],
+      "properties": {
+        "text": "1. Cleans the work area:"
+      },
+      "elementId": "4:fixture:16"
+    }
+  },
+  {
+    "n": {
+      "identity": 20,
+      "labels": [
+        "Item"
+      ],
+      "properties": {
+        "text": "Disposing of waste by hand."
+      },
+      "elementId": "4:fixture:20"
+    },
+    "r": {
+      "identity": 1020,
+      "start": 20,
+      "end": 16,
+      "type": "IS_PART_OF",
+      "properties": {},
+      "elementId": "5:fixture:1020"
+    },
+    "m": {
+      "identity": 16,
+      "labels": [
+        "Item"
+      ],
+      "properties": {
+        "text": "1. Cleans the work area:"
+      },
+      "elementId": "4:fixture:16"
+    }
+  },
+  {
+    "n": {
+      "identity": 21,
+      "labels": [
+        "Block"
+      ],
+      "properties": {
+        "text": "PRODUCTS"
+      },
+      "elementId": "4:fixture:21"
+    },
+    "r": {
+      "identity": 1021,
+      "start": 21,
+      "end": 14,
+      "type": "IS_PART_OF",
+      "properties": {},
+      "elementId": "5:fixture:1021"
+    },
+    "m": {
+      "identity": 14,
+      "labels": [
+        "Element"
+      ],
+      "properties": {
+        "text": "Element 1 of 2: Maintain a hygienic work area"
+      },
+      "elementId": "4:fixture:14"
+    }
+  },
+  {
+    "n": {
+      "identity": 22,
+      "labels": [
+        "Item"
+      ],
+      "properties": {
+        "text": "Clean and sanitized work area"
+      },
+      "elementId": "4:fixture:22"
+    },
+    "r": {
+      "identity": 1022,
+      "start": 22,
+      "end": 21,
+      "type": "IS_PART_OF",
+      "properties": {},
+      "elementId": "5:fixture:1022"
+    },
+    "m": {
+      "identity": 21,
+      "labels": [
+        "Block"
+      ],
+      "properties": {
+        "text": "PRODUCTS"
+      },
+      "elementId": "4:fixture:21"
+    }
+  },
+  {
+    "n": {
+      "identity": 23,
+      "labels": [
+        "Item"
+      ],
+      "properties": {
+        "text": "Clean and sanitized work area"
+      },
+      "elementId": "4:fixture:23"
+    },
+    "r": {
+      "identity": 1023,
+      "start": 23,
+      "end": 21,
+      "type": "IS_PART_OF",
+      "properties": {},
+      "elementId": "5:fixture:1023"
+    },
+    "m": {
+      "identity": 21,
+      "labels": [
+        "Block"
+      ],
+      "properties": {
+        "text": "PRODUCTS"
+      },
+      "elementId": "4:fixture:21"
+    }
+  },
+  {
+    "n": {
+      "identity": 24,
+      "labels": [
+        "Block"
+      ],
+      "properties": {
+        "text": "KNOWLEDGE"
+      },
+      "elementId": "4:fixture:24"
+    },
+    "r": {
+      "identity": 1024,
+      "start": 24,
+      "end": 14,
+      "type": "IS_PART_OF",
+      "properties": {},
+      "elementId": "5:fixture:1024"
+    },
+    "m": {
+      "identity": 14,
+      "labels": [
+        "Element"
+      ],
+      "properties": {
+        "text": "Element 1 of 2: Maintain a hygienic work area"
+      },
+      "elementId": "4:fixture:14"
+    }
+  },
+  {
+    "n": {
+      "identity": 25,
+      "labels": [
+        "Item"
+      ],
+      "properties": {
+        "text": "Subject Area: Food safety: Cross-contamination prevention, allergen control, and temperature danger zones. | Competency Level: Application"
+      },
+      "elementId": "4:fixture:25"
+    },
+    "r": {
+      "identity": 1025,
+      "start": 25,
+      "end": 24,
+      "type": "IS_PART_OF",
+      "properties": {},
+      "elementId": "5:fixture:1025"
+    },
+    "m": {
+      "identity": 24,
+      "labels": [
+        "Block"
+      ],
+      "properties": {
+        "text": "KNOWLEDGE"
+      },
+      "elementId": "4:fixture:24"
+    }
+  },
+  {
+    "n": {
+      "identity": 26,
+      "labels": [
+        "Block"
+      ],
+      "properties": {
+        "text": "ATTITUDES / HABITS / VALUES"
+      },
+      "elementId": "4:fixture:26"
+    },
+    "r": {
+      "identity": 1026,
+      "start": 26,
+      "end": 14,
+      "type": "IS_PART_OF",
+      "properties": {},
+      "elementId": "5:fixture:1026"
+    },
+    "m": {
+      "identity": 14,
+      "labels": [
+        "Element"
+      ],
+      "properties": {
+        "text": "Element 1 of 2: Maintain a hygienic work area"
+      },
+      "elementId": "4:fixture:14"
+    }
+  },
+  {
+    "n": {
+      "identity": 27,
+      "labels": [
+        "Item"
+      ],
+      "properties": {
+        "text": "Attention to cleanliness and personal hygiene"
+      },
+      "elementId": "4:fixture:27"
+    },
+    "r": {
+      "identity": 1027,
+      "start": 27,
+      "end": 26,
+      "type": "IS_PART_OF",
+      "properties": {},
+      "elementId": "5:fixture:1027"
+    },
+    "m": {
+      "identity": 26,
+      "labels": [
+        "Block"
+      ],
+      "properties": {
+        "text": "ATTITUDES / HABITS / VALUES"
+      },
+      "elementId": "4:fixture:26"
+    }
+  },
+  {
+    "n": {
+      "identity": 28,
+      "labels": [
+        "Block"
+      ],
+      "properties": {
+        "text": "RESPONSES TO EMERGENT SITUATIONS"
+      },
+      "elementId": "4:fixture:28"
+    },
+    "r": {
+      "identity": 1028,
+      "start": 28,
+      "end": 14,
+      "type": "IS_PART_OF",
+      "properties": {},
+      "elementId": "5:fixture:1028"
+    },
+    "m": {
+      "identity": 14,
+      "labels": [
+        "Element"
+      ],
+      "properties": {
+        "text": "Element 1 of 2: Maintain a hygienic work area"
+      },
+      "elementId": "4:fixture:14"
+    }
+  },
+  {
+    "n": {
+      "identity": 29,
+      "labels": [
+        "Item"
+      ],
+      "properties": {
+        "text": "Emergent Situation: A customer reports a foreign object found in a baked good."
+      },
+      "elementId": "4:fixture:29"
+    },
+    "r": {
+      "identity": 1029,
+      "start": 29,
+      "end": 28,
+      "type": "IS_PART_OF",
+      "properties": {},
+      "elementId": "5:fixture:1029"
+    },
+    "m": {
+      "identity": 28,
+      "labels": [
+        "Block"
+      ],
+      "properties": {
+        "text": "RESPONSES TO EMERGENT SITUATIONS"
+      },
+      "elementId": "4:fixture:28"
+    }
+  },
+  {
+    "n": {
+      "identity": 30,
+      "labels": [
+        "Item"
+      ],
+      "properties": {
+        "text": "Expected Response: Halts service at the station, isolates the implicated batch, and notifies the shift supervisor."
+      },
+      "elementId": "4:fixture:30"
+    },
+    "r": {
+      "identity": 1030,
+      "start": 30,
+      "end": 29,
+      "type": "IS_PART_OF",
+      "properties": {},
+      "elementId": "5:fixture:1030"
+    },
+    "m": {
+      "identity": 29,
+      "labels": [
+        "Item"
+      ],
+      "properties": {
+        "text": "Emergent Situation: A customer reports a foreign object found in a baked good."
+      },
+      "elementId": "4:fixture:29"
+    }
+  },
+  {
+    "n": {
+      "identity": 31,
+      "labels": [
+        "Block"
+      ],
+      "properties": {
+        "text": "GLOSSARY"
+      },
+      "elementId": "4:fixture:31"
+    },
+    "r": {
+      "identity": 1031,
+      "start": 31,
+      "end": 14,
+      "type": "IS_PART_OF",
+      "properties": {},
+      "elementId": "5:fixture:1031"
+    },
+    "m": {
+      "identity": 14,
+      "labels": [
+        "Element"
+      ],
+      "properties": {
+        "text": "Element 1 of 2: Maintain a hygienic work area"
+      },
+      "elementId": "4:fixture:14"
+    }
+  },
+  {
+    "n": {
+      "identity": 32,
+      "labels": [
+        "Item"
+      ],
+      "properties": {
+        "text": "Cross-contamination: The transfer of harmful microorganisms from one surface or food to another."
+      },
+      "elementId": "4:fixture:32"
+    },
+    "r": {
+      "identity": 1032,
+      "start": 32,
+      "end": 31,
+      "type": "IS_PART_OF",
+      "properties": {},
+      "elementId": "5:fixture:1032"
+    },
+    "m": {
+      "identity": 31,
+      "labels": [
+        "Block"
+      ],
+      "properties": {
+        "text": "GLOSSARY"
+      },
+      "elementId": "4:fixture:31"
+    }
+  },
+  {
+    "n": {
+      "identity": 33,
+      "labels": [
+        "Element"
+      ],
+      "properties": {
+        "text": "Element 2 of 2: Prepare dough safely"
+      },
+      "elementId": "4:fixture:33"
+    },
+    "r": {
+      "identity": 1033,
+      "start": 33,
+      "end": 13,
+      "type": "IS_PART_OF",
+      "properties": {},
+      "elementId": "5:fixture:1033"
+    },
+    "m": {
+      "identity": 13,
+      "labels": [
+        "Section"
+      ],
+      "properties": {
+        "text": "Section III: Elements Formulating the Standard of Competence"
+      },
+      "elementId": "4:fixture:13"
+    }
+  },
+  {
+    "n": {
+      "identity": 34,
+      "labels": [
+        "Block"
+      ],
+      "properties": {
+        "text": "PERFORMANCES"
+      },
+      "elementId": "4:fixture:34"
+    },
+    "r": {
+      "identity": 1034,
+      "start": 34,
+      "end": 33,
+      "type": "IS_PART_OF",
+      "properties": {},
+      "elementId": "5:fixture:1034"
+    },
+    "m": {
+      "identity": 33,
+      "labels": [
+        "Element"
+      ],
+      "properties": {
+        "text": "Element 2 of 2: Prepare dough safely"
+      },
+      "elementId": "4:fixture:33"
+    }
+  },
+  {
+    "n": {
+      "identity": 35,
+      "labels": [
+        "Item"
+      ],
+      "properties": {
+        "text": "Weighs flour and water to the recipe ratio."
+      },
+      "elementId": "4:fixture:35"
+    },
+    "r": {
+      "identity": 1035,
+      "start": 35,
+      "end": 34,
+      "type": "IS_PART_OF",
+      "properties": {},
+      "elementId": "5:fixture:1035"
+    },
+    "m": {
+      "identity": 34,
+      "labels": [
+        "Block"
+      ],
+      "properties": {
+        "text": "PERFORMANCES"
+      },
+      "elementId": "4:fixture:34"
+    }
+  },
+  {
+    "n": {
+      "identity": 36,
+      "labels": [
+        "Block"
+      ],
+      "properties": {
+        "text": "PRODUCTS"
+      },
+      "elementId": "4:fixture:36"
+    },
+    "r": {
+      "identity": 1036,
+      "start": 36,
+      "end": 33,
+      "type": "IS_PART_OF",
+      "properties": {},
+      "elementId": "5:fixture:1036"
+    },
+    "m": {
+      "identity": 33,
+      "labels": [
+        "Element"
+      ],
+      "properties": {
+        "text": "Element 2 of 2: Prepare dough safely"
+      },
+      "elementId": "4:fixture:33"
+    }
+  },
+  {
+    "n": {
+      "identity": 37,
+      "labels": [
+        "Block"
+      ],
+      "properties": {
+        "text": "KNOWLEDGE"
+      },
+      "elementId": "4:fixture:37"
+    },
+    "r": {
+      "identity": 1037,
+      "start": 37,
+      "end": 33,
+      "type": "IS_PART_OF",
+      "properties": {},
+      "elementId": "5:fixture:1037"
+    },
+    "m": {
+      "identity": 33,
+      "labels": [
+        "Element"
+      ],
+      "properties": {
+        "text": "Element 2 of 2: Prepare dough safely"
+      },
+      "elementId": "4:fixture:33"
+    }
+  },
+  {
+    "n": {
+      "identity": 38,
+      "labels": [
+        "Item"
+      ],
+      "properties": {
+        "text": "Subject Area: Dough fermentation: Yeast activity, hydration ratios, and proofing time. | Competency Level: Application"
+      },
+      "elementId": "4:fixture:38"
+    },
+    "r": {
+      "identity": 1038,
+      "start": 38,
+      "end": 37,
+      "type": "IS_PART_OF",
+      "properties": {},
+      "elementId": "5:fixture:1038"
+    },
+    "m": {
+      "identity": 37,
+      "labels": [
+        "Block"
+      ],
+      "properties": {
+        "text": "KNOWLEDGE"
+      },
+      "elementId": "4:fixture:37"
+    }
+  },
+  {
+    "n": {
+      "identity": 39,
+      "labels": [
+        "Block"
+      ],
+      "properties": {
+        "text": "ATTITUDES / HABITS / VALUES"
+      },
+      "elementId": "4:fixture:39"
+    },
+    "r": {
+      "identity": 1039,
+      "start": 39,
+      "end": 33,
+      "type": "IS_PART_OF",
+      "properties": {},
+      "elementId": "5:fixture:1039"
+    },
+    "m": {
+      "identity": 33,
+      "labels": [
+        "Element"
+      ],
+      "properties": {
+        "text": "Element 2 of 2: Prepare dough safely"
+      },
+      "elementId": "4:fixture:33"
+    }
+  },
+  {
+    "n": {
+      "identity": 40,
+      "labels": [
+        "Block"
+      ],
+      "properties": {
+        "text": "RESPONSES TO EMERGENT SITUATIONS"
+      },
+      "elementId": "4:fixture:40"
+    },
+    "r": {
+      "identity": 1040,
+      "start": 40,
+      "end": 33,
+      "type": "IS_PART_OF",
+      "properties": {},
+      "elementId": "5:fixture:1040"
+    },
+    "m": {
+      "identity": 33,
+      "labels": [
+        "Element"
+      ],
+      "properties": {
+        "text": "Element 2 of 2: Prepare dough safely"
+      },
+      "elementId": "4:fixture:33"
+    }
+  },
+  {
+    "n": {
+      "identity": 41,
+      "labels": [
+        "Block"
+      ],
+      "properties": {
+        "text": "GLOSSARY"
+      },
+      "elementId": "4:fixture:41"
+    },
+    "r": {
+      "identity": 1041,
+      "start": 41,
+      "end": 33,
+      "type": "IS_PART_OF",
+      "properties": {},
+      "elementId": "5:fixture:1041"
+    },
+    "m": {
+      "identity": 33,
+      "labels": [
+        "Element"
+      ],
+      "properties": {
+        "text": "Element 2 of 2: Prepare dough safely"
+      },
+      "elementId": "4:fixture:33"
+    }
+  },
+  {
+    "n": {
+      "identity": 19,
+      "labels": [
+        "Item"
+      ],
+      "properties": {
+        "text": "Washing hands before handling food,"
+      },
+      "elementId": "4:fixture:19"
+    },
+    "r": {
+      "identity": 1042,
+      "start": 19,
+      "end": 4,
+      "type": "REFERS_TO",
+      "properties": {},
+      "elementId": "5:fixture:1042"
+    },
+    "m": {
+      "identity": 4,
+      "labels": [
+        "Item"
+      ],
+      "properties": {
+        "text": "Code: 1234"
+      },
+      "elementId": "4:fixture:4"
+    }
+  }
+]

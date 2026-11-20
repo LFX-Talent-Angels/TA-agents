@@ -96,6 +96,82 @@ the measurement below, not a hunch.
   and report what was dropped as a count.
 - Load skills progressively; pick suites per plan, don't fan out by default.
 
+## Memory and recall
+
+`memory/` is the only place the user's words are persisted (episodes, the
+profile card, the notes) and the only place that is erased. Its one boundary
+worth knowing before adding to it is the **retrieval seam**:
+
+- `memory/retrieval.py` — the contract. `EpisodeHit`, the `Retriever`
+  protocol, `NullRetriever`, and `recall_prefix()`, which renders the block for
+  the system prompt. It knows nothing about FTS5, embeddings, or storage. A
+  caller that imports a backend instead of this module has coupled itself to one
+  particular answer.
+- `memory/fts_retriever.py` — the lexical implementation (SQLite FTS5). The
+  query design behind it is measured by `evals/recall.py`, not asserted.
+- `memory/vector_retriever.py` + `memory/vector_index.py` — meaning-based
+  recall over the same episodes: sqlite-vec in `memory.db`, cosine distance,
+  a per-model relevance floor (`RELEVANCE_FLOORS`, calibrated by
+  `evals.recall --vector --calibrate`).
+- `memory/embeddings.py` — `default_embedder()`: the **local**
+  `all-MiniLM-L6-v2` (free, on-device, the model the suites use for their own
+  vector indexes) when the `local-embed` extra is installed; a hosted LiteLLM
+  model only when `TA_EMBEDDING_MODEL` names one; `none` disables embeddings.
+- `env.py` — `TA_RECALL=off|lexical|vector|hybrid` picks the backend,
+  **default `hybrid`**: keyword (FTS5) first, vector only when keyword finds
+  nothing. Measured on the 43-query corpus with the local model: 1/36
+  unanswered (keyword alone 2/36), p@1 0.917, 0 irrelevant hits. `vector` alone
+  is kept for comparison, not recommended (a dense retriever never returns
+  "nothing"). A new backend is a branch here, never a decision at a call site.
+- Turns are added to the vector index as they are recorded
+  (`vector_retriever.index_episode`, local embedder only — recording never
+  spends money), with a backfill of older episodes on the first write.
+  Episodes index the question plus at most 3 topic labels (the resolved node
+  per suite), never every cited neighbour.
+
+Prompt sites import `env.episode_retriever()`, never a backend. Four call sites
+exist (`session/phrase.py` twice, `assistant/agent_loop.py`,
+`assistant/synthesize.py`) and the count is asserted in
+`tests/test_fts_retriever.py`, because a fifth site nobody tests is how this
+goes stale.
+
+Two prompt sites deliberately **omit** recall, and the two omissions are not
+the same omission: `assistant/llm_plan.py` (recall would bias intent
+classification towards what the user asked before) and `assistant/answer.py`
+(it has no `question` parameter, because that is the one prompt that restates
+the user's own words back to them). Both are recorded in the docstrings, and the
+`answer.py` signature is asserted so neither can be "fixed" by accident.
+
+The block is hard-bounded — at most 3 episodes, 120 characters per line, 437
+characters total — so recall cannot crowd the profile card out of a shared
+system prompt as the corpus grows. The dominant block in that prompt is
+`notes_prefix()`, not recall.
+
+Recall is personal history, not telemetry, so `/reset-all` clears the episodes
+*and* the FTS index, and vacuums: `DELETE` alone leaves the question text
+readable in free pages. See `memory/erase.py` and `tests/test_erase_scopes.py`,
+which assert at the byte level because that is the only level the original bug
+was visible at.
+
+## Turn graph and checkpointing
+
+Every registry turn (API, CLI, TUI) runs as a LangGraph:
+`plan → dispatch → answer → remember` (`assistant/turn_graph.py`). Runtime
+objects (registry, LLM client) are closed over by the nodes; only data is in
+state. Every per-turn channel is set on every invoke (`fresh_turn_input`), so
+nothing carries over by omission. With a `thread_id` (the API's session id)
+the graph uses the shared durable saver (`assistant/checkpoint.py`,
+`<home>/checkpoints.db`), and the one channel meant to persist is a bounded
+`history` of typed `TurnMemo`s — exposed as `GET /v1/sessions/{id}/history`,
+erased by `DELETE /v1/sessions/{id}`. Checkpointed types are registered with
+the msgpack serde; tests run with `LANGGRAPH_STRICT_MSGPACK=true`.
+
+Every turn returns a typed outcome and writes its run-log record: an empty or
+subject-less question stops before the graph (`no_subject`), any LLM failure
+becomes `LLMError` and degrades to the deterministic path, and any other
+failure returns `turn_failed:<Type>`. Model calls go through
+`llm_call.measure_complete` (metered, typed errors, timeouts).
+
 ## Contracts
 
 ```python
@@ -113,6 +189,41 @@ The suite contract itself (`search_nodes`, `get_neighbors`, `enumerate_paths`,
 `score_paths`) is implemented in **`TA-taxonomies`** and consumed here as a
 versioned library. This repo may import **only** that surface.
 
+## Search pipeline contract
+
+`search_nodes(text, kind)` returns a `ToolResult`. This contract has two rules
+that TA-agents enforces but must **never** violate:
+
+**`Candidate.confidence` is a declared policy value, not a similarity score.**
+
+| Method       | Confidence | When |
+|---|---|---|
+| `exact_pref` | 0.95 | pref_label exact match (case-sensitive) |
+| `exact_alt`  | 0.90 | alt_label exact match |
+| `casefold_unique` | 0.85 | case-insensitive pref, unique hit |
+| `casefold_ambiguous` | 0.80 | case-insensitive pref, multiple hits |
+| `contains`   | 0.70 | pref_label or alt_label substring |
+| `hybrid_rrf` | 0.75 | BM25 + vector ANN, RRF merged (Tier 5 fallback) |
+
+Raw Lucene/cosine similarity scores are **never** written into `confidence`.
+The field means "how was this match made", not "how probable is this result".
+
+**Hybrid search is an internal suite implementation detail.**
+
+TA-agents calls `search_nodes(text)` and receives a `ToolResult`. Whether the
+suite used keyword tiers, vector ANN, or RRF fusion is invisible to this repo.
+The strategy is **never** configured from TA-agents; it lives entirely inside
+each suite's `search_nodes()`. After `locate()` returns, `group_and_sort_locate()`
+re-ranks candidates using `lexical_rank()` and may raise confidence when a
+clear winner emerges (e.g. exact pref_label token → auto-select, confidence → 0.90).
+
+**`group_and_sort_locate()` must be called after every `locate()` call.**
+
+This applies to both the heuristic dispatch path and the tool loop path
+(`_execute_tool()` in `agent_loop.py`). Skipping it means Neo4j's internal
+sort order (shortest pref_label first) is shown to the user instead of the
+semantically closest result.
+
 ## Layout
 
 ```
@@ -121,8 +232,10 @@ src/talent_angels/
 ├── skills/
 │   ├── locate/    connect/    pathfind/    evaluate/
 ├── contracts/     # AgentResult + typed refs (Pydantic v2)
+├── memory/        # episodes, profile, notes, neighbour cache, erase, recall seam
 ├── runlog/        # structured per-turn record
-└── api/           # FastAPI edge (thin; no reasoning here)
+├── api/           # FastAPI edge (thin; no reasoning here)
+└── mcp/           # MCP stdio edge — the suite contract, for a foreign client
 tests/             # pytest; golden evals in tests/evals/
 ```
 

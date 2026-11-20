@@ -13,7 +13,7 @@ from typing import Any
 import yaml
 
 from talent_angels.llm.protocol import LLMUsage
-from talent_angels.runlog.models import CostBreakdown
+from talent_angels.runlog.models import CostBreakdown, StageUsage
 
 _PER_MILLION = 1_000_000
 
@@ -24,12 +24,38 @@ def load_rate_card() -> dict[str, Any]:
     return yaml.safe_load(text)
 
 
+def resolve_rates(models: dict[str, Any], model: str) -> tuple[str, dict[str, Any] | None]:
+    """Exact rate-card key first, then the base model behind a routing prefix.
+
+    LiteLLM model strings carry the route (``azure_ai/claude-sonnet-4-6``,
+    ``anthropic/claude-opus-4-6``); the price belongs to the base model, which
+    Azure AI Foundry and Anthropic bill at the same list rate. Without this an
+    Azure-routed Claude reported every turn as an unpriced $0.
+    """
+    if model in models:
+        return model, models[model]
+    base = model.rsplit("/", 1)[-1]
+    if base != model and base in models:
+        return base, models[base]
+    return model, None
+
+
 def estimate_llm_cost_usd(
     usage: LLMUsage, model: str, *, rate_card: dict[str, Any] | None = None
 ) -> CostBreakdown:
-    """Cost of one LLM call, cache-aware. Unknown/zero-usage models cost $0."""
+    """Cost of one LLM call, cache-aware.
+
+    Registered models, including deliberate $0 entries, stay ``known=True``.
+    Unknown models return ``known=False`` and zero dollar amounts so an
+    unpriced model is never reported as a priced $0 stub.
+    """
     card = rate_card or load_rate_card()
-    rates = card["models"].get(model) or card["models"]["stub"]
+    priced_as, rates = resolve_rates(card["models"], model)
+    if rates is None:
+        return CostBreakdown(
+            known=False,
+            rate_card=f"unpriced:{model}",
+        )
 
     input_cost = usage.input_tokens * rates["input_per_million"] / _PER_MILLION
     output_cost = usage.output_tokens * rates["output_per_million"] / _PER_MILLION
@@ -53,5 +79,55 @@ def estimate_llm_cost_usd(
         llm=uncached_baseline,
         llm_with_cache_savings=total,
         total=total,
-        rate_card=f"rate_card.yaml#{card['version']}",
+        rate_card=(
+            f"rate_card.yaml#{card['version']}"
+            if priced_as == model
+            else f"rate_card.yaml#{card['version']}:{priced_as}"
+        ),
+    )
+
+
+def usage_from_stage(stage: StageUsage) -> LLMUsage:
+    return LLMUsage(
+        input_tokens=stage.input_tokens,
+        output_tokens=stage.output_tokens,
+        reasoning_tokens=stage.reasoning_tokens,
+        cache_read_input_tokens=stage.cache_read_input_tokens,
+        cache_creation_input_tokens=stage.cache_creation_input_tokens,
+    )
+
+
+def estimate_turn_cost_usd(
+    stages: list[StageUsage],
+    fallback_model: str,
+    *,
+    rate_card: dict[str, Any] | None = None,
+) -> CostBreakdown:
+    """Sum per-stage costs. Any unpriced stage makes the roll-up unknown."""
+    if not stages:
+        return CostBreakdown(known=True, total=0.0, rate_card="no_llm_calls")
+
+    known = True
+    llm = 0.0
+    cached = 0.0
+    total = 0.0
+    cards: list[str] = []
+    for stage in stages:
+        part = estimate_llm_cost_usd(
+            usage_from_stage(stage),
+            stage.request_model or fallback_model,
+            rate_card=rate_card,
+        )
+        known = known and part.known
+        llm += part.llm
+        cached += part.llm_with_cache_savings
+        total += part.total
+        if part.rate_card:
+            cards.append(part.rate_card)
+    return CostBreakdown(
+        known=known,
+        llm=llm,
+        llm_with_cache_savings=cached,
+        total=total,
+        rate_card=",".join(cards),
     )

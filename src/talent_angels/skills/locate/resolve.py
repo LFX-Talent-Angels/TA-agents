@@ -42,6 +42,12 @@ class SearchCandidate(Protocol):
     @property
     def confidence(self) -> float: ...
 
+    # The match rule the confidence stands for (exact_pref, contains, ...).
+    # Locate folds it away into a single turn-level confidence; the MCP edge
+    # hands it to the client, which has no other way to read the number.
+    @property
+    def method(self) -> str: ...
+
 
 class SearchResult(Protocol):
     @property
@@ -60,8 +66,28 @@ class SearchableSuite(Protocol):
     def search_nodes(self, text: str, kind: str | None = None) -> SearchResult: ...
 
 
-def _node_ref(node: TaxonomyNode, suite: str) -> NodeRef:
+#: Node properties carried onto ``NodeRef.facts``: the published facts a suite
+#: puts on a node (today BLS's Employment Projections), so a card can state
+#: pay or outlook from the graph instead of from the model's memory.
+FACT_KEYS: tuple[str, ...] = (
+    "ssyk_code",
+    "median_wage_annual",
+    "wage_period",
+    "employment_change_pct",
+    "openings_annual",
+    "projection_cycle",
+    "projection_code",
+    "projection_aggregate",
+    "entry_education",
+    "work_experience",
+    "job_training",
+)
+
+
+def node_ref(node: TaxonomyNode, suite: str) -> NodeRef:
     alt_labels = cast(Sequence[str], node.properties.get("alt_labels") or ())
+    raw_description = node.properties.get("description")
+    description = raw_description.strip() if isinstance(raw_description, str) else None
     return NodeRef(
         id=node.id,
         suite=suite,
@@ -70,7 +96,17 @@ def _node_ref(node: TaxonomyNode, suite: str) -> NodeRef:
         kind=node.kind,
         pref_label=node.label,
         alt_labels=list(alt_labels),
+        description=description or None,
+        facts={
+            key: value
+            for key in FACT_KEYS
+            if isinstance(value := node.properties.get(key), (str, int, float, bool))
+        },
     )
+
+
+#: Back-compat alias — `rank.py` and `connect/reveal.py` import this name.
+_node_ref = node_ref
 
 
 def locate(

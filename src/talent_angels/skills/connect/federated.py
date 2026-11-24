@@ -34,7 +34,6 @@ from talent_angels.skills.connect.neighbourhood import (
 )
 from talent_angels.skills.evaluate import rank_routes
 from talent_angels.skills.evaluate.policy import MAP_RANK_V1
-from talent_angels.skills.pathfind.dispatch import pathfind_one
 from talent_angels.suites import SuiteRegistry, UnknownSuiteError
 
 _STRENGTH_ORDER = {"exact": 0, "close": 1, "soc": 2}
@@ -244,6 +243,8 @@ def map_all_route(
     max_nodes: int = DEFAULT_MAX_NODES,
 ) -> FederatedMap:
     """Per suite, map around Pathfind's top-ranked route between the two names."""
+    from talent_angels.skills.pathfind.dispatch import pathfind_one  # import cycle via mcp
+
     _check_limits(depth, breadth)
     names = _select(registry, suites)
     cap = _per_suite_cap(max_nodes, len(names))

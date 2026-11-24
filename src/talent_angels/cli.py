@@ -42,6 +42,7 @@ from talent_angels.session.copy import (
     HELP_TEXT,
 )
 from talent_angels.session.router import route_line
+from talent_angels.skills.connect.federated import map_all, map_all_route
 from talent_angels.skills.connect.neighbourhood import (
     DEFAULT_MAX_NODES,
     MAX_BREADTH,
@@ -120,11 +121,32 @@ def _build_parser() -> argparse.ArgumentParser:
         "--route",
         nargs=2,
         metavar=("FROM", "TO"),
-        help="Map around the first Pathfind route between two names instead of one start.",
+        help="Map around the top-ranked Pathfind route between two names instead of one start.",
     )
-    map_parser.add_argument("--suite", default=None, help=suite_help)
-    map_parser.add_argument("--depth", type=int, choices=range(1, MAX_DEPTH + 1), default=1)
-    map_parser.add_argument("--breadth", type=int, choices=range(1, MAX_BREADTH + 1), default=None)
+    map_parser.add_argument(
+        "--suite",
+        default=None,
+        help="Map in this one taxonomy only (single-suite output). Omit --suite to map every "
+        "taxonomy and merge the results with official crosswalk links.",
+    )
+    map_parser.add_argument(
+        "--suites", default=None, help="Comma-separated taxonomies to merge, e.g. esco,onet."
+    )
+    map_parser.add_argument(
+        "--depth",
+        type=int,
+        choices=range(1, MAX_DEPTH + 1),
+        default=1,
+        help=f"Hops to follow outward from the start (1-{MAX_DEPTH}).",
+    )
+    map_parser.add_argument(
+        "--breadth",
+        type=int,
+        choices=range(1, MAX_BREADTH + 1),
+        default=None,
+        help=f"Best-ranked new neighbours kept per node (1-{MAX_BREADTH}; "
+        "default 4, or 3 with --route).",
+    )
     map_parser.add_argument("--kinds", default=None, help="Comma-separated node kinds to keep")
     map_parser.add_argument("--max-nodes", type=_max_nodes, default=DEFAULT_MAX_NODES)
 
@@ -303,6 +325,11 @@ def _run_map(args: argparse.Namespace, registry: SuiteRegistry) -> int:
         return 2
     kinds = args.kinds.split(",") if args.kinds else None
     breadth = args.breadth or (3 if args.route else 4)
+    if args.suite and args.suites:
+        print("map: use --suite or --suites, not both", file=sys.stderr)
+        return 2
+    if not args.suite:
+        return _run_map_all(args, registry, kinds, breadth)
     try:
         name = registry.resolve(args.suite) if args.suite else registry.default
         with registry.open(name) as runtime:
@@ -326,6 +353,33 @@ def _run_map(args: argparse.Namespace, registry: SuiteRegistry) -> int:
         if any(w.startswith(("ambiguous_start", "start_not_found")) for w in result.warnings)
         else 0
     )
+
+
+def _run_map_all(
+    args: argparse.Namespace, registry: SuiteRegistry, kinds: list[str] | None, breadth: int
+) -> int:
+    suites = args.suites.split(",") if args.suites else None
+    walk = {"suites": suites, "depth": args.depth, "breadth": breadth, "kinds": kinds}
+    try:
+        result = (
+            map_all_route(registry, *args.route, max_nodes=args.max_nodes, **walk)
+            if args.route
+            else map_all(registry, args.start, max_nodes=args.max_nodes, **walk)
+        )
+    except UnknownSuiteError as exc:
+        print(str(exc), file=sys.stderr)
+        return 2
+    print(json.dumps(result.to_dict(), ensure_ascii=False, indent=2))
+    for name, part in result.suites.items():
+        if part.status == "ambiguous" and part.candidates:
+            first = part.candidates[0]
+            hint = (
+                f'be more specific, e.g. "{first["label"]}"'
+                if args.route
+                else f'rerun with an id, e.g. ta-agent map "{first["id"]}" --suite {name}'
+            )
+            print(f'{name}: "{result.query}" is ambiguous — {hint}', file=sys.stderr)
+    return 0 if result.mapped else 2
 
 
 def _run_map_route(

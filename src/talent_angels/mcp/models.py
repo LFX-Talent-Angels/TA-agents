@@ -104,6 +104,8 @@ class MapNodeRef(BaseModel):
     label: str
     kind: str
     level: int = Field(..., description="Hops from the start; 0 is the start itself.")
+    on_route: bool | None = Field(default=None, description="Route mode only.")
+    stop: int | None = Field(default=None, description="Route mode: index along the route.")
 
 
 class MapEdgeRef(BaseModel):
@@ -135,6 +137,7 @@ class MapPayload(_Payload):
     """map_neighbors: a deterministic multi-hop neighbourhood of one node."""
 
     start: MapStartRef | None = Field(default=None, description="Resolved start: id, label.")
+    route: list[str] = Field(default_factory=list, description="Route mode: stop IDs in order.")
     depth: int
     breadth: int
     meaning: str = "linked in the graph; not a learning order"

@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import pytest
 
-from talent_angels.skills.connect.neighbourhood import map_from_text, map_neighbourhood
+from talent_angels.skills.connect.neighbourhood import map_from_text, map_neighbourhood, map_route
 from tests.fakes.taxonomy import FakeCandidate, FakeEdge, FakeNode, FakeToolResult
 
 
@@ -268,3 +268,45 @@ def test_node_id_skips_the_search() -> None:
 
     assert suite.searches == []
     assert data["start"] == {"id": "esco:py", "label": "Python"}
+
+
+def _route_suite() -> GraphSuite:
+    return GraphSuite(
+        [_node(i, label=i) for i in ("a", "b", "c", "shared", "only_a")],
+        [
+            _edge("RELATED_TO", "a", "b", relation_type="optional"),
+            _edge("RELATED_TO", "b", "c", relation_type="optional"),
+            _edge("RELATED_TO", "a", "shared", relation_type="optional"),
+            _edge("RELATED_TO", "c", "shared", relation_type="optional"),
+            _edge("RELATED_TO", "a", "only_a", relation_type="optional"),
+        ],
+    )
+
+
+def test_route_mode_flags_stops_and_lists_a_shared_neighbour_once() -> None:
+    data = map_route(_route_suite(), "esco", ["a", "b", "c"], depth=1, breadth=5).to_dict()
+
+    nodes = {n["id"]: n for n in data["nodes"]}  # type: ignore[attr-defined]
+    assert data["route"] == ["a", "b", "c"]
+    assert [nodes[i]["stop"] for i in "abc"] == [0, 1, 2]
+    assert all(nodes[i]["level"] == 0 and nodes[i]["on_route"] for i in "abc")
+    assert nodes["shared"]["on_route"] is False and "stop" not in nodes["shared"]
+    assert [n["id"] for n in data["nodes"]].count("shared") == 1  # type: ignore[attr-defined]
+    keys = [(e["from"], e["to"], e["relation"]) for e in data["edges"]]  # type: ignore[attr-defined]
+    assert len(keys) == len(set(keys))
+
+
+def test_route_mode_applies_max_nodes_to_the_whole_map() -> None:
+    data = map_route(
+        _route_suite(), "esco", ["a", "b", "c"], depth=1, breadth=5, max_nodes=4
+    ).to_dict()
+
+    assert len(data["nodes"]) == 4  # type: ignore[arg-type]
+    assert "max_nodes:4" in data["warnings"]  # type: ignore[operator]
+    ids = {n["id"] for n in data["nodes"]}  # type: ignore[attr-defined]
+    assert all(e["from"] in ids and e["to"] in ids for e in data["edges"])  # type: ignore[attr-defined]
+
+
+def test_route_mode_is_deterministic() -> None:
+    first = map_route(_route_suite(), "esco", ["a", "b", "c"]).to_dict()
+    assert first == map_route(_route_suite(), "esco", ["a", "b", "c"]).to_dict()

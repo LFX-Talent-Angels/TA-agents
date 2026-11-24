@@ -52,6 +52,7 @@ from talent_angels.skills.connect.neighbourhood import (
     MAX_BREADTH,
     MAX_DEPTH,
     map_from_text,
+    map_route,
 )
 from talent_angels.suites import (
     SuiteRegistry,
@@ -445,6 +446,10 @@ node reached twice appears once, with both links kept as edges.
 `pruned` counts what each node cut (considered / kept). `warnings` may add
 `max_nodes:N` (the cap was hit; the map is partial).
 
+With `route_node_ids` (a route from `enumerate_paths`), every stop is mapped and
+the results merge into one graph: stops carry `on_route` and `stop`, a shared
+neighbour appears once, and `start` is ignored.
+
 The result means "linked in the graph", not a learning order: no taxonomy says
 what to learn first. {_ID_DOC}""",
     )
@@ -465,20 +470,26 @@ what to learn first. {_ID_DOC}""",
         max_nodes: Annotated[
             int, Field(ge=1, le=DEFAULT_MAX_NODES, description="Hard cap on nodes in the map.")
         ] = DEFAULT_MAX_NODES,
+        route_node_ids: Annotated[
+            list[str] | None,
+            Field(
+                description=(
+                    "Route mode: node IDs of a route (`enumerate_paths` `node_ids`). Maps "
+                    "around every stop and merges into one graph; `start` is ignored."
+                )
+            ),
+        ] = None,
     ) -> MapPayload:
         session = ctx.request_context.lifespan_context
         runtime, name, warnings = _open_runtime(session, suite)
         if runtime is None:
             return MapPayload(suite=name, depth=depth, breadth=breadth, warnings=warnings)
         try:
-            result = map_from_text(
-                runtime.suite,  # type: ignore[arg-type]
-                runtime.name,
-                start,
-                depth=depth,
-                breadth=breadth,
-                kinds=kinds,
-                max_nodes=max_nodes,
+            walk = {"depth": depth, "breadth": breadth, "kinds": kinds, "max_nodes": max_nodes}
+            result = (
+                map_route(runtime.suite, runtime.name, route_node_ids, **walk)  # type: ignore[arg-type]
+                if route_node_ids
+                else map_from_text(runtime.suite, runtime.name, start, **walk)  # type: ignore[arg-type]
             )
         except Exception as exc:
             return MapPayload(

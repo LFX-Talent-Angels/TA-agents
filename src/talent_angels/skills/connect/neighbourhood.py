@@ -9,7 +9,7 @@ does not drift from a skill out to its whole group.
 
 from __future__ import annotations
 
-from collections.abc import Iterable
+from collections.abc import Iterable, Sequence
 from dataclasses import dataclass, field
 from typing import Protocol
 
@@ -20,6 +20,7 @@ from talent_angels.skills.locate import SearchableSuite, locate
 MAX_DEPTH = 4
 MAX_BREADTH = 10
 DEFAULT_MAX_NODES = 500
+MEANING = "linked in the graph; not a learning order"
 
 # Shown in the map, never expanded further.
 HUB_KINDS: frozenset[str] = frozenset(
@@ -66,6 +67,24 @@ class Pruned:
     kept: int
 
 
+def _node_dict(n: MapNode) -> dict[str, object]:
+    return {"id": n.ref.id, "label": n.ref.pref_label, "kind": n.ref.kind, "level": n.level}
+
+
+def _edge_dict(e: MapEdge) -> dict[str, object]:
+    return {
+        "from": e.ref.source_node_id,
+        "to": e.ref.target_node_id,
+        "relation": e.relation,
+        "graph_edge": e.ref.type,
+        "strength": e.strength,
+    }
+
+
+def _pruned_dict(p: Pruned) -> dict[str, object]:
+    return {"node": p.node_id, "considered": p.considered, "kept": p.kept}
+
+
 @dataclass
 class Neighbourhood:
     suite: str
@@ -86,24 +105,10 @@ class Neighbourhood:
             "start": {"id": self.start_id, "label": self.start_label},
             "depth": self.depth,
             "breadth": self.breadth,
-            "meaning": "linked in the graph; not a learning order",
-            "nodes": [
-                {"id": n.ref.id, "label": n.ref.pref_label, "kind": n.ref.kind, "level": n.level}
-                for n in self.nodes
-            ],
-            "edges": [
-                {
-                    "from": e.ref.source_node_id,
-                    "to": e.ref.target_node_id,
-                    "relation": e.relation,
-                    "graph_edge": e.ref.type,
-                    "strength": e.strength,
-                }
-                for e in self.edges
-            ],
-            "pruned": [
-                {"node": p.node_id, "considered": p.considered, "kept": p.kept} for p in self.pruned
-            ],
+            "meaning": MEANING,
+            "nodes": [_node_dict(n) for n in self.nodes],
+            "edges": [_edge_dict(e) for e in self.edges],
+            "pruned": [_pruned_dict(p) for p in self.pruned],
             "warnings": list(self.warnings),
             "candidates": [
                 {"id": c.id, "label": c.pref_label, "kind": c.kind} for c in self.candidates
@@ -297,6 +302,93 @@ def map_from_text(
     return empty
 
 
+@dataclass
+class RouteMap:
+    """One merged graph: a Pathfind route plus the neighbourhood of each stop."""
+
+    suite: str
+    route: list[str]
+    depth: int
+    breadth: int
+    nodes: list[MapNode] = field(default_factory=list)
+    edges: list[MapEdge] = field(default_factory=list)
+    pruned: list[Pruned] = field(default_factory=list)
+    warnings: list[str] = field(default_factory=list)
+
+    def to_dict(self) -> dict[str, object]:
+        stops = {node_id: i for i, node_id in enumerate(self.route)}
+        return {
+            "suite": self.suite,
+            "route": list(self.route),
+            "depth": self.depth,
+            "breadth": self.breadth,
+            "meaning": MEANING,
+            "nodes": [
+                {**_node_dict(n), "on_route": n.ref.id in stops}
+                | ({"stop": stops[n.ref.id]} if n.ref.id in stops else {})
+                for n in self.nodes
+            ],
+            "edges": [_edge_dict(e) for e in self.edges],
+            "pruned": [_pruned_dict(p) for p in self.pruned],
+            "warnings": list(self.warnings),
+        }
+
+
+def map_route(
+    suite: MapperNeighbors,
+    suite_name: str,
+    route_node_ids: Sequence[str],
+    *,
+    depth: int = 1,
+    breadth: int = 3,
+    kinds: Iterable[str] | None = None,
+    max_nodes: int = DEFAULT_MAX_NODES,
+) -> RouteMap:
+    """Walk around every stop of a route and merge into one graph (first stop wins)."""
+    walks = [
+        map_neighbourhood(
+            suite,
+            suite_name,
+            node_id,
+            depth=depth,
+            breadth=breadth,
+            kinds=kinds,
+            max_nodes=max_nodes,
+        )
+        for node_id in route_node_ids
+    ]
+    merged = RouteMap(suite_name, [w.start_id for w in walks if w.nodes], depth, breadth)
+    for node_id, walk in zip(route_node_ids, walks, strict=True):
+        if not walk.nodes:
+            merged.warnings.append(f"start_not_found:{node_id}")
+    # Route stops first, all at level 0, so a stop is never filed as someone's neighbour.
+    seen = {w.start_id for w in walks if w.nodes}
+    merged.nodes = [MapNode(w.nodes[0].ref, 0) for w in walks if w.nodes]
+    seen_edges: set[tuple[str, str, str]] = set()
+    seen_pruned: set[str] = set()
+    for walk in walks:
+        for node in walk.nodes:
+            if node.ref.id in seen:
+                continue
+            if len(seen) >= max_nodes:
+                if f"max_nodes:{max_nodes}" not in merged.warnings:
+                    merged.warnings.append(f"max_nodes:{max_nodes}")
+                break
+            seen.add(node.ref.id)
+            merged.nodes.append(node)
+        merged.warnings += [w for w in walk.warnings if w not in merged.warnings]
+        for edge in walk.edges:
+            key = (edge.ref.source_node_id, edge.ref.target_node_id, edge.relation)
+            if key not in seen_edges and {key[0], key[1]} <= seen:
+                seen_edges.add(key)
+                merged.edges.append(edge)
+        for p in walk.pruned:
+            if p.node_id not in seen_pruned:
+                seen_pruned.add(p.node_id)
+                merged.pruned.append(p)
+    return merged
+
+
 def _add_edge(
     result: Neighbourhood,
     seen: set[tuple[str, str, str]],
@@ -341,7 +433,9 @@ __all__ = [
     "MapNode",
     "Neighbourhood",
     "MapperSuite",
+    "RouteMap",
     "Pruned",
     "map_from_text",
     "map_neighbourhood",
+    "map_route",
 ]

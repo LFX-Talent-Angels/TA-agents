@@ -53,6 +53,7 @@ async def _drive() -> dict[str, Any]:
 
             await call("search", "search_nodes", {"text": "software developer"})
             await call("map", "map_neighbors", {"start": "software developer"})
+            await call("map_route", "map_neighbors", {"start": "", "route_node_ids": [DEV.id]})
             await call("map_bad", "map_neighbors", {"start": "x", "suite": "down"})
             await call("miss", "search_nodes", {"text": "stonemason"})
             await call("neighbors", "get_neighbors", {"node_id": DEV.id})
@@ -124,7 +125,15 @@ def test_every_tool_declares_its_inputs_and_a_structured_output(
         "get_neighbors": {"node_id", "rel_types", "suite", "limit"},
         "enumerate_paths": {"from_id", "to_id", "max_depth", "max_paths", "suite"},
         "score_paths": {"paths", "policy_name", "policy_version", "suite"},
-        "map_neighbors": {"start", "depth", "breadth", "kinds", "suite", "max_nodes"},
+        "map_neighbors": {
+            "start",
+            "depth",
+            "breadth",
+            "kinds",
+            "suite",
+            "max_nodes",
+            "route_node_ids",
+        },
     }
     for name, arguments in expected.items():
         tool = served["tools"][name]
@@ -162,6 +171,8 @@ def test_map_neighbors_returns_a_typed_map(served: dict[str, Any]) -> None:
     assert [n["level"] for n in payload["nodes"]][:2] == [0, 1]
     assert payload["edges"][0]["relation"] == "needs"
     assert payload["warnings"] == []
+    assert served["map_route"]["route"] == [DEV.id]
+    assert served["map_route"]["nodes"][0]["on_route"] is True
     assert served["map_bad"]["warnings"] == ["suite_unavailable:ConnectionRefusedError"]
 
 

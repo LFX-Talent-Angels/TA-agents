@@ -46,8 +46,11 @@ from talent_angels.skills.connect.neighbourhood import (
     DEFAULT_MAX_NODES,
     MAX_BREADTH,
     MAX_DEPTH,
+    RouteMap,
     map_from_text,
+    map_route,
 )
+from talent_angels.skills.pathfind.dispatch import pathfind_one
 from talent_angels.suites import SuiteRegistry, UnknownSuiteError, default_suite_registry
 
 GOLDEN_LOCATE_PATH = Path(__file__).resolve().parents[2] / "tests" / "evals" / "golden_locate.json"
@@ -105,10 +108,16 @@ def _build_parser() -> argparse.ArgumentParser:
     map_parser = sub.add_parser(
         "map", help="Graph-Mapper: the neighbourhood of a skill as JSON (no model call)."
     )
-    map_parser.add_argument("start", help="Node ID or name")
+    map_parser.add_argument("start", nargs="?", help="Node ID or name")
+    map_parser.add_argument(
+        "--route",
+        nargs=2,
+        metavar=("FROM", "TO"),
+        help="Map around the first Pathfind route between two names instead of one start.",
+    )
     map_parser.add_argument("--suite", default=None, help=suite_help)
     map_parser.add_argument("--depth", type=int, choices=range(1, MAX_DEPTH + 1), default=1)
-    map_parser.add_argument("--breadth", type=int, choices=range(1, MAX_BREADTH + 1), default=4)
+    map_parser.add_argument("--breadth", type=int, choices=range(1, MAX_BREADTH + 1), default=None)
     map_parser.add_argument("--kinds", default=None, help="Comma-separated node kinds to keep")
     map_parser.add_argument("--max-nodes", type=int, default=DEFAULT_MAX_NODES)
 
@@ -282,16 +291,22 @@ def main(argv: Sequence[str] | None = None, *, registry: SuiteRegistry | None = 
 
 
 def _run_map(args: argparse.Namespace, registry: SuiteRegistry) -> int:
+    if (args.start is None) == (args.route is None):
+        print("map: give either START or --route FROM TO", file=sys.stderr)
+        return 2
     kinds = args.kinds.split(",") if args.kinds else None
+    breadth = args.breadth or (3 if args.route else 4)
     try:
         name = registry.resolve(args.suite) if args.suite else registry.default
         with registry.open(name) as runtime:
+            if args.route:
+                return _run_map_route(args, runtime.suite, name, kinds, breadth)
             result = map_from_text(
                 runtime.suite,  # type: ignore[arg-type]
                 name,
                 args.start,
                 depth=args.depth,
-                breadth=args.breadth,
+                breadth=breadth,
                 kinds=kinds,
                 max_nodes=args.max_nodes,
             )
@@ -304,6 +319,28 @@ def _run_map(args: argparse.Namespace, registry: SuiteRegistry) -> int:
         if any(w.startswith(("ambiguous_start", "start_not_found")) for w in result.warnings)
         else 0
     )
+
+
+def _run_map_route(
+    args: argparse.Namespace, suite: Any, name: str, kinds: list[str] | None, breadth: int
+) -> int:
+    found, _calls = pathfind_one(suite, name, *args.route)
+    if not found.routes:
+        empty = RouteMap(name, [], args.depth, breadth, warnings=["no_route", *found.warnings])
+        print(json.dumps(empty.to_dict(), ensure_ascii=False, indent=2))
+        return 2
+    route = map_route(
+        suite,
+        name,
+        found.routes[0].node_ids,
+        depth=args.depth,
+        breadth=breadth,
+        kinds=kinds,
+        max_nodes=args.max_nodes,
+    )
+    route.warnings += [w for w in found.warnings if w not in route.warnings]
+    print(json.dumps(route.to_dict(), ensure_ascii=False, indent=2))
+    return 0
 
 
 def _run_bench(registry: SuiteRegistry) -> int:

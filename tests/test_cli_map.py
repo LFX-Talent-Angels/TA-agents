@@ -60,3 +60,20 @@ def test_ta_agent_routes_map_to_the_cli(capsys: pytest.CaptureFixture[str]) -> N
 
     assert tui_main(["map", "Python"], registry=_registry()) == 0
     assert json.loads(capsys.readouterr().out)["suite"] == "test"
+
+
+def test_route_with_an_unknown_end_exits_two_with_no_route(
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    from tests.fakes.suite import fake_registry
+
+    code = main(["map", "--route", "software developer", "stonemason"], registry=fake_registry())
+
+    data = json.loads(capsys.readouterr().out)
+    assert code == 2
+    assert data["warnings"][0] == "no_route"
+    assert data["nodes"] == []
+
+
+def test_map_needs_start_or_route(capsys: pytest.CaptureFixture[str]) -> None:
+    assert main(["map"], registry=_registry()) == 2

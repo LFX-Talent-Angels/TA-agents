@@ -148,7 +148,13 @@ def _build_parser() -> argparse.ArgumentParser:
         "default 4, or 3 with --route).",
     )
     map_parser.add_argument("--kinds", default=None, help="Comma-separated node kinds to keep")
-    map_parser.add_argument("--max-nodes", type=_max_nodes, default=DEFAULT_MAX_NODES)
+    map_parser.add_argument(
+        "--max-nodes",
+        type=_max_nodes,
+        default=DEFAULT_MAX_NODES,
+        help=f"Hard cap on nodes in the whole map, 1..{DEFAULT_MAX_NODES} (split across "
+        "taxonomies).",
+    )
 
     sub.add_parser(
         "bench",

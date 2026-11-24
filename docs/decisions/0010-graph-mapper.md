@@ -60,8 +60,8 @@ subset, `--suite a` keeps the single-suite output.
 
 - Each suite resolves the text on its own: mapped, `ambiguous` (pick list, never
   a guess), `not_found`, `via_crosswalk` or `error` (one failing suite never
-  hides the others). The node cap is split evenly across the selected suites
-  (at least 10 each).
+  hides the others). The node cap is a hard cap for the whole map, split evenly
+  across the selected suites (`max_nodes // suites`, at least 1 each).
 - Every node keeps its suite-scoped ID and gains `suite` and `cite` (its
   `source_id`, the evidence pointer). Edge keys are `from_id`/`to_id` in every
   output.

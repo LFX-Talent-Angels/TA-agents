@@ -470,13 +470,26 @@ what to learn first. {_ID_DOC}""",
             int, Field(ge=1, le=MAX_DEPTH, description="Levels to repeat the hop.")
         ] = 1,
         breadth: Annotated[
-            int, Field(ge=1, le=MAX_BREADTH, description="New neighbours kept per node.")
-        ] = 4,
+            int | None,
+            Field(
+                ge=1,
+                le=MAX_BREADTH,
+                description="New neighbours kept per node. Default 4, or 3 in route mode.",
+            ),
+        ] = None,
         kinds: Annotated[
             list[str] | None,
             Field(description="Keep only these node kinds, e.g. ['Skill']. Omit for all."),
         ] = None,
-        suite: SuiteArg = None,
+        suite: Annotated[
+            str | None,
+            Field(
+                description=(
+                    "One taxonomy only. Omit it (and `suites`) to map every taxonomy "
+                    "into one cited graph."
+                )
+            ),
+        ] = None,
         suites: Annotated[
             list[str] | None,
             Field(description="Subset of taxonomies to merge, e.g. ['esco','onet']."),
@@ -501,6 +514,8 @@ what to learn first. {_ID_DOC}""",
         ] = None,
     ) -> MapPayload:
         session = ctx.request_context.lifespan_context
+        if breadth is None:  # same defaults as `ta-agent map`
+            breadth = 3 if (route_from or route_node_ids) else 4
         walk = {"depth": depth, "breadth": breadth, "kinds": kinds, "max_nodes": max_nodes}
         if bool(route_from) != bool(route_to):
             return MapPayload(

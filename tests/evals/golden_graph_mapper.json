@@ -1,5 +1,5 @@
 {
-  "note": "Expected values captured from a live run on 2026-11-24 against the local Neo4j holding ESCO, O*NET, SFIA, BLS and JobTech, via skills/connect/neighbourhood.py map_from_text and map_route (route case: pathfind_one's first route for the pair). expect_level1_labels is the exact ordered list of level-1 labels (ranking is deterministic); expect_min_nodes is the node count seen then, so a taxonomy reload that adds nodes does not fail it but one that loses nodes does. BLS Software Developers returns skill-like nodes (Adaptability, ...), recorded as seen. Route case: expect_route_ids is the first route Pathfind returned.",
+  "note": "Expected values re-captured from a live run on 2026-11-24 under policy map-rank-v1 (specificity re-rank, ADR-0011; first captured under the earlier key-only order) against the local Neo4j holding ESCO, O*NET, SFIA, BLS and JobTech, via skills/connect/neighbourhood.py map_from_text and map_route (route case: pathfind_one's first route, now the top route-rank-v1 route for the pair). expect_level1_labels is the exact ordered list of level-1 labels (ranking is deterministic); expect_min_nodes is the node count seen then, so a taxonomy reload that adds nodes does not fail it but one that loses nodes does. BLS Software Developers returns skill-like nodes (Adaptability, ...), recorded as seen. Route case: expect_route_ids is the first route Pathfind returned.",
   "cases": [
     {
       "suite": "esco",
@@ -10,7 +10,7 @@
         "use scripting programming",
         "computer programming",
         "software and applications development and analysis",
-        "artificial intelligence engineer"
+        "battery simulation engineer"
       ],
       "expect_min_nodes": 5,
       "expect_warnings": []
@@ -22,8 +22,8 @@
       "breadth": 4,
       "expect_level1_labels": [
         "cost management",
-        "manage school budget",
         "oversee the facilities services budget",
+        "manage school budget",
         "update budget"
       ],
       "expect_min_nodes": 21,
@@ -52,8 +52,8 @@
       "breadth": 4,
       "expect_level1_labels": [
         "Övriga kompetenser",
-        "Mjukvaruutvecklare",
         "Systemutvecklare/Programmerare",
+        "Mjukvaruutvecklare",
         "Agil coach/Agile coach"
       ],
       "expect_min_nodes": 5,
@@ -68,7 +68,7 @@
         "Working with Computers",
         "Computer Programmers",
         "Web Developers",
-        "Software Developers"
+        "Video Game Designers"
       ],
       "expect_min_nodes": 5,
       "expect_warnings": []
@@ -79,10 +79,10 @@
       "depth": 1,
       "breadth": 4,
       "expect_level1_labels": [
-        "Adaptability",
         "Computers and information technology",
+        "Writing and reading",
         "Critical and analytical thinking",
-        "Detail oriented"
+        "Adaptability"
       ],
       "expect_min_nodes": 5,
       "expect_warnings": []
@@ -98,19 +98,20 @@
       "expect_route_stops": 3,
       "expect_route_ids": [
         "esco:occupation:c40a2919-48a9-40ea-b506-1f34f693496d",
-        "esco:skill:04fe962b-4017-4eb7-9139-7d69b6922bc9",
+        "esco:skill:901105f8-3a08-453e-b1dc-23619e317fd3",
         "esco:occupation:f2b15a0e-e65a-438a-affb-29b9d50b77d1"
       ],
-      "expect_min_nodes": 11,
+      "expect_min_nodes": 12,
       "expect_level1_labels": [
         "Web and multimedia developers",
-        "analyse software specifications",
-        "collect customer feedback on applications",
-        "working with computers",
-        "application engineer",
-        "computer scientist",
+        "implement front-end website design",
+        "domain name service",
+        "design process",
+        "developing instructive or promotional materials",
+        "embedded systems security engineer",
         "blockchain developer",
-        "Software developers"
+        "Software developers",
+        "develop automated migration methods"
       ],
       "expect_warnings": []
     }

@@ -50,3 +50,7 @@ node. Repeating it is mechanical, but "which N neighbors?" needs a fixed rule.
   if that proves slow.
 - A start given as free text that is ambiguous returns candidates, not a guess.
 - Not in scope: ranking by "worth learning next", cross-suite neighbors, chat.
+- Official crosswalks (BLS-O*NET by SOC code, JobTech-ESCO by `esco_exact` /
+  `esco_close`) live in `skills/connect/crosswalk.py` as a **stopgap**:
+  TA-taxonomies `crosswalks/` is the intended home ("nothing cross-suite lives
+  anywhere else") and these rules move there once it is filled.

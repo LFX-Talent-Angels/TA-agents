@@ -14,6 +14,7 @@ from dataclasses import dataclass, field
 from typing import Protocol
 
 from talent_angels.contracts import EdgeRef, NodeRef
+from talent_angels.skills.connect.crosswalk import crosswalk_props
 from talent_angels.skills.connect.reveal import NeighborResult, TaxonomyEdge, TaxonomyNode
 from talent_angels.skills.evaluate.neighbours import rerank_neighbours
 from talent_angels.skills.evaluate.policy import MAP_RANK_V1
@@ -75,8 +76,8 @@ def _node_dict(n: MapNode) -> dict[str, object]:
 
 def _edge_dict(e: MapEdge) -> dict[str, object]:
     return {
-        "from": e.ref.source_node_id,
-        "to": e.ref.target_node_id,
+        "from_id": e.ref.source_node_id,
+        "to_id": e.ref.target_node_id,
         "relation": e.relation,
         "graph_edge": e.ref.type,
         "strength": e.strength,
@@ -99,6 +100,7 @@ class Neighbourhood:
     edges: list[MapEdge] = field(default_factory=list)
     pruned: list[Pruned] = field(default_factory=list)
     warnings: list[str] = field(default_factory=list)
+    xprops: dict[str, dict[str, object]] = field(default_factory=dict)  # crosswalk inputs
 
     def to_dict(self) -> dict[str, object]:
         """Plain JSON-ready form; field order and list order are fixed."""
@@ -263,6 +265,11 @@ def map_neighbourhood(
             for other_id, cand in ranked:
                 if other_id in mapped and other_id != node_id:
                     _add_edge(result, seen_edges, node_id, other_id, cand, suite_name)
+        # Only expanded or degree-checked nodes come back with full properties.
+        for raw in fetched.values():
+            for n in raw.nodes:
+                if n.id in mapped and (xp := crosswalk_props(n.properties)):
+                    result.xprops[n.id] = xp
         return result
 
     for level in range(1, depth + 1):
@@ -357,6 +364,7 @@ class RouteMap:
     edges: list[MapEdge] = field(default_factory=list)
     pruned: list[Pruned] = field(default_factory=list)
     warnings: list[str] = field(default_factory=list)
+    xprops: dict[str, dict[str, object]] = field(default_factory=dict)
 
     def to_dict(self) -> dict[str, object]:
         stops = {node_id: i for i, node_id in enumerate(self.route)}
@@ -421,6 +429,7 @@ def map_route(
             seen.add(node.ref.id)
             merged.nodes.append(node)
         merged.warnings += [w for w in walk.warnings if w not in merged.warnings]
+        merged.xprops |= walk.xprops
         for edge in walk.edges:
             key = _edge_key(edge.ref.source_node_id, edge.ref.target_node_id, edge.ref.type)
             if key not in seen_edges and {key[1], key[2]} <= seen:

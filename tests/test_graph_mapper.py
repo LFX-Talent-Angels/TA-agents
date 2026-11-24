@@ -115,7 +115,7 @@ def test_relation_labels_follow_edge_direction() -> None:
 
     data = map_neighbourhood(suite, "esco", "py", depth=1, breadth=10).to_dict()
 
-    relations = {(e["relation"], e["from"], e["to"]) for e in data["edges"]}
+    relations = {(e["relation"], e["from_id"], e["to_id"]) for e in data["edges"]}
     assert ("parent", "py", "parent") in relations
     assert ("narrower", "py", "narrow") in relations
     assert ("related", "py", "rel") in relations
@@ -180,7 +180,7 @@ def test_node_reached_twice_is_mapped_once_and_both_links_are_kept() -> None:
 
     labels = [n["label"] for n in data["nodes"]]  # type: ignore[index]
     assert labels.count("shared") == 1
-    links = {(e["from"], e["to"]) for e in data["edges"]}  # type: ignore[index]
+    links = {(e["from_id"], e["to_id"]) for e in data["edges"]}  # type: ignore[index]
     assert ("a", "shared") in links
     assert ("b", "shared") in links
 
@@ -292,7 +292,7 @@ def test_route_mode_flags_stops_and_lists_a_shared_neighbour_once() -> None:
     assert all(nodes[i]["level"] == 0 and nodes[i]["on_route"] for i in "abc")
     assert nodes["shared"]["on_route"] is False and "stop" not in nodes["shared"]
     assert [n["id"] for n in data["nodes"]].count("shared") == 1  # type: ignore[attr-defined]
-    keys = [(e["from"], e["to"], e["relation"]) for e in data["edges"]]  # type: ignore[attr-defined]
+    keys = [(e["from_id"], e["to_id"], e["relation"]) for e in data["edges"]]  # type: ignore[attr-defined]
     assert len(keys) == len(set(keys))
 
 
@@ -304,7 +304,7 @@ def test_route_mode_applies_max_nodes_to_the_whole_map() -> None:
     assert len(data["nodes"]) == 4  # type: ignore[arg-type]
     assert "max_nodes:4" in data["warnings"]  # type: ignore[operator]
     ids = {n["id"] for n in data["nodes"]}  # type: ignore[attr-defined]
-    assert all(e["from"] in ids and e["to"] in ids for e in data["edges"])  # type: ignore[attr-defined]
+    assert all(e["from_id"] in ids and e["to_id"] in ids for e in data["edges"])  # type: ignore[attr-defined]
 
 
 def test_route_mode_is_deterministic() -> None:
@@ -375,7 +375,7 @@ def test_link_to_a_neighbour_a_later_sibling_added_is_kept() -> None:
 
     data = map_neighbourhood(suite, "esco", "start", depth=2, breadth=2).to_dict()
 
-    links = {frozenset((e["from"], e["to"])) for e in data["edges"]}  # type: ignore[union-attr]
+    links = {frozenset((e["from_id"], e["to_id"])) for e in data["edges"]}  # type: ignore[union-attr]
     assert _levels(data)["c"] == 2
     assert frozenset(("b", "c")) in links
     assert frozenset(("a", "c")) in links

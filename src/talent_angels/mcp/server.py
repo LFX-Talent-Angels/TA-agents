@@ -497,12 +497,7 @@ what to learn first. {_ID_DOC}""",
             return MapPayload(
                 suite=runtime.name, depth=depth, breadth=breadth, warnings=_operation_warning(exc)
             )
-        data = result.to_dict()
-        data["edges"] = [
-            {"from_id": e.pop("from"), "to_id": e.pop("to"), **e}
-            for e in data["edges"]  # type: ignore[attr-defined]
-        ]
-        return MapPayload.model_validate(data)
+        return MapPayload.model_validate(result.to_dict())
 
     return server
 

@@ -4,8 +4,8 @@ from __future__ import annotations
 
 import pytest
 
-from talent_angels.skills.connect.neighbourhood import map_neighbourhood
-from tests.fakes.taxonomy import FakeEdge, FakeNode, FakeToolResult
+from talent_angels.skills.connect.neighbourhood import map_from_text, map_neighbourhood
+from tests.fakes.taxonomy import FakeCandidate, FakeEdge, FakeNode, FakeToolResult
 
 
 class GraphSuite:
@@ -15,6 +15,14 @@ class GraphSuite:
         self.nodes = {n.id: n for n in nodes}
         self.edges = edges
         self.calls: list[str] = []
+        self.searches: list[str] = []
+
+    def search_nodes(self, text: str, kind: str | None = None) -> FakeToolResult:
+        self.searches.append(text)
+        hits = [n for n in self.nodes.values() if text.casefold() in n.label.casefold()]
+        return FakeToolResult(
+            candidates=[FakeCandidate(node=n, confidence=0.9, method="contains") for n in hits]
+        )
 
     def get_neighbors(self, node_id: str, rel_types: list[str] | None = None) -> FakeToolResult:
         self.calls.append(node_id)
@@ -218,3 +226,45 @@ def test_unknown_start_returns_an_empty_map_with_a_warning() -> None:
 
     assert data["nodes"] == []
     assert data["warnings"] == ["start_not_found"]
+
+
+def _text_suite() -> GraphSuite:
+    return GraphSuite(
+        [
+            _node("esco:py", label="Python"),
+            _node("esco:py2", label="Python snake"),
+            _node("esco:rel", label="scripting"),
+        ],
+        [_edge("RELATED_TO", "esco:py", "esco:rel", relation_type="optional")],
+    )
+
+
+def test_exact_label_match_picks_the_start() -> None:
+    data = map_from_text(_text_suite(), "esco", "python", depth=1, breadth=3).to_dict()
+
+    assert data["start"] == {"id": "esco:py", "label": "Python"}
+    assert set(_levels(data)) == {"Python", "scripting"}
+
+
+def test_ambiguous_name_returns_candidates_and_no_nodes() -> None:
+    data = map_from_text(_text_suite(), "esco", "pyth", depth=1, breadth=3).to_dict()
+
+    assert data["nodes"] == []
+    assert data["warnings"] == ["ambiguous_start"]
+    assert [c["id"] for c in data["candidates"]] == ["esco:py", "esco:py2"]  # type: ignore[index]
+
+
+def test_unknown_name_warns_with_the_text() -> None:
+    data = map_from_text(_text_suite(), "esco", "zzz", depth=1, breadth=3).to_dict()
+
+    assert data["nodes"] == []
+    assert data["warnings"] == ["start_not_found:zzz"]
+
+
+def test_node_id_skips_the_search() -> None:
+    suite = _text_suite()
+
+    data = map_from_text(suite, "esco", "esco:py", depth=1, breadth=3).to_dict()
+
+    assert suite.searches == []
+    assert data["start"] == {"id": "esco:py", "label": "Python"}

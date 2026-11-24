@@ -15,6 +15,7 @@ from typing import Protocol
 
 from talent_angels.contracts import EdgeRef, NodeRef
 from talent_angels.skills.connect.reveal import NeighborResult, TaxonomyEdge, TaxonomyNode
+from talent_angels.skills.locate import SearchableSuite, locate
 
 MAX_DEPTH = 4
 MAX_BREADTH = 10
@@ -71,6 +72,8 @@ class Neighbourhood:
     start_id: str
     depth: int
     breadth: int
+    start_label: str = ""
+    candidates: list[NodeRef] = field(default_factory=list)  # set only when the start is ambiguous
     nodes: list[MapNode] = field(default_factory=list)
     edges: list[MapEdge] = field(default_factory=list)
     pruned: list[Pruned] = field(default_factory=list)
@@ -80,7 +83,7 @@ class Neighbourhood:
         """Plain JSON-ready form; field order and list order are fixed."""
         return {
             "suite": self.suite,
-            "start": self.start_id,
+            "start": {"id": self.start_id, "label": self.start_label},
             "depth": self.depth,
             "breadth": self.breadth,
             "meaning": "linked in the graph; not a learning order",
@@ -102,6 +105,9 @@ class Neighbourhood:
                 {"node": p.node_id, "considered": p.considered, "kept": p.kept} for p in self.pruned
             ],
             "warnings": list(self.warnings),
+            "candidates": [
+                {"id": c.id, "label": c.pref_label, "kind": c.kind} for c in self.candidates
+            ],
         }
 
 
@@ -190,6 +196,13 @@ def _node_ref(node: TaxonomyNode, suite: str) -> NodeRef:
     )
 
 
+def _check_limits(depth: int, breadth: int) -> None:
+    if not 1 <= depth <= MAX_DEPTH:
+        raise ValueError(f"depth must be 1..{MAX_DEPTH}, got {depth}")
+    if not 1 <= breadth <= MAX_BREADTH:
+        raise ValueError(f"breadth must be 1..{MAX_BREADTH}, got {breadth}")
+
+
 def map_neighbourhood(
     suite: MapperNeighbors,
     suite_name: str,
@@ -201,10 +214,7 @@ def map_neighbourhood(
     max_nodes: int = DEFAULT_MAX_NODES,
 ) -> Neighbourhood:
     """Walk ``depth`` levels from ``start_id``, keeping the top ``breadth`` per node."""
-    if not 1 <= depth <= MAX_DEPTH:
-        raise ValueError(f"depth must be 1..{MAX_DEPTH}, got {depth}")
-    if not 1 <= breadth <= MAX_BREADTH:
-        raise ValueError(f"breadth must be 1..{MAX_BREADTH}, got {breadth}")
+    _check_limits(depth, breadth)
     allowed = frozenset(kinds) if kinds is not None else None
 
     result = Neighbourhood(suite=suite_name, start_id=start_id, depth=depth, breadth=breadth)
@@ -213,6 +223,7 @@ def map_neighbourhood(
     if centre is None:
         result.warnings.append("start_not_found")
         return result
+    result.start_label = centre.label
     mapped: dict[str, MapNode] = {start_id: MapNode(_node_ref(centre, suite_name), 0)}
     result.nodes.append(mapped[start_id])
     seen_edges: set[tuple[str, str, str]] = set()
@@ -246,6 +257,44 @@ def map_neighbourhood(
             break
         frontier = [(nid, suite.get_neighbors(nid)) for nid in next_frontier]
     return result
+
+
+class MapperSuite(MapperNeighbors, SearchableSuite, Protocol):
+    """A suite that can both resolve a name and list neighbors."""
+
+
+def map_from_text(
+    suite: MapperSuite,
+    suite_name: str,
+    text: str,
+    *,
+    depth: int,
+    breadth: int,
+    kinds: Iterable[str] | None = None,
+    max_nodes: int = DEFAULT_MAX_NODES,
+) -> Neighbourhood:
+    """Map from a node ID or a name; an ambiguous name returns candidates, never a guess."""
+    _check_limits(depth, breadth)
+
+    def walk(start: str) -> Neighbourhood:
+        return map_neighbourhood(
+            suite, suite_name, start, depth=depth, breadth=breadth, kinds=kinds, max_nodes=max_nodes
+        )
+
+    if text.startswith(f"{suite_name}:"):
+        by_id = walk(text)
+        if by_id.nodes:
+            return by_id
+    found = locate(suite, suite_name, text).nodes
+    empty = Neighbourhood(suite=suite_name, start_id="", depth=depth, breadth=breadth)
+    if not found:
+        empty.warnings.append(f"start_not_found:{text}")
+        return empty
+    if len(found) == 1 or found[0].pref_label.casefold() == text.casefold():
+        return walk(found[0].id)
+    empty.warnings.append("ambiguous_start")
+    empty.candidates = found[:10]
+    return empty
 
 
 def _add_edge(
@@ -291,6 +340,8 @@ __all__ = [
     "MapEdge",
     "MapNode",
     "Neighbourhood",
+    "MapperSuite",
     "Pruned",
+    "map_from_text",
     "map_neighbourhood",
 ]

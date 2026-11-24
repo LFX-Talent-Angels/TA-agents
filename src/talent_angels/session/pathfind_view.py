@@ -63,11 +63,20 @@ def _gap_line(title: str, nodes: list[NodeRef], *, empty_key: str) -> str:
     return f"**{title}** ({len(nodes)}): {shown}{more}"
 
 
-def _route_line(number: int, route: Route, labels: dict[str, str]) -> str:
+def _route_scores(result: AgentResult) -> list[str]:
+    """Scores from the ``route_scores:`` warning (dispatch.py), in route order."""
+    for warning in result.warnings:
+        if warning.startswith("route_scores:"):
+            return [f"{float(x):.2f}" for x in warning.split(":", 1)[1].split(",") if x]
+    return []
+
+
+def _route_line(number: int, route: Route, labels: dict[str, str], score: str | None) -> str:
     names = [labels.get(node_id, node_id) for node_id in route.node_ids]
     if len(names) > 2:
         names = [names[0], *(f"*{name}*" for name in names[1:-1]), names[-1]]
-    return t("pathfind_route", number=number, chain=" → ".join(names))
+    head = f"{number} ({score})" if score else str(number)
+    return t("pathfind_route", number=head, chain=" → ".join(names))
 
 
 def _confidence_line(result: AgentResult) -> str:
@@ -105,25 +114,30 @@ def render_pathfind(result: AgentResult) -> str:
     essential, optional, software = _gap_buckets(result)
     labels = {node.id: node.pref_label for node in result.nodes}
 
-    lines = [
+    # Markdown folds a single "\n" into one line, so every block is its own
+    # paragraph (blank line between); routes are one bullet each.
+    blocks = [
         t("pathfind_head", start=start.pref_label, target=target.pref_label),
         _confidence_line(result),
-        "",
         _gap_line(t("pathfind_essential"), essential, empty_key="pathfind_gap_none"),
         _gap_line(t("pathfind_optional"), optional, empty_key="pathfind_gap_none"),
         _gap_line(t("pathfind_software"), software, empty_key="pathfind_gap_none"),
     ]
     if "gap_too_large" in result.warnings:
-        lines += ["", t("pathfind_full_retrain")]
+        blocks.append(t("pathfind_full_retrain"))
 
-    lines.append("")
     if result.routes:
         shown_routes = result.routes[:ROUTES_PREVIEW]
-        lines += [_route_line(i, route, labels) for i, route in enumerate(shown_routes, start=1)]
+        scores = _route_scores(result)
+        lines = [
+            "- " + _route_line(i, route, labels, scores[i - 1] if i <= len(scores) else None)
+            for i, route in enumerate(shown_routes, start=1)
+        ]
+        blocks.append("\n".join(lines))
         extra = len(result.routes) - len(shown_routes)
         if extra > 0:
-            lines.append(t("pathfind_more_routes", count=extra))
+            blocks.append(t("pathfind_more_routes", count=extra))
     elif "no_path" in result.warnings:
-        lines.append(t("pathfind_no_route", steps=DEFAULT_MAX_DEPTH))
+        blocks.append(t("pathfind_no_route", steps=DEFAULT_MAX_DEPTH))
 
-    return "\n".join(lines).strip()
+    return "\n\n".join(blocks).strip()

@@ -67,12 +67,13 @@ def test_a_route_bridge_node_is_not_counted_as_a_gap_skill() -> None:
             ),
         ],
         routes=[Route(node_ids=[START.id, BRIDGE.id, TARGET.id], edges=[])],
+        warnings=["route_scores:0.8200"],
     )
 
     text = render_pathfind(result)
 
     assert "**Essential skills needed** (1): statistics" in text
-    assert "Route 1: software developer → *computer programming* → web developer" in text
+    assert "Route 1 (0.82): software developer → *computer programming* → web developer" in text
 
 
 def test_gap_too_large_adds_the_full_retrain_line() -> None:
@@ -174,3 +175,21 @@ def test_more_than_the_preview_cap_is_counted_not_listed() -> None:
     assert "**Essential skills needed** (7):" in text
     assert "(+2 more)" in text
     assert "skill-6" not in text
+
+
+def test_every_section_and_route_is_its_own_paragraph_or_line() -> None:
+    route = Route(node_ids=[START.id, BRIDGE.id, TARGET.id], edges=[])
+    result = AgentResult(
+        capability="pathfind",
+        suite="esco",
+        nodes=[START, TARGET, STATS, BRIDGE],
+        edges=[_edge(STATS, TARGET, "HAS_SKILL", "essential")],
+        routes=[route, route],
+    )
+
+    text = render_pathfind(result)
+
+    for heading in ("**Essential skills needed**", "**Optional skills needed**"):
+        assert f"\n\n{heading}" in text
+    assert "\n- Route 2: " in text
+    assert all("Route" not in line or line.startswith("- ") for line in text.splitlines())

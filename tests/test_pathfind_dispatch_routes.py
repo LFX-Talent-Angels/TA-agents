@@ -69,3 +69,10 @@ def test_every_route_node_id_also_appears_in_the_result_nodes() -> None:
     result_ids = {node.id for node in result.nodes}
     for route in result.routes:
         assert all(node_id in result_ids for node_id in route.node_ids)
+
+
+def test_routes_are_marked_ranked_with_scores() -> None:
+    result, _calls = pathfind_one(_Suite(), "esco", "nurse", "data analyst")
+
+    assert "ranked:route-rank-v1" in result.warnings
+    assert any(w.startswith("route_scores:") for w in result.warnings)

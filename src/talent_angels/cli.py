@@ -2,6 +2,7 @@
 
 python -m talent_angels.cli query "software developer"
 python -m talent_angels.cli locate "software developer" --kind occupation
+python -m talent_angels.cli map "Python" --suite esco --depth 2 --breadth 4
 python -m talent_angels.cli bench
 python -m talent_angels.cli report --last 20
 python -m talent_angels.cli quality
@@ -41,6 +42,12 @@ from talent_angels.session.copy import (
     HELP_TEXT,
 )
 from talent_angels.session.router import route_line
+from talent_angels.skills.connect.neighbourhood import (
+    DEFAULT_MAX_NODES,
+    MAX_BREADTH,
+    MAX_DEPTH,
+    map_from_text,
+)
 from talent_angels.suites import SuiteRegistry, UnknownSuiteError, default_suite_registry
 
 GOLDEN_LOCATE_PATH = Path(__file__).resolve().parents[2] / "tests" / "evals" / "golden_locate.json"
@@ -94,6 +101,16 @@ def _build_parser() -> argparse.ArgumentParser:
     connect_parser.add_argument("question")
     connect_parser.add_argument("--kind", default=None)
     connect_parser.add_argument("--suite", default=None, help=suite_help)
+
+    map_parser = sub.add_parser(
+        "map", help="Graph-Mapper: the neighbourhood of a skill as JSON (no model call)."
+    )
+    map_parser.add_argument("start", help="Node ID or name")
+    map_parser.add_argument("--suite", default=None, help=suite_help)
+    map_parser.add_argument("--depth", type=int, choices=range(1, MAX_DEPTH + 1), default=1)
+    map_parser.add_argument("--breadth", type=int, choices=range(1, MAX_BREADTH + 1), default=4)
+    map_parser.add_argument("--kinds", default=None, help="Comma-separated node kinds to keep")
+    map_parser.add_argument("--max-nodes", type=int, default=DEFAULT_MAX_NODES)
 
     sub.add_parser(
         "bench",
@@ -173,6 +190,8 @@ def main(argv: Sequence[str] | None = None, *, registry: SuiteRegistry | None = 
     else:
         selected_registry = default_suite_registry()
 
+    if args.command == "map":
+        return _run_map(args, selected_registry)
     if args.command == "bench":
         return _run_bench(selected_registry)
     if args.command == "report":
@@ -260,6 +279,31 @@ def main(argv: Sequence[str] | None = None, *, registry: SuiteRegistry | None = 
         )
     )
     return 0
+
+
+def _run_map(args: argparse.Namespace, registry: SuiteRegistry) -> int:
+    kinds = args.kinds.split(",") if args.kinds else None
+    try:
+        name = registry.resolve(args.suite) if args.suite else registry.default
+        with registry.open(name) as runtime:
+            result = map_from_text(
+                runtime.suite,  # type: ignore[arg-type]
+                name,
+                args.start,
+                depth=args.depth,
+                breadth=args.breadth,
+                kinds=kinds,
+                max_nodes=args.max_nodes,
+            )
+    except UnknownSuiteError as exc:
+        print(str(exc), file=sys.stderr)
+        return 2
+    print(json.dumps(result.to_dict(), ensure_ascii=False, indent=2))
+    return (
+        2
+        if any(w.startswith(("ambiguous_start", "start_not_found")) for w in result.warnings)
+        else 0
+    )
 
 
 def _run_bench(registry: SuiteRegistry) -> int:

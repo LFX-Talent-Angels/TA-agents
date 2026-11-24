@@ -24,6 +24,13 @@ instructions and again in each tool description:
   case-insensitive ambiguous, `0.70` substring only). `0.70` does not mean
   "70% sure"; it means only a substring matched.
 
+`map_neighbors` is the one tool that crosses suites. With no `suite` it maps the
+name in every taxonomy (`suites` picks a subset; `route_from`/`route_to` map the
+top-ranked route in each). Every node keeps its suite-scoped ID and carries
+`suite` and `cite`; a `CROSSWALK` edge and `confirmed_by` appear only where an
+official code links two nodes (BLS and O*NET by SOC code, JobTech and ESCO by
+their ESCO URIs). Names are never matched across suites.
+
 `warnings` is machine-readable and load-bearing: `not_found`, `ambiguous`,
 `no_neighbors`, `node_not_found`, `no_path`, `endpoint_not_found`,
 `unknown_suite:<name>`, `suite_unavailable:<ErrorType>`,

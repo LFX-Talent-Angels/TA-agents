@@ -61,3 +61,32 @@ def test_golden_graph_mapper_case(case: dict) -> None:
     if "route" in case:
         assert len(first["route"]) == case["expect_route_stops"]
         assert [n["id"] for n in first["nodes"] if n["on_route"]] == first["route"]
+
+
+ALL_CASES = json.loads(GOLDEN_PATH.read_text(encoding="utf-8"))["all_cases"]
+
+
+def _run_all(case: dict) -> dict:
+    from talent_angels.skills.connect.federated import map_all, map_all_route
+
+    registry = default_suite_registry()
+    walk = {"depth": case["depth"], "breadth": case["breadth"]}
+    if "route" in case:
+        return map_all_route(registry, *case["route"], **walk).to_dict()
+    return map_all(registry, case["start"], **walk).to_dict()
+
+
+@pytest.mark.parametrize("case", ALL_CASES, ids=lambda c: c.get("start") or "->".join(c["route"]))
+def test_golden_map_all_case(case: dict) -> None:
+    first = _run_all(case)
+    second = _run_all(case)
+
+    assert json.dumps(first) == json.dumps(second)
+    assert {k: v["status"] for k, v in first["suites"].items()} == case["expect_status"]
+    ids = {n["id"] for n in first["nodes"]}
+    assert all(e["from_id"] in ids and e["to_id"] in ids for e in first["edges"])
+    assert all(n["suite"] and n["cite"] for n in first["nodes"])
+    assert first["summary"]["crosswalk_links"] >= case["expect_min_links"]
+    assert (
+        sorted(n["id"] for n in first["nodes"] if "confirmed_by" in n) == case["expect_confirmed"]
+    )

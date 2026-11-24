@@ -115,5 +115,61 @@
       ],
       "expect_warnings": []
     }
+  ],
+  "all_note": "all_cases: map_all / map_all_route over every taxonomy, captured live 2026-11-24 (depth 1; breadth 4, route 3). expect_status is per-suite status; expect_min_links / expect_confirmed are official crosswalk results (BLS-O*NET by SOC code, JobTech-ESCO by esco_exact/esco_close). Python has no occupation so no crosswalk is expected; the route case records the suites that found a route (SFIA has no occupations, JobTech has no 'web developer').",
+  "all_cases": [
+    {
+      "start": "Software Developers",
+      "depth": 1,
+      "breadth": 4,
+      "expect_status": {
+        "esco": "mapped",
+        "onet": "mapped",
+        "sfia": "ambiguous",
+        "bls": "mapped",
+        "jobtech": "not_found"
+      },
+      "expect_min_links": 1,
+      "expect_confirmed": [
+        "bls:occupation:15-1252",
+        "onet:occupation:15-1252.00"
+      ]
+    },
+    {
+      "start": "Python",
+      "depth": 1,
+      "breadth": 4,
+      "expect_status": {
+        "esco": "mapped",
+        "onet": "mapped",
+        "sfia": "not_found",
+        "bls": "not_found",
+        "jobtech": "mapped"
+      },
+      "expect_min_links": 0,
+      "expect_confirmed": []
+    },
+    {
+      "route": [
+        "web developer",
+        "software developer"
+      ],
+      "depth": 1,
+      "breadth": 3,
+      "expect_status": {
+        "esco": "mapped",
+        "onet": "mapped",
+        "sfia": "not_found",
+        "bls": "mapped",
+        "jobtech": "not_found"
+      },
+      "expect_min_links": 2,
+      "expect_confirmed": [
+        "bls:occupation:15-1252",
+        "bls:occupation:15-1254",
+        "onet:occupation:15-1252.00",
+        "onet:occupation:15-1254.00"
+      ]
+    }
   ]
 }

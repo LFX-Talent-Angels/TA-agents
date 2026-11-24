@@ -37,6 +37,7 @@ from talent_angels.mcp.mapping import (
     suite_path_arg,
 )
 from talent_angels.mcp.models import (
+    MapPayload,
     NeighborsPayload,
     PathRef,
     PathsPayload,
@@ -46,6 +47,12 @@ from talent_angels.mcp.models import (
 )
 from talent_angels.mcp.protocol import supports_enumerate_paths, supports_score_paths
 from talent_angels.mcp.session import SuiteSession, SuiteUnavailableError
+from talent_angels.skills.connect.neighbourhood import (
+    DEFAULT_MAX_NODES,
+    MAX_BREADTH,
+    MAX_DEPTH,
+    map_from_text,
+)
 from talent_angels.suites import (
     SuiteRegistry,
     SuiteRuntime,
@@ -64,7 +71,8 @@ ToolContext = Context[SuiteSession, Any]
 SERVER_INSTRUCTIONS = """\
 Read-only access to the Talent Angels taxonomy graphs (ESCO, O*NET, SFIA, BLS
 and JobTech, as far as they are registered and loaded) through the suite
-contract: search_nodes, get_neighbors, enumerate_paths, score_paths. Pass the
+contract: search_nodes, get_neighbors, enumerate_paths, score_paths, plus
+map_neighbors (a multi-hop get_neighbors). Pass the
 suite by name, e.g. suite=`esco`, `onet`, `sfia`, `bls` or `jobtech`.
 Do not treat IDs from one suite as belonging to another.
 
@@ -160,7 +168,7 @@ SuiteArg = Annotated[
 
 
 def build_server(*, registry: SuiteRegistry | None = None) -> MCPServer[SuiteSession]:
-    """Wire the four contract tools onto an MCP server."""
+    """Wire the four contract tools and map_neighbors onto an MCP server."""
     server: MCPServer[SuiteSession] = MCPServer(
         name=SERVER_NAME,
         title="Talent Angels — taxonomy graph",
@@ -415,6 +423,73 @@ the answer — do not substitute a ranking of your own and present it as ESCO's.
                 warnings=_operation_warning(exc),
             )
         return scored_paths_payload(result, suite=runtime.name, policy=policy)
+
+    @server.tool(
+        name="map_neighbors",
+        title="Map the neighbourhood of a node",
+        description=f"""\
+Map what surrounds one node: repeat `get_neighbors` for `depth` levels, keeping
+the best `breadth` new neighbours of each node. Deterministic, no model call;
+the same input gives the same result.
+
+`start` is a node ID (full determinism) or a name. An ambiguous name is never
+guessed: you get `ambiguous_start` and a `candidates` pick list; an unknown one
+gets `start_not_found:<text>`. Ask the user, then call again with an ID.
+
+Per node, neighbours are ranked: relation (related skill, narrower, level,
+parent, then jobs/skills needed), then essential before optional, then O*NET
+importance and hot technology, then label. Groups, categories and levels are
+shown but never expanded, so the map does not drift through a skill group. A
+node reached twice appears once, with both links kept as edges.
+
+`pruned` counts what each node cut (considered / kept). `warnings` may add
+`max_nodes:N` (the cap was hit; the map is partial).
+
+The result means "linked in the graph", not a learning order: no taxonomy says
+what to learn first. {_ID_DOC}""",
+    )
+    def map_neighbors(
+        ctx: ToolContext,
+        start: Annotated[str, Field(description="Node ID from `search_nodes`, or a name.")],
+        depth: Annotated[
+            int, Field(ge=1, le=MAX_DEPTH, description="Levels to repeat the hop.")
+        ] = 1,
+        breadth: Annotated[
+            int, Field(ge=1, le=MAX_BREADTH, description="New neighbours kept per node.")
+        ] = 4,
+        kinds: Annotated[
+            list[str] | None,
+            Field(description="Keep only these node kinds, e.g. ['Skill']. Omit for all."),
+        ] = None,
+        suite: SuiteArg = None,
+        max_nodes: Annotated[
+            int, Field(ge=1, le=DEFAULT_MAX_NODES, description="Hard cap on nodes in the map.")
+        ] = DEFAULT_MAX_NODES,
+    ) -> MapPayload:
+        session = ctx.request_context.lifespan_context
+        runtime, name, warnings = _open_runtime(session, suite)
+        if runtime is None:
+            return MapPayload(suite=name, depth=depth, breadth=breadth, warnings=warnings)
+        try:
+            result = map_from_text(
+                runtime.suite,  # type: ignore[arg-type]
+                runtime.name,
+                start,
+                depth=depth,
+                breadth=breadth,
+                kinds=kinds,
+                max_nodes=max_nodes,
+            )
+        except Exception as exc:
+            return MapPayload(
+                suite=runtime.name, depth=depth, breadth=breadth, warnings=_operation_warning(exc)
+            )
+        data = result.to_dict()
+        data["edges"] = [
+            {"from_id": e.pop("from"), "to_id": e.pop("to"), **e}
+            for e in data["edges"]  # type: ignore[attr-defined]
+        ]
+        return MapPayload.model_validate(data)
 
     return server
 

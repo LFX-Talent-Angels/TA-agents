@@ -45,3 +45,12 @@ def test_cli_query_command_routes_via_heuristic_intent(capsys: pytest.CaptureFix
     output = json.loads(capsys.readouterr().out)
     assert output["capability"] == "locate"
     assert output["confidence"] == 0.95
+
+
+def test_cli_map_prints_a_graph_mapper_json(capsys: pytest.CaptureFixture[str]) -> None:
+    exit_code = main(["map", "Python (computer programming)", "--suite", "esco"])
+
+    assert exit_code == 0
+    output = json.loads(capsys.readouterr().out)
+    assert output["suite"] == "esco"
+    assert output["nodes"][0]["label"] == "Python (computer programming)"

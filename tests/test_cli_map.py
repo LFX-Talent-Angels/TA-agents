@@ -139,8 +139,8 @@ def test_ambiguous_suite_hints_on_stderr_while_json_stays_clean(
     out = capsys.readouterr()
     assert code == 0
     assert json.loads(out.out)["suites"]["bls"]["status"] == "ambiguous"
-    assert out.err.startswith('bls: "Software" is ambiguous')
-    assert 'ta-agent map "bls:occupation:15-1252" --suite bls' in out.err
+    assert out.err.startswith('bls: "Software" is ambiguous; rerun with one id and --suite bls')
+    assert "= bls:occupation:15-1252" in out.err
 
 
 def test_exit_two_when_no_taxonomy_maps(capsys: pytest.CaptureFixture[str]) -> None:

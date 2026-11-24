@@ -48,7 +48,7 @@ def test_specific_bridge_beats_generic() -> None:
     res = _result(_route("a", "generic", "b"), _route("a", "niche", "b"))
     ranked = rank_routes(DegreeSuite({"generic": 500, "niche": 3}), res)
     assert ranked[0].route.node_ids[1] == "niche"
-    assert "bridge used by 3 items" in ranked[0].reasons
+    assert "bridge has 3 graph links" in ranked[0].reasons
 
 
 def test_ties_are_stable_and_repeatable() -> None:

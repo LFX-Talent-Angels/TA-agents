@@ -4,9 +4,11 @@ Stopgap: the suite contract says nothing cross-suite lives anywhere but
 TA-taxonomies ``crosswalks/``. Until that is filled, these two rules live here.
 No inference, no label matching: a link exists only when an official code says so.
 
-- BLS <-> O*NET (SOC): ``bls:occupation:15-1252`` <-> ``onet:occupation:15-1252.00``
-  (the O*NET code's first 7 characters are the SOC code), or a BLS node's
-  ``onet_soc_codes`` property.
+- BLS <-> O*NET (SOC): ``bls:occupation:15-1252`` <-> ``onet:occupation:15-1252.00``.
+  Only the ``.00`` O*NET code is the same occupation; ``.01``+ are narrower
+  O*NET-only occupations and are not linked. BLS's ``onet_soc_codes`` property is
+  NOT used: it lists the O*NET jobs BLS borrowed skill scores from (Engineers,
+  All Other -> Aerospace Engineers), not equivalents.
 - JobTech -> ESCO: the JobTech node's ``esco_exact`` / ``esco_close`` URIs, which
   name an ESCO node ``esco:<kind>:<uuid>``.
 
@@ -20,9 +22,9 @@ from collections.abc import Mapping
 from dataclasses import dataclass
 
 # Node properties the rules read; the walker keeps only these.
-PROP_KEYS = ("esco_exact", "esco_close", "onet_soc_codes")
+PROP_KEYS = ("esco_exact", "esco_close")
 
-_ONET_ID = re.compile(r"^onet:occupation:(\d\d-\d{4})\.\d\d$")
+_ONET_ID = re.compile(r"^onet:occupation:(\d\d-\d{4})\.00$")
 _BLS_ID = re.compile(r"^bls:occupation:(\d\d-\d{4})$")
 _ESCO_URI = re.compile(r"^http://data\.europa\.eu/esco/([a-z-]+)/([0-9a-f-]{36})$")
 _STRENGTH_ORDER = {"exact": 0, "close": 1, "soc": 2}
@@ -62,11 +64,8 @@ def links_from(node_id: str, props: Mapping[str, object] | None = None) -> list[
     bls_onet = "crosswalk:bls-onet-soc"
     if m := _ONET_ID.match(node_id):
         found.append(CrosswalkLink(f"bls:occupation:{m[1]}", node_id, "soc", bls_onet))
-    if _BLS_ID.match(node_id):
-        codes = props.get("onet_soc_codes")
-        for code in codes if isinstance(codes, list) else []:
-            if isinstance(code, str) and _ONET_ID.match(f"onet:occupation:{code}"):
-                found.append(CrosswalkLink(node_id, f"onet:occupation:{code}", "soc", bls_onet))
+    if m := _BLS_ID.match(node_id):
+        found.append(CrosswalkLink(node_id, f"onet:occupation:{m[1]}.00", "soc", bls_onet))
     if node_id.startswith("jobtech:"):
         for key, strength in (("esco_exact", "exact"), ("esco_close", "close")):
             uris = props.get(key)

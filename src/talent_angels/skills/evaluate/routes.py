@@ -50,7 +50,7 @@ def rank_routes(
         essential = sum(1 for v in values if v == 1.0)
         reasons = [f"{essential}/{len(values)} links essential"] if values else []
         if inner:
-            reasons.append(f"bridge used by {max(degree(i) for i in inner)} items")
+            reasons.append(f"bridge has {max(degree(i) for i in inner)} graph links")
         reasons.append(f"{steps} step{'s' if steps != 1 else ''}")
         joined = " > ".join(labels.get(i, i) for i in route.node_ids)
         scored.append((-score, joined, tuple(route.node_ids), RankedRoute(route, score, reasons)))

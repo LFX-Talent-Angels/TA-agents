@@ -21,6 +21,8 @@ from talent_angels.skills.evaluate.policy import MAP_RANK_V1
 from talent_angels.skills.locate import SearchableSuite, locate
 
 MAX_DEPTH = 4
+# Locate's casefold-unique tier; exact preferred/alternative labels score higher.
+AUTO_PICK_CONFIDENCE = 0.85
 MAX_BREADTH = 10
 DEFAULT_MAX_NODES = 500
 MEANING = "linked in the graph; not a learning order"
@@ -152,14 +154,22 @@ def _strength(edge: TaxonomyEdge) -> str | None:
 def _rank_key(
     edge: TaxonomyEdge, node: TaxonomyNode, relation: str
 ) -> tuple[int, int, float, int, str, str]:
-    """Lower sorts first: relation, strength, O*NET importance, hot tech, label, id.
+    """Lower sorts first: relation, strength, O*NET weight, hot tech, label, id.
+
+    O*NET weight is `importance`, else the related-occupation `index` (1 = closest).
 
     Relation comes first so skill-to-skill links beat job links. Strength first
     would fill the map with jobs (every job is essential or optional for a skill).
     """
     strength = _strength(edge)
     importance = edge.properties.get("importance")
-    weight = -float(importance) if isinstance(importance, int | float) else 0.0
+    index = edge.properties.get("index")  # O*NET related occupations: 1 = most related
+    if isinstance(importance, int | float):
+        weight = -float(importance)
+    elif isinstance(index, int | float):
+        weight = float(index) - 1000.0  # any ranked link before unranked ones
+    else:
+        weight = 0.0
     flagged = (
         edge.properties.get("hot_technology") == "Y" or edge.properties.get("in_demand") == "Y"
     )
@@ -341,11 +351,21 @@ def map_from_text(
         # An ID that does not exist is a miss; searching its text would guess.
         empty.warnings.append(f"start_not_found:{text}")
         return empty
-    found = locate(suite, suite_name, text).nodes
+    located = locate(suite, suite_name, text)
+    found = located.nodes
     if not found:
         empty.warnings.append(f"start_not_found:{text}")
         return empty
-    if len(found) == 1 or found[0].pref_label.casefold() == text.casefold():
+    # A lone hit is only taken when it is a label match (exact, alternative or
+    # case-insensitive, the tiers Locate itself auto-selects). A substring or
+    # meaning hit ("data analyst" -> "Data scientist") is shown, never picked.
+    exact = found[0].pref_label.casefold() == text.casefold()
+    sure = (
+        len(found) == 1
+        and "ambiguous" not in located.warnings
+        and (located.confidence or 0.0) >= AUTO_PICK_CONFIDENCE
+    )
+    if exact or sure:
         return walk(found[0].id)
     empty.warnings.append("ambiguous_start")
     empty.candidates = found[:10]

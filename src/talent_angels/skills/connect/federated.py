@@ -43,7 +43,8 @@ _STRENGTH_ORDER = {"exact": 0, "close": 1, "soc": 2}
 class SuiteMap:
     """One suite's share of the merged map."""
 
-    status: str = "not_found"  # mapped | ambiguous | not_found | via_crosswalk | no_route | error
+    # mapped | ambiguous | not_found | not_searched | via_crosswalk | no_route | error
+    status: str = "not_found"
     start: dict[str, str] | None = None
     candidates: list[dict[str, str]] = field(default_factory=list)
     via: str | None = None
@@ -54,6 +55,7 @@ class SuiteMap:
     xprops: dict[str, dict[str, object]] = field(default_factory=dict)
     route: dict[str, object] | None = None
     route_ids: list[str] = field(default_factory=list)
+    side: str | None = None  # route mode: which end is ambiguous (start | target)
 
     def to_dict(self) -> dict[str, object]:
         out: dict[str, object] = {
@@ -67,6 +69,8 @@ class SuiteMap:
         }
         if self.route is not None:
             out["route"] = self.route
+        if self.side is not None:
+            out["side"] = self.side
         return out
 
 
@@ -137,7 +141,8 @@ def _select(registry: SuiteRegistry, suites: Iterable[str] | None) -> list[str]:
 
 
 def _per_suite_cap(max_nodes: int, count: int) -> int:
-    return max(10, max_nodes // max(1, count))
+    # Hard cap for the whole map: never more than max_nodes in total.
+    return max(1, max_nodes // max(1, count))
 
 
 def _from_walk(walk: Neighbourhood) -> SuiteMap:
@@ -189,7 +194,15 @@ def map_all(
     cap = _per_suite_cap(max_nodes, len(names))
     kinds = list(kinds) if kinds is not None else None
     out = FederatedMap(text, depth, breadth)
+    # A node ID belongs to one taxonomy; the others are never searched with its text.
+    prefix = text.split(":", 1)[0] if ":" in text else ""
+    id_suite = prefix if prefix in registry.available else None
     for name in names:
+        if id_suite and name != id_suite:
+            out.suites[name] = SuiteMap(
+                status="not_searched", warnings=[f"start_is_id_of:{id_suite}"]
+            )
+            continue
         try:
             with registry.open(name) as rt:
                 walk = map_from_text(
@@ -206,7 +219,7 @@ def map_all(
             out.suites[name] = SuiteMap(status="error", warnings=[f"error:{type(exc).__name__}"])
     for name in names:
         part = out.suites[name]
-        if part.status not in ("not_found", "ambiguous"):
+        if part.status not in ("not_found", "ambiguous", "not_searched"):
             continue
         for link in _seeds(name, out.suites):
             seed = link.to_id if suite_of(link.to_id) == name else link.from_id
@@ -257,6 +270,7 @@ def map_all_route(
                 warns = [w for w in found.warnings if not w.startswith("route_scores:")]
                 part = SuiteMap(warnings=warns)
                 if found.routes:
+                    # pathfind_one already ordered routes by route-rank-v1; this re-reads the score.
                     top = rank_routes(rt.suite, found)[0]  # type: ignore[arg-type]
                     walk = map_route(
                         rt.suite,  # type: ignore[arg-type]
@@ -286,6 +300,14 @@ def map_all_route(
                     )
                 elif "ambiguous" in found.warnings:
                     part.status = "ambiguous"
+                    part.side = next(
+                        (
+                            w.split(":", 1)[1]
+                            for w in found.warnings
+                            if w.startswith("pathfind_side:")
+                        ),
+                        None,
+                    )
                     part.candidates = [
                         {"id": n.id, "label": n.pref_label, "kind": n.kind}
                         for n in found.nodes[:10]

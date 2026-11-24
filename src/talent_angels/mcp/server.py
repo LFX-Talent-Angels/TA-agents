@@ -502,9 +502,18 @@ what to learn first. {_ID_DOC}""",
     ) -> MapPayload:
         session = ctx.request_context.lifespan_context
         walk = {"depth": depth, "breadth": breadth, "kinds": kinds, "max_nodes": max_nodes}
-        if not suite and not route_node_ids:
+        if bool(route_from) != bool(route_to):
+            return MapPayload(
+                suite=suite or "all",
+                depth=depth,
+                breadth=breadth,
+                warnings=["route_needs_route_from_and_route_to"],
+            )
+        by_name_route = bool(route_from and route_to)
+        if not route_node_ids and (not suite or by_name_route):
             try:
-                every = {"suites": suites, **walk}
+                # A named route with `suite` runs in that one taxonomy only.
+                every = {"suites": [suite] if suite else suites, **walk}
                 found = (
                     map_all_route(session.registry, route_from, route_to, **every)  # type: ignore[arg-type]
                     if route_from and route_to

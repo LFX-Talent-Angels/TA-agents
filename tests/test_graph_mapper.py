@@ -410,3 +410,22 @@ def test_rank_budget_warns_and_stays_deterministic(monkeypatch: pytest.MonkeyPat
 
     assert "rank_budget:1" in first.warnings
     assert first.to_dict() == again.to_dict()
+
+
+def test_a_lone_fuzzy_hit_is_a_candidate_not_a_start() -> None:
+    # Live: JobTech "data analyst" -> one meaning hit "Data scientist" (0.75, ambiguous).
+    class FuzzySuite(GraphSuite):
+        def search_nodes(self, text: str, kind: str | None = None) -> FakeToolResult:
+            node = self.nodes["ds"]
+            return FakeToolResult(
+                candidates=[FakeCandidate(node=node, confidence=0.75, method="hybrid_rrf")],
+                warnings=["ambiguous"],
+            )
+
+    suite = FuzzySuite([_node("ds", label="Data scientist")], [])
+
+    data = map_from_text(suite, "esco", "data analyst", depth=1, breadth=2).to_dict()
+
+    assert data["nodes"] == []
+    assert data["warnings"] == ["ambiguous_start"]
+    assert [c["label"] for c in data["candidates"]] == ["Data scientist"]  # type: ignore[index]

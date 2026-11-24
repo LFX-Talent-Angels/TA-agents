@@ -194,3 +194,18 @@ def test_route_mode_maps_the_top_route_per_suite_with_score_and_reasons() -> Non
     assert data["suites"]["bls"]["status"] == "not_found"  # type: ignore[index]
     assert [n["on_route"] for n in data["nodes"]] == [True, True]  # type: ignore[attr-defined]
     assert data["query"] == "software developer -> python"
+
+
+def test_an_id_is_walked_only_in_its_own_taxonomy() -> None:
+    # Live: an ESCO skill id with no suite was searched in O*NET as text ("dESCO ESC").
+    data = map_all(_registry(), "bls:occupation:15-1252").to_dict()
+    suites = data["suites"]
+    assert suites["bls"]["status"] == "mapped"  # type: ignore[index]
+    assert suites["sfia"]["status"] == "not_searched"  # type: ignore[index]
+    # O*NET is not searched with the text, but may start from the official SOC crosswalk.
+    assert suites["onet"]["status"] == "via_crosswalk"  # type: ignore[index]
+
+
+def test_max_nodes_is_a_hard_cap_across_taxonomies() -> None:
+    data = map_all(_registry(), "Software Developers", max_nodes=2).to_dict()
+    assert len(data["nodes"]) <= 2  # type: ignore[arg-type]

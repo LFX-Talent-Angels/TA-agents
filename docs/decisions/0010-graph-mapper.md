@@ -66,12 +66,18 @@ subset, `--suite a` keeps the single-suite output.
   `source_id`, the evidence pointer). Edge keys are `from_id`/`to_id` in every
   output.
 - **Crosswalk rules (official codes only):** BLS and O*NET by SOC code
-  (`bls:occupation:15-1252` with `onet:occupation:15-1252.00`, or a BLS node's
-  `onet_soc_codes`); JobTech to ESCO by `esco_exact` and `esco_close` URIs
+  (`bls:occupation:15-1252` with `onet:occupation:15-1252.00`; only the `.00`
+  O*NET code is the same occupation). BLS's `onet_soc_codes` is not used: it
+  lists the O*NET jobs BLS borrowed skill scores from, not equivalents
+  (Engineers, All Other -> Aerospace Engineers). JobTech to ESCO by `esco_exact` and `esco_close` URIs
   (`http://data.europa.eu/esco/<kind>/<uuid>` is `esco:<kind>:<uuid>`). Links
   are `CROSSWALK` edges (`same_as`, strength `exact`/`close`/`soc`) between
   nodes already in the map; both ends get `confirmed_by`. A suite that cannot
   resolve the text may start from a crosswalk of a start another suite resolved.
+  A node ID belongs to one taxonomy: the others are not searched with its text
+  (`not_searched`) and may only start from a crosswalk. A name is taken only on a
+  label match (Locate confidence >= 0.85); a lone substring or meaning hit is
+  shown as a candidate, never picked.
 - **Islands:** ESCO + JobTech are linked, O*NET + BLS are linked, SFIA stands
   alone. ESCO to O*NET has no official code, so it is not linked. Meaning-based
   links (same label, embeddings) are deliberately not included.

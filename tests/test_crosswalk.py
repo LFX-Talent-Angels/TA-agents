@@ -19,15 +19,21 @@ def test_bls_and_onet_link_by_soc_code_from_either_side() -> None:
     assert link.to_dict()["source"] == "crosswalk:bls-onet-soc"
 
 
-def test_bls_property_links_an_onet_code_that_is_in_the_map() -> None:
-    props = {"bls:occupation:15-1252": {"onet_soc_codes": ["15-1252.00", "15-1252.01"]}}
-    assert [
-        x.to_id for x in links_from("bls:occupation:15-1252", props["bls:occupation:15-1252"])
-    ] == [
-        "onet:occupation:15-1252.00",
-        "onet:occupation:15-1252.01",
+def test_bls_links_only_the_same_soc_dot_00_and_ignores_borrowed_codes() -> None:
+    # onet_soc_codes lists O*NET jobs BLS borrowed skill scores from, not equivalents
+    # (live: Engineers, All Other -> Aerospace Engineers). Only the .00 code is "same".
+    props = {"onet_soc_codes": ["17-2011.00", "17-2199.01"]}
+    assert [x.to_id for x in links_from("bls:occupation:17-2199", props)] == [
+        "onet:occupation:17-2199.00"
     ]
-    assert len(crosswalk_links({**props, "onet:occupation:15-1252.01": {}})) == 1
+    nodes = {"bls:occupation:17-2199": props, "onet:occupation:17-2011.00": {}}
+    assert crosswalk_links(nodes) == []
+
+
+def test_onet_sub_occupations_are_not_the_same_job() -> None:
+    nodes = {"bls:occupation:11-1011": {}, "onet:occupation:11-1011.03": {}}
+    assert crosswalk_links(nodes) == []
+    assert len(crosswalk_links({**nodes, "onet:occupation:11-1011.00": {}})) == 1
 
 
 def test_different_soc_codes_do_not_link() -> None:

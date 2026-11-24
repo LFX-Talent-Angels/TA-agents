@@ -88,7 +88,7 @@ def _max_nodes(value: str) -> int:
 
 
 def _build_parser() -> argparse.ArgumentParser:
-    parser = argparse.ArgumentParser(prog="talent-angels")
+    parser = argparse.ArgumentParser(prog="ta-agent")
     sub = parser.add_subparsers(dest="command", required=True)
 
     query_parser = sub.add_parser("query", help="Ask the assistant (heuristic intent routing).")
@@ -371,14 +371,19 @@ def _run_map_all(
         return 2
     print(json.dumps(result.to_dict(), ensure_ascii=False, indent=2))
     for name, part in result.suites.items():
-        if part.status == "ambiguous" and part.candidates:
-            first = part.candidates[0]
-            hint = (
-                f'be more specific, e.g. "{first["label"]}"'
-                if args.route
-                else f'rerun with an id, e.g. ta-agent map "{first["id"]}" --suite {name}'
+        if part.status != "ambiguous" or not part.candidates:
+            continue
+        options = "; ".join(f"{c['label']} = {c['id']}" for c in part.candidates[:3])
+        if args.route:
+            side = {"start": args.route[0], "target": args.route[1]}.get(part.side or "", "")
+            what = f'"{side}"' if side else "one end of the route"
+            print(f"{name}: {what} is ambiguous; be more specific, e.g. {options}", file=sys.stderr)
+        else:
+            print(
+                f'{name}: "{result.query}" is ambiguous; rerun with one id and --suite {name}, '
+                f"e.g. {options}",
+                file=sys.stderr,
             )
-            print(f'{name}: "{result.query}" is ambiguous — {hint}', file=sys.stderr)
     return 0 if result.mapped else 2
 
 

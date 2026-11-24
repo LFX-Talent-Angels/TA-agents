@@ -56,5 +56,10 @@ Goldens are re-captured live when a policy changes.
 ## Consequences
 
 Map walks cost more `get_neighbors` calls (pool lookups, reused by expansion):
-`"manage budgets" --depth 3 --breadth 10` went from about 1 s to about 26 s on
-the local Neo4j. The budget bounds it.
+`"manage budgets" --depth 3 --breadth 10` took about 26 s on a first run while
+the neighbour cache filled, and about 1 s after (local Neo4j). The budget bounds it.
+O*NET's relatedness `index` on related-occupation links is used as the ranking
+weight when there is no `importance`. Where a taxonomy gives no signal at all
+(e.g. O*NET software-to-job links), the pool is still the first
+`min(5*breadth, 30)` candidates by label, so specificity only re-ranks that slice;
+a v2 needs a degree count from the suite in one query.

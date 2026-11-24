@@ -4,7 +4,8 @@ Two shapes, both seen from CONOCER's knowledge-graph work:
 
 - Neo4j `{n, r, m}` records with no `IS_PART_OF` tree: `n -[r]-> m` where `m`
   is the child (`EC1691 -REQUIRES_PERFORMANCE-> D1691.1`). Text is the node's
-  `text`, `name` or `title`; its type is a `type` property or its first label.
+  `text`, `name` or `title` (or Spanish `nombre`, `titulo`); its type is a
+  `type` property or its first label.
 - An edge table (JSON list or CSV): origin id/type/name, relation, destination
   id/type/name, with English or Spanish column names (`Tipo_Origen`,
   `ID_Origen`, `Nombre_Origen`, `Relacion`, `Tipo_Destino` ...). A row with no
@@ -38,7 +39,8 @@ from talent_angels.tagging.readers.base import ReaderError
 _SLUG_RE = re.compile(r"[^a-z0-9]+")
 _TREE_REL = "IS_PART_OF"
 _NRM_KEYS = {"n", "r", "m"}
-_TEXT_KEYS = ("text", "name", "title")
+# Spanish exports (UCA, 2026-11-23) name nodes with `nombre`.
+_TEXT_KEYS = ("text", "name", "title", "nombre", "titulo", "título")
 
 # Edge-table columns, matched case- and accent-insensitively after removing
 # "_", "-" and spaces. Origin = the parent end of the edge.

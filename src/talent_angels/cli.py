@@ -79,6 +79,13 @@ def _cli_non_map_reply(kind: str) -> tuple[str, str] | None:
     return None
 
 
+def _max_nodes(value: str) -> int:
+    number = int(value)
+    if not 1 <= number <= DEFAULT_MAX_NODES:
+        raise argparse.ArgumentTypeError(f"must be 1..{DEFAULT_MAX_NODES}, got {number}")
+    return number
+
+
 def _build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(prog="talent-angels")
     sub = parser.add_subparsers(dest="command", required=True)
@@ -119,7 +126,7 @@ def _build_parser() -> argparse.ArgumentParser:
     map_parser.add_argument("--depth", type=int, choices=range(1, MAX_DEPTH + 1), default=1)
     map_parser.add_argument("--breadth", type=int, choices=range(1, MAX_BREADTH + 1), default=None)
     map_parser.add_argument("--kinds", default=None, help="Comma-separated node kinds to keep")
-    map_parser.add_argument("--max-nodes", type=int, default=DEFAULT_MAX_NODES)
+    map_parser.add_argument("--max-nodes", type=_max_nodes, default=DEFAULT_MAX_NODES)
 
     sub.add_parser(
         "bench",

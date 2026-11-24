@@ -310,3 +310,72 @@ def test_route_mode_applies_max_nodes_to_the_whole_map() -> None:
 def test_route_mode_is_deterministic() -> None:
     first = map_route(_route_suite(), "esco", ["a", "b", "c"]).to_dict()
     assert first == map_route(_route_suite(), "esco", ["a", "b", "c"]).to_dict()
+
+
+# --- Regressions from the validation pass (2026-11-24) ----------------------
+
+
+def test_unknown_id_is_a_miss_not_a_search() -> None:
+    suite = GraphSuite([_node("esco:skill:real", label="python")], [])
+
+    data = map_from_text(suite, "esco", "esco:skill:missing", depth=1, breadth=2).to_dict()
+
+    assert data["nodes"] == []
+    assert data["warnings"] == ["start_not_found:esco:skill:missing"]
+    assert suite.searches == []
+
+
+def test_a_link_walked_from_both_sides_is_listed_once() -> None:
+    suite = GraphSuite(
+        [_node("py", label="python"), _node("cp", label="computer programming")],
+        [_edge("BROADER_THAN", "py", "cp")],
+    )
+
+    data = map_neighbourhood(suite, "esco", "py", depth=2, breadth=4).to_dict()
+
+    assert len(data["edges"]) == 1  # type: ignore[arg-type]
+
+
+def test_pruned_counts_what_was_really_kept_when_max_nodes_stops_the_walk() -> None:
+    suite = GraphSuite(
+        [_node("start", label="start")] + [_node(f"n{i}", label=f"n{i}") for i in range(5)],
+        [_edge("RELATED_TO", "start", f"n{i}", relation_type="optional") for i in range(5)],
+    )
+
+    result = map_neighbourhood(suite, "esco", "start", depth=1, breadth=5, max_nodes=3)
+
+    assert len(result.nodes) == 3
+    assert result.pruned[-1].kept == 2
+
+
+def test_kinds_filter_ignores_case() -> None:
+    suite = GraphSuite(
+        [_node("py", label="python"), _node("skill", label="scripting")],
+        [_edge("RELATED_TO", "py", "skill", relation_type="optional")],
+    )
+
+    data = map_neighbourhood(suite, "esco", "py", depth=1, breadth=5, kinds={"skill"}).to_dict()
+
+    assert set(_levels(data)) == {"python", "scripting"}
+
+
+def test_link_to_a_neighbour_a_later_sibling_added_is_kept() -> None:
+    # a is expanded before b and spends its breadth on a1, a2; b then adds c.
+    suite = GraphSuite(
+        [_node(i, label=i) for i in ("start", "a", "b", "a1", "a2", "c")],
+        [
+            _edge("RELATED_TO", "start", "a", relation_type="essential"),
+            _edge("RELATED_TO", "start", "b", relation_type="optional"),
+            _edge("RELATED_TO", "a", "a1", relation_type="essential"),
+            _edge("RELATED_TO", "a", "a2", relation_type="essential"),
+            _edge("RELATED_TO", "a", "c", relation_type="optional"),
+            _edge("RELATED_TO", "b", "c", relation_type="essential"),
+        ],
+    )
+
+    data = map_neighbourhood(suite, "esco", "start", depth=2, breadth=2).to_dict()
+
+    links = {frozenset((e["from"], e["to"])) for e in data["edges"]}  # type: ignore[union-attr]
+    assert _levels(data)["c"] == 2
+    assert frozenset(("b", "c")) in links
+    assert frozenset(("a", "c")) in links

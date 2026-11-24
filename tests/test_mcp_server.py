@@ -53,7 +53,7 @@ async def _drive() -> dict[str, Any]:
 
             await call("search", "search_nodes", {"text": "software developer"})
             await call("map", "map_neighbors", {"start": "software developer"})
-            await call("map_route", "map_neighbors", {"start": "", "route_node_ids": [DEV.id]})
+            await call("map_route", "map_neighbors", {"route_node_ids": [DEV.id]})
             await call("map_bad", "map_neighbors", {"start": "x", "suite": "down"})
             await call("miss", "search_nodes", {"text": "stonemason"})
             await call("neighbors", "get_neighbors", {"node_id": DEV.id})

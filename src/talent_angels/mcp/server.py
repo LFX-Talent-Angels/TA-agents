@@ -455,7 +455,9 @@ what to learn first. {_ID_DOC}""",
     )
     def map_neighbors(
         ctx: ToolContext,
-        start: Annotated[str, Field(description="Node ID from `search_nodes`, or a name.")],
+        start: Annotated[
+            str, Field(description="Node ID from `search_nodes`, or a name. Ignored in route mode.")
+        ] = "",
         depth: Annotated[
             int, Field(ge=1, le=MAX_DEPTH, description="Levels to repeat the hop.")
         ] = 1,

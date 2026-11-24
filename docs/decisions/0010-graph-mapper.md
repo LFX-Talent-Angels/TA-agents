@@ -36,9 +36,11 @@ node. Repeating it is mechanical, but "which N neighbors?" needs a fixed rule.
    is the Evaluator's job.
 6. **No LLM.** Same input, same bytes. Everything cut is reported per node
    (`considered`/`kept`) and `max_nodes` hits are a warning, never silent.
-7. Expectations per suite: ESCO best; SFIA gives levels 1-7; JobTech works
-   (Swedish labels); O*NET weak (the same 35 skills appear everywhere); BLS has
-   no skills, so only job links.
+7. Expectations per suite: ESCO best; SFIA gives the skill's own levels (2-6
+   for Programming/software development); JobTech works (Swedish labels); O*NET
+   weak (the same 35 skills appear everywhere); BLS lists only broad skills on
+   its jobs (Adaptability, Detail oriented, ...), so its maps say little about
+   what to learn.
 
 ## Consequences
 

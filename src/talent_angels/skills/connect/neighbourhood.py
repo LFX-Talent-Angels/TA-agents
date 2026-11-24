@@ -220,7 +220,7 @@ def map_neighbourhood(
 ) -> Neighbourhood:
     """Walk ``depth`` levels from ``start_id``, keeping the top ``breadth`` per node."""
     _check_limits(depth, breadth)
-    allowed = frozenset(kinds) if kinds is not None else None
+    allowed = frozenset(k.casefold() for k in kinds) if kinds is not None else None
 
     result = Neighbourhood(suite=suite_name, start_id=start_id, depth=depth, breadth=breadth)
     first = suite.get_neighbors(start_id)
@@ -233,35 +233,45 @@ def map_neighbourhood(
     result.nodes.append(mapped[start_id])
     seen_edges: set[tuple[str, str, str]] = set()
     frontier: list[tuple[str, NeighborResult]] = [(start_id, first)]
+    expanded: list[tuple[str, list[tuple[str, _Candidate]]]] = []
+
+    def finish() -> Neighbourhood:
+        # Links between mapped nodes (a neighbor a sibling added later, too) are
+        # kept as edges, never as extra nodes.
+        for node_id, ranked in expanded:
+            for other_id, cand in ranked:
+                if other_id in mapped and other_id != node_id:
+                    _add_edge(result, seen_edges, node_id, other_id, cand, suite_name)
+        return result
 
     for level in range(1, depth + 1):
         next_frontier: list[str] = []
         for node_id, raw in frontier:
             ranked = sorted(_candidates(raw, node_id).items(), key=lambda kv: kv[1].key)
-            # Links to nodes already mapped are kept as edges, not as new nodes.
-            for other_id, cand in ranked:
-                if other_id in mapped and other_id != node_id:
-                    _add_edge(result, seen_edges, node_id, other_id, cand, suite_name)
+            expanded.append((node_id, ranked))
             fresh = [
                 (other_id, cand)
                 for other_id, cand in ranked
-                if other_id not in mapped and (allowed is None or cand.node.kind in allowed)
+                if other_id not in mapped
+                and (allowed is None or cand.node.kind.casefold() in allowed)
             ]
-            keep = fresh[:breadth]
-            result.pruned.append(Pruned(node_id, considered=len(fresh), kept=len(keep)))
-            for other_id, cand in keep:
+            kept = 0
+            for other_id, cand in fresh[:breadth]:
                 if len(result.nodes) >= max_nodes:
+                    result.pruned.append(Pruned(node_id, considered=len(fresh), kept=kept))
                     result.warnings.append(f"max_nodes:{max_nodes}")
-                    return result
+                    return finish()
                 mapped[other_id] = MapNode(_node_ref(cand.node, suite_name), level)
                 result.nodes.append(mapped[other_id])
                 _add_edge(result, seen_edges, node_id, other_id, cand, suite_name)
+                kept += 1
                 if cand.node.kind not in HUB_KINDS:
                     next_frontier.append(other_id)
+            result.pruned.append(Pruned(node_id, considered=len(fresh), kept=kept))
         if not next_frontier:
             break
         frontier = [(nid, suite.get_neighbors(nid)) for nid in next_frontier]
-    return result
+    return finish()
 
 
 class MapperSuite(MapperNeighbors, SearchableSuite, Protocol):
@@ -286,12 +296,15 @@ def map_from_text(
             suite, suite_name, start, depth=depth, breadth=breadth, kinds=kinds, max_nodes=max_nodes
         )
 
+    empty = Neighbourhood(suite=suite_name, start_id="", depth=depth, breadth=breadth)
     if text.startswith(f"{suite_name}:"):
         by_id = walk(text)
         if by_id.nodes:
             return by_id
+        # An ID that does not exist is a miss; searching its text would guess.
+        empty.warnings.append(f"start_not_found:{text}")
+        return empty
     found = locate(suite, suite_name, text).nodes
-    empty = Neighbourhood(suite=suite_name, start_id="", depth=depth, breadth=breadth)
     if not found:
         empty.warnings.append(f"start_not_found:{text}")
         return empty
@@ -378,8 +391,8 @@ def map_route(
             merged.nodes.append(node)
         merged.warnings += [w for w in walk.warnings if w not in merged.warnings]
         for edge in walk.edges:
-            key = (edge.ref.source_node_id, edge.ref.target_node_id, edge.relation)
-            if key not in seen_edges and {key[0], key[1]} <= seen:
+            key = _edge_key(edge.ref.source_node_id, edge.ref.target_node_id, edge.ref.type)
+            if key not in seen_edges and {key[1], key[2]} <= seen:
                 seen_edges.add(key)
                 merged.edges.append(edge)
         for p in walk.pruned:
@@ -397,11 +410,11 @@ def _add_edge(
     cand: _Candidate,
     suite_name: str,
 ) -> None:
-    key = (from_id, to_id, cand.relation)
+    graph_type = _graph_type(cand.relation)
+    key = _edge_key(from_id, to_id, graph_type)
     if key in seen:
         return
     seen.add(key)
-    graph_type = _graph_type(cand.relation)
     ref = EdgeRef(
         type=graph_type,
         suite=suite_name,
@@ -410,6 +423,12 @@ def _add_edge(
         properties={},
     )
     result.edges.append(MapEdge(ref=ref, relation=cand.relation, strength=cand.strength))
+
+
+def _edge_key(a: str, b: str, graph_type: str) -> tuple[str, str, str]:
+    """One graph link, whichever side the walk reached it from."""
+    low, high = sorted((a, b))
+    return (graph_type, low, high)
 
 
 def _graph_type(relation: str) -> str:

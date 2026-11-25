@@ -362,9 +362,11 @@ def test_importing_litellm_uses_bundled_cost_map_without_network() -> None:
         "httpx.get = _blocked\n"
         "from talent_angels.llm.litellm_client import LiteLLMClient\n"
         "LiteLLMClient(model='openrouter/test-model')\n"
-        "from litellm.litellm_core_utils.get_model_cost_map import _cost_map_source_info\n"
-        "assert _cost_map_source_info.source == 'local'\n"
-        "assert _cost_map_source_info.is_env_forced is True\n"
+        # Public getter: the private `_cost_map_source_info` was renamed in litellm 1.111.
+        "from litellm.litellm_core_utils.get_model_cost_map import get_model_cost_map_source_info\n"
+        "info = get_model_cost_map_source_info()\n"
+        "assert info['source'] == 'local'\n"
+        "assert info['is_env_forced'] is True\n"
         "print('ok')\n"
     )
     completed = subprocess.run(

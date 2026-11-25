@@ -1,0 +1,41 @@
+{
+  "description": "Golden checks for learn-order-v1 (ADR-0013) on the live taxonomies. Figures are O*NET 31.0 / ESCO v1.2.1 values; the ESCO prerequisite is a stated essential-for link.",
+  "policy": "learn-order-v1",
+  "roadmap": [
+    {
+      "name": "O*NET Business Intelligence Analysts to Data Scientists",
+      "suites": ["onet"],
+      "from": "onet:occupation:15-2051.01",
+      "to": "onet:occupation:15-2051.00",
+      "items": [
+        {"label": "Programming", "step": 2, "levels": {"from": 2.5, "to": 3.88}},
+        {"label": "Mathematics", "step": 2, "levels": {"from": 3.88, "to": 5.0}},
+        {"label": "Mathematics", "step": 1, "levels": {"from": 4.67, "to": 5.68}}
+      ],
+      "job_zone": {"from": 4, "to": 4}
+    },
+    {
+      "name": "ESCO data analyst to data scientist",
+      "suites": ["esco"],
+      "from": "data analyst",
+      "to": "data scientist",
+      "step1_reason": "esco:knowledge"
+    }
+  ],
+  "successors": [
+    {
+      "name": "ESCO skill with essential-for links",
+      "suite": "esco",
+      "x": "esco:skill:de03f4fd-c147-4477-a048-7109e5ba2d6f",
+      "label": "marketing principles",
+      "min_stated_children": 1
+    },
+    {
+      "name": "SFIA skill: the levels follow in order",
+      "suite": "sfia",
+      "x": "sfia:skill:PROG",
+      "depth": 3,
+      "children": ["sfia:level:PROG:2", "sfia:level:PROG:3", "sfia:level:PROG:4"]
+    }
+  ]
+}

@@ -38,6 +38,15 @@ connectors they share, routes, orphans, clusters, a verdict per guess and the ga
 only, never a guess), no model call, same bytes for the same matches. Pass its `resolved`
 block back as `nodes` to skip resolution. See `docs/decisions/0012-discovery-map.md`.
 
+`roadmap` (`start`, `target`, optional `suites`, `per_step`) and `successors` (`start`, optional
+`suites`, `depth`, `breadth`, `max_nodes`) return the `learn-order-v1` JSON: what to learn from one
+occupation to another, in four steps, and the tree of what comes after a skill. Each item or edge
+says whether its place is `stated` by a taxonomy (ESCO essential-for, the next SFIA level) or comes
+from the policy; the result prints that meaning. Names resolve as in `map_neighbors` (a clear match
+only; else `ambiguous` with `candidates`), a taxonomy without order data is `no_order_data`, and bad
+input is an `invalid_input:` warning. No model call, same bytes for the same data. See
+`docs/decisions/0013-learning-order-policy.md`.
+
 `warnings` is machine-readable and load-bearing: `not_found`, `ambiguous`,
 `no_neighbors`, `node_not_found`, `no_path`, `endpoint_not_found`,
 `unknown_suite:<name>`, `suite_unavailable:<ErrorType>`,
@@ -86,7 +95,7 @@ Check it with `/mcp` inside Claude Code.
 
 | File | Holds |
 | ---- | ----- |
-| `server.py` | The four contract tools plus `map_neighbors` and `discover_map`, their descriptions, suite lifespan |
+| `server.py` | The four contract tools plus `map_neighbors`, `discover_map`, `roadmap` and `successors`, their descriptions, suite lifespan |
 | `models.py` | Typed payloads returned to the client |
 | `mapping.py` | Suite `ToolResult` → those payloads; nothing interprets |
 | `protocol.py` | The contract surface, structurally — no concrete import |

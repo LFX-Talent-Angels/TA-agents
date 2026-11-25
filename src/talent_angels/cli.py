@@ -4,6 +4,8 @@ python -m talent_angels.cli query "software developer"
 python -m talent_angels.cli locate "software developer" --kind occupation
 python -m talent_angels.cli map "Python" --suite esco --depth 2 --breadth 4
 python -m talent_angels.cli discover items.csv --depth 2 --breadth 4
+python -m talent_angels.cli roadmap "data analyst" "data scientist"
+python -m talent_angels.cli successors "Python (computer programming)" --depth 2
 python -m talent_angels.cli bench
 python -m talent_angels.cli report --last 20
 python -m talent_angels.cli quality
@@ -60,6 +62,8 @@ from talent_angels.skills.connect.neighbourhood import (
     map_route,
 )
 from talent_angels.skills.pathfind.dispatch import pathfind_one
+from talent_angels.skills.roadmap import DEFAULT_MAX_NODES as SUCCESSORS_MAX_NODES
+from talent_angels.skills.roadmap import MAX_PER_STEP, roadmap, successors
 from talent_angels.suites import SuiteRegistry, UnknownSuiteError, default_suite_registry
 
 GOLDEN_LOCATE_PATH = Path(__file__).resolve().parents[2] / "tests" / "evals" / "golden_locate.json"
@@ -195,6 +199,43 @@ def _build_parser() -> argparse.ArgumentParser:
     )
     discover_parser.add_argument("--out", default=None, help="Output folder (default: the input's)")
 
+    roadmap_parser = sub.add_parser(
+        "roadmap",
+        help="Learning order from FROM to TO under learn-order-v1 (no model call).",
+    )
+    roadmap_parser.add_argument("source", metavar="FROM", help="Node ID or name")
+    roadmap_parser.add_argument("target", metavar="TO", help="Node ID or name")
+    roadmap_parser.add_argument(
+        "--suites", default=None, help="Comma-separated taxonomies, e.g. esco,onet (default all)."
+    )
+    roadmap_parser.add_argument(
+        "--per-step",
+        type=int,
+        choices=range(1, MAX_PER_STEP + 1),
+        metavar=f"1..{MAX_PER_STEP}",
+        default=10,
+        help="Items shown per step and taxonomy; the rest is counted as `more`.",
+    )
+
+    successors_parser = sub.add_parser(
+        "successors",
+        help="What comes after a skill, as a tree under learn-order-v1 (no model call).",
+    )
+    successors_parser.add_argument("start", metavar="X", help="Node ID or name")
+    successors_parser.add_argument(
+        "--suites", default=None, help="Comma-separated taxonomies, e.g. esco,sfia (default all)."
+    )
+    successors_parser.add_argument("--depth", type=int, choices=range(1, MAX_DEPTH + 1), default=2)
+    successors_parser.add_argument(
+        "--breadth", type=int, choices=range(1, MAX_BREADTH + 1), default=4
+    )
+    successors_parser.add_argument(
+        "--max-nodes",
+        type=_max_nodes,
+        default=SUCCESSORS_MAX_NODES,
+        help=f"Hard cap on nodes per taxonomy, 1..{DEFAULT_MAX_NODES}.",
+    )
+
     bench_parser = sub.add_parser(
         "bench",
         help="Run the golden Locate set (baseline vs. result-cache); report cost/latency/accuracy.",
@@ -280,6 +321,8 @@ def main(argv: Sequence[str] | None = None, *, registry: SuiteRegistry | None = 
         return _run_map(args, selected_registry)
     if args.command == "discover":
         return _run_discover(args, selected_registry)
+    if args.command in {"roadmap", "successors"}:
+        return _run_order(args, selected_registry)
     if args.command == "bench":
         return _run_bench(selected_registry, suite=getattr(args, "suite", None))
     if args.command == "report":
@@ -403,6 +446,32 @@ def _run_map(args: argparse.Namespace, registry: SuiteRegistry) -> int:
         if any(w.startswith(("ambiguous_start", "start_not_found")) for w in result.warnings)
         else 0
     )
+
+
+def _run_order(args: argparse.Namespace, registry: SuiteRegistry) -> int:
+    suites = args.suites.split(",") if args.suites else None
+    try:
+        data = (
+            roadmap(registry, args.source, args.target, suites=suites, per_step=args.per_step)
+            if args.command == "roadmap"
+            else successors(
+                registry,
+                args.start,
+                suites=suites,
+                depth=args.depth,
+                breadth=args.breadth,
+                max_nodes=args.max_nodes,
+            )
+        )
+    except (ValueError, UnknownSuiteError) as exc:
+        print(f"{args.command}: {exc}", file=sys.stderr)
+        return 2
+    print(json.dumps(data, ensure_ascii=False, indent=2))
+    for name, part in data["suites"].items():
+        if part["status"] == "ambiguous":
+            options = "; ".join(f"{c['label']} = {c['id']}" for c in part["candidates"])
+            print(f"{name}: ambiguous; rerun with an id, e.g. {options}", file=sys.stderr)
+    return 0 if any(p["status"] == "ok" for p in data["suites"].values()) else 2
 
 
 def _run_map_all(

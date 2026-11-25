@@ -24,6 +24,7 @@ __all__ = [
     "DiscoverPayload",
     "MapPayload",
     "NeighborsPayload",
+    "OrderPayload",
     "PathRef",
     "PathsPayload",
     "PolicyRef",
@@ -181,6 +182,19 @@ class DiscoverPayload(BaseModel):
 
     policy: str = "discover-v1"
     meaning: str = "linked in the graph; not a learning order"
+    warnings: list[str] = Field(default_factory=list)
+
+
+class OrderPayload(BaseModel):
+    """roadmap and successors: the ``learn-order-v1`` JSON, as is."""
+
+    model_config = ConfigDict(extra="allow")
+
+    policy: str = "learn-order-v1"
+    meaning: str = (
+        "ordered by learn-order-v1 over official taxonomy data; only items marked "
+        "stated_prerequisite are prerequisites stated by a taxonomy"
+    )
     warnings: list[str] = Field(default_factory=list)
 
 

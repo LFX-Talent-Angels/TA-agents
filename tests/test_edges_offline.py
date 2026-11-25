@@ -425,3 +425,14 @@ def test_cli_bench_stays_structured_when_natural_mode_is_set(
     assert main(["bench"], registry=_registry()) == 0
     json.loads(capsys.readouterr().out)
     assert recorder.calls == []
+
+
+def test_bench_suite_picks_that_suites_golden_set(tmp_path, monkeypatch) -> None:
+    from talent_angels import cli
+
+    monkeypatch.setattr(cli, "GOLDEN_LOCATE_PATH", tmp_path / "golden_locate.json")
+    assert cli._golden_locate_path(None).name == "golden_locate.json"
+    assert cli._golden_locate_path("esco").name == "golden_locate.json"
+    assert cli._golden_locate_path("bls").name == "golden_locate_bls.json"
+    # No golden set for that suite: a message and exit 2, no traceback.
+    assert main(["bench", "--suite", "nosuch"], registry=_registry()) == 2

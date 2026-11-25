@@ -195,9 +195,12 @@ def _build_parser() -> argparse.ArgumentParser:
     )
     discover_parser.add_argument("--out", default=None, help="Output folder (default: the input's)")
 
-    sub.add_parser(
+    bench_parser = sub.add_parser(
         "bench",
         help="Run the golden Locate set (baseline vs. result-cache); report cost/latency/accuracy.",
+    )
+    bench_parser.add_argument(
+        "--suite", default=None, help="Taxonomy to measure with its own golden set (default esco)."
     )
 
     report_parser = sub.add_parser(
@@ -278,7 +281,7 @@ def main(argv: Sequence[str] | None = None, *, registry: SuiteRegistry | None = 
     if args.command == "discover":
         return _run_discover(args, selected_registry)
     if args.command == "bench":
-        return _run_bench(selected_registry)
+        return _run_bench(selected_registry, suite=getattr(args, "suite", None))
     if args.command == "report":
         print(render_recent_report(path=Path(args.path) if args.path else None, last=args.last))
         return 0
@@ -497,10 +500,21 @@ def _run_map_route(
     return 0
 
 
-def _run_bench(registry: SuiteRegistry) -> int:
-    cases = json.loads(GOLDEN_LOCATE_PATH.read_text(encoding="utf-8"))["cases"]
+def _golden_locate_path(suite: str | None) -> Path:
+    """esco uses golden_locate.json; every other suite its golden_locate_<suite>.json."""
+    if suite in (None, "esco"):
+        return GOLDEN_LOCATE_PATH
+    return GOLDEN_LOCATE_PATH.with_name(f"golden_locate_{suite}.json")
 
-    with registry.open() as runtime:
+
+def _run_bench(registry: SuiteRegistry, suite: str | None = None) -> int:
+    golden = _golden_locate_path(suite)
+    if not golden.exists():
+        print(f"no golden Locate set for suite {suite!r}: {golden.name}", file=sys.stderr)
+        return 2
+    cases = json.loads(golden.read_text(encoding="utf-8"))["cases"]
+
+    with registry.open(suite) as runtime:
         llm_client = get_llm_client()
 
         baseline = _run_pass(runtime.suite, runtime.name, llm_client, cases, cache=None)

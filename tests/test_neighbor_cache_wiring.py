@@ -302,7 +302,7 @@ def test_the_bench_and_quality_commands_bypass_the_cache(
         return suite_registry_stub()
 
     monkeypatch.setattr(cli, "default_suite_registry", spy)
-    monkeypatch.setattr(cli, "_run_bench", lambda registry: 0)
+    monkeypatch.setattr(cli, "_run_bench", lambda registry, suite=None: 0)
     monkeypatch.setattr(cli, "_run_quality", lambda args, registry: 0)
 
     assert cli.main([command]) == 0

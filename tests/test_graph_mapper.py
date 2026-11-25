@@ -379,3 +379,34 @@ def test_link_to_a_neighbour_a_later_sibling_added_is_kept() -> None:
     assert _levels(data)["c"] == 2
     assert frozenset(("b", "c")) in links
     assert frozenset(("a", "c")) in links
+
+
+def _hub_and_niche_suite() -> GraphSuite:
+    ids = ["generic", "niche", "mid"]
+    nodes = [_node("job", kind="Occupation", label="job")] + [_node(i, label=i) for i in ids]
+    nodes += [_node(f"x{k}", label=f"x{k}") for k in range(6)]
+    edges = [_edge("HAS_SKILL", "job", i, relation_type="essential") for i in ids]
+    edges += [_edge("HAS_SKILL", f"x{k}", "generic") for k in range(6)]  # generic: degree 7
+    edges += [_edge("HAS_SKILL", "x0", "mid")]  # mid: degree 2
+    return GraphSuite(nodes, edges)
+
+
+def test_map_rank_prefers_a_specific_neighbour_to_a_generic_one() -> None:
+    # Label order alone would pick "generic" first.
+    result = map_neighbourhood(_hub_and_niche_suite(), "esco", "job", depth=1, breadth=2)
+
+    assert set(_levels(result.to_dict())) == {"job", "niche", "mid"}
+    assert result.to_dict()["policy"] == "map-rank-v1"
+
+
+def test_rank_budget_warns_and_stays_deterministic(monkeypatch: pytest.MonkeyPatch) -> None:
+    from talent_angels.skills.connect import neighbourhood
+    from talent_angels.skills.evaluate.policy import MapRankPolicy
+
+    monkeypatch.setattr(neighbourhood, "MAP_RANK_V1", MapRankPolicy(degree_budget=1))
+
+    first = map_neighbourhood(_hub_and_niche_suite(), "esco", "job", depth=1, breadth=2)
+    again = map_neighbourhood(_hub_and_niche_suite(), "esco", "job", depth=1, breadth=2)
+
+    assert "rank_budget:1" in first.warnings
+    assert first.to_dict() == again.to_dict()

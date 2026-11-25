@@ -11,6 +11,7 @@ from __future__ import annotations
 from talent_angels.contracts import AgentResult, EdgeRef, NodeRef, Route
 from talent_angels.runlog import ToolCall
 from talent_angels.skills.connect import ConnectRequest, connect
+from talent_angels.skills.evaluate import ROUTE_RANK_V1, rank_routes
 from talent_angels.skills.locate import locate
 from talent_angels.skills.locate.rank import _near_pref_label, group_and_sort_locate
 from talent_angels.skills.pathfind.gap import compute_gap
@@ -166,4 +167,18 @@ def pathfind_one(
         warnings=warnings,
         routes=route_models,
     )
+    if route_models:
+        # Reorder only; no route is changed. Scores ride in a warning because
+        # the contract (code-owner path) has no field for them.
+        ranked = rank_routes(measured, result)
+        result = result.model_copy(
+            update={
+                "routes": [r.route for r in ranked],
+                "warnings": [
+                    *result.warnings,
+                    f"ranked:{ROUTE_RANK_V1.name}",
+                    "route_scores:" + ",".join(f"{r.score:.4f}" for r in ranked),
+                ],
+            }
+        )
     return result, measured.tool_calls

@@ -15,6 +15,8 @@ from typing import Protocol
 
 from talent_angels.contracts import EdgeRef, NodeRef
 from talent_angels.skills.connect.reveal import NeighborResult, TaxonomyEdge, TaxonomyNode
+from talent_angels.skills.evaluate.neighbours import rerank_neighbours
+from talent_angels.skills.evaluate.policy import MAP_RANK_V1
 from talent_angels.skills.locate import SearchableSuite, locate
 
 MAX_DEPTH = 4
@@ -102,6 +104,7 @@ class Neighbourhood:
         """Plain JSON-ready form; field order and list order are fixed."""
         return {
             "suite": self.suite,
+            "policy": MAP_RANK_V1.name,
             "start": {"id": self.start_id, "label": self.start_label},
             "depth": self.depth,
             "breadth": self.breadth,
@@ -223,7 +226,25 @@ def map_neighbourhood(
     allowed = frozenset(k.casefold() for k in kinds) if kinds is not None else None
 
     result = Neighbourhood(suite=suite_name, start_id=start_id, depth=depth, breadth=breadth)
-    first = suite.get_neighbors(start_id)
+    fetched: dict[str, NeighborResult] = {}  # shared by degree lookups and expansion
+    degree_lookups = 0
+
+    def neighbors(node_id: str) -> NeighborResult:
+        if node_id not in fetched:
+            fetched[node_id] = suite.get_neighbors(node_id)
+        return fetched[node_id]
+
+    def degree_of(node_id: str) -> int | None:
+        nonlocal degree_lookups
+        if node_id not in fetched:
+            if degree_lookups >= MAP_RANK_V1.degree_budget:
+                if f"rank_budget:{MAP_RANK_V1.degree_budget}" not in result.warnings:
+                    result.warnings.append(f"rank_budget:{MAP_RANK_V1.degree_budget}")
+                return None
+            degree_lookups += 1
+        return len(neighbors(node_id).edges)
+
+    first = neighbors(start_id)
     centre = next((n for n in first.nodes if n.id == start_id), None)
     if centre is None:
         result.warnings.append("start_not_found")
@@ -256,7 +277,16 @@ def map_neighbourhood(
                 and (allowed is None or cand.node.kind.casefold() in allowed)
             ]
             kept = 0
-            for other_id, cand in fresh[:breadth]:
+            by_id = dict(fresh)
+            hubs = frozenset(i for i, c in fresh if c.node.kind in HUB_KINDS)
+
+            def degree(i: str, hubs: frozenset[str] = hubs) -> int | None:
+                # Hubs are never expanded, so their degree is not looked up.
+                return None if i in hubs else degree_of(i)
+
+            order = rerank_neighbours([(i, c.key) for i, c in fresh], breadth, degree)
+            for other_id in order:
+                cand = by_id[other_id]
                 if len(result.nodes) >= max_nodes:
                     result.pruned.append(Pruned(node_id, considered=len(fresh), kept=kept))
                     result.warnings.append(f"max_nodes:{max_nodes}")
@@ -270,7 +300,7 @@ def map_neighbourhood(
             result.pruned.append(Pruned(node_id, considered=len(fresh), kept=kept))
         if not next_frontier:
             break
-        frontier = [(nid, suite.get_neighbors(nid)) for nid in next_frontier]
+        frontier = [(nid, neighbors(nid)) for nid in next_frontier]
     return finish()
 
 
@@ -332,6 +362,7 @@ class RouteMap:
         stops = {node_id: i for i, node_id in enumerate(self.route)}
         return {
             "suite": self.suite,
+            "policy": MAP_RANK_V1.name,
             "route": list(self.route),
             "depth": self.depth,
             "breadth": self.breadth,

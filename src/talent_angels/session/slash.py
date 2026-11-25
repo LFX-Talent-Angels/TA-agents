@@ -207,6 +207,8 @@ def _successors(argument: str | None, registry: SuiteRegistry) -> list[str]:
     path = _write_json(_out("successors", argument), "successors.json", data)
     lines = [f'What comes after "{start}" ({data["policy"]}):']
     for name, part in data["suites"].items():
+        if part.get("status") == "ambiguous" and part.get("candidates"):
+            continue  # listed once below, with the ids to rerun with
         labels = [n["label"] for n in part.get("nodes", [])[1:]]
         lines.append(f"{name}: {part['status']}" + (f", {_shown(labels)}" if labels else ""))
     return [*lines, *_pick_hints(data["suites"]), f"json: {path}"]

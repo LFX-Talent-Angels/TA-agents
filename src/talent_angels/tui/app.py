@@ -155,6 +155,11 @@ def main(argv: Sequence[str] | None = None, *, registry: SuiteRegistry | None = 
 
         return tag_main(args[1:], registry=registry)
 
+    if args[:1] == ["map"]:
+        from talent_angels.cli import main as cli_main
+
+        return cli_main(args, registry=registry)
+
     load_local_dotenv()
     selected = registry or default_suite_registry()
     console = Console()

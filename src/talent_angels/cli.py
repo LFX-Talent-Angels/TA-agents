@@ -2,6 +2,7 @@
 
 python -m talent_angels.cli query "software developer"
 python -m talent_angels.cli locate "software developer" --kind occupation
+python -m talent_angels.cli map "Python" --suite esco --depth 2 --breadth 4
 python -m talent_angels.cli bench
 python -m talent_angels.cli report --last 20
 python -m talent_angels.cli quality
@@ -41,6 +42,15 @@ from talent_angels.session.copy import (
     HELP_TEXT,
 )
 from talent_angels.session.router import route_line
+from talent_angels.skills.connect.neighbourhood import (
+    DEFAULT_MAX_NODES,
+    MAX_BREADTH,
+    MAX_DEPTH,
+    RouteMap,
+    map_from_text,
+    map_route,
+)
+from talent_angels.skills.pathfind.dispatch import pathfind_one
 from talent_angels.suites import SuiteRegistry, UnknownSuiteError, default_suite_registry
 
 GOLDEN_LOCATE_PATH = Path(__file__).resolve().parents[2] / "tests" / "evals" / "golden_locate.json"
@@ -69,6 +79,13 @@ def _cli_non_map_reply(kind: str) -> tuple[str, str] | None:
     return None
 
 
+def _max_nodes(value: str) -> int:
+    number = int(value)
+    if not 1 <= number <= DEFAULT_MAX_NODES:
+        raise argparse.ArgumentTypeError(f"must be 1..{DEFAULT_MAX_NODES}, got {number}")
+    return number
+
+
 def _build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(prog="talent-angels")
     sub = parser.add_subparsers(dest="command", required=True)
@@ -94,6 +111,22 @@ def _build_parser() -> argparse.ArgumentParser:
     connect_parser.add_argument("question")
     connect_parser.add_argument("--kind", default=None)
     connect_parser.add_argument("--suite", default=None, help=suite_help)
+
+    map_parser = sub.add_parser(
+        "map", help="Graph-Mapper: the neighbourhood of a skill as JSON (no model call)."
+    )
+    map_parser.add_argument("start", nargs="?", help="Node ID or name")
+    map_parser.add_argument(
+        "--route",
+        nargs=2,
+        metavar=("FROM", "TO"),
+        help="Map around the first Pathfind route between two names instead of one start.",
+    )
+    map_parser.add_argument("--suite", default=None, help=suite_help)
+    map_parser.add_argument("--depth", type=int, choices=range(1, MAX_DEPTH + 1), default=1)
+    map_parser.add_argument("--breadth", type=int, choices=range(1, MAX_BREADTH + 1), default=None)
+    map_parser.add_argument("--kinds", default=None, help="Comma-separated node kinds to keep")
+    map_parser.add_argument("--max-nodes", type=_max_nodes, default=DEFAULT_MAX_NODES)
 
     sub.add_parser(
         "bench",
@@ -173,6 +206,8 @@ def main(argv: Sequence[str] | None = None, *, registry: SuiteRegistry | None = 
     else:
         selected_registry = default_suite_registry()
 
+    if args.command == "map":
+        return _run_map(args, selected_registry)
     if args.command == "bench":
         return _run_bench(selected_registry)
     if args.command == "report":
@@ -259,6 +294,59 @@ def main(argv: Sequence[str] | None = None, *, registry: SuiteRegistry | None = 
             indent=2,
         )
     )
+    return 0
+
+
+def _run_map(args: argparse.Namespace, registry: SuiteRegistry) -> int:
+    if (args.start is None) == (args.route is None):
+        print("map: give either START or --route FROM TO", file=sys.stderr)
+        return 2
+    kinds = args.kinds.split(",") if args.kinds else None
+    breadth = args.breadth or (3 if args.route else 4)
+    try:
+        name = registry.resolve(args.suite) if args.suite else registry.default
+        with registry.open(name) as runtime:
+            if args.route:
+                return _run_map_route(args, runtime.suite, name, kinds, breadth)
+            result = map_from_text(
+                runtime.suite,  # type: ignore[arg-type]
+                name,
+                args.start,
+                depth=args.depth,
+                breadth=breadth,
+                kinds=kinds,
+                max_nodes=args.max_nodes,
+            )
+    except UnknownSuiteError as exc:
+        print(str(exc), file=sys.stderr)
+        return 2
+    print(json.dumps(result.to_dict(), ensure_ascii=False, indent=2))
+    return (
+        2
+        if any(w.startswith(("ambiguous_start", "start_not_found")) for w in result.warnings)
+        else 0
+    )
+
+
+def _run_map_route(
+    args: argparse.Namespace, suite: Any, name: str, kinds: list[str] | None, breadth: int
+) -> int:
+    found, _calls = pathfind_one(suite, name, *args.route)
+    if not found.routes:
+        empty = RouteMap(name, [], args.depth, breadth, warnings=["no_route", *found.warnings])
+        print(json.dumps(empty.to_dict(), ensure_ascii=False, indent=2))
+        return 2
+    route = map_route(
+        suite,
+        name,
+        found.routes[0].node_ids,
+        depth=args.depth,
+        breadth=breadth,
+        kinds=kinds,
+        max_nodes=args.max_nodes,
+    )
+    route.warnings += [w for w in found.warnings if w not in route.warnings]
+    print(json.dumps(route.to_dict(), ensure_ascii=False, indent=2))
     return 0
 
 

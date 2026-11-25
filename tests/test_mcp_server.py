@@ -52,6 +52,9 @@ async def _drive() -> dict[str, Any]:
                 collected[key] = result.structured_content
 
             await call("search", "search_nodes", {"text": "software developer"})
+            await call("map", "map_neighbors", {"start": "software developer"})
+            await call("map_route", "map_neighbors", {"route_node_ids": [DEV.id]})
+            await call("map_bad", "map_neighbors", {"start": "x", "suite": "down"})
             await call("miss", "search_nodes", {"text": "stonemason"})
             await call("neighbors", "get_neighbors", {"node_id": DEV.id})
             await call("neighbors_missing", "get_neighbors", {"node_id": "fake:occupation:nope"})
@@ -86,13 +89,14 @@ def served() -> dict[str, Any]:
     return anyio.run(_drive)
 
 
-def test_the_server_exposes_the_four_contract_tools(served: dict[str, Any]) -> None:
+def test_the_server_exposes_the_contract_tools_and_map_neighbors(served: dict[str, Any]) -> None:
     assert served["server_name"] == SERVER_NAME
     assert set(served["tools"]) == {
         "search_nodes",
         "get_neighbors",
         "enumerate_paths",
         "score_paths",
+        "map_neighbors",
     }
 
 
@@ -121,6 +125,15 @@ def test_every_tool_declares_its_inputs_and_a_structured_output(
         "get_neighbors": {"node_id", "rel_types", "suite", "limit"},
         "enumerate_paths": {"from_id", "to_id", "max_depth", "max_paths", "suite"},
         "score_paths": {"paths", "policy_name", "policy_version", "suite"},
+        "map_neighbors": {
+            "start",
+            "depth",
+            "breadth",
+            "kinds",
+            "suite",
+            "max_nodes",
+            "route_node_ids",
+        },
     }
     for name, arguments in expected.items():
         tool = served["tools"][name]
@@ -149,6 +162,18 @@ def test_neighbors_return_typed_edges_with_their_relation_type(
     assert edge["type"] == "HAS_SKILL"
     assert edge["target_node_id"] == PYTHON.id
     assert edge["properties"] == {"relation_type": "essential"}
+
+
+def test_map_neighbors_returns_a_typed_map(served: dict[str, Any]) -> None:
+    payload = served["map"]
+
+    assert payload["start"]["id"] == DEV.id
+    assert [n["level"] for n in payload["nodes"]][:2] == [0, 1]
+    assert payload["edges"][0]["relation"] == "needs"
+    assert payload["warnings"] == []
+    assert served["map_route"]["route"] == [DEV.id]
+    assert served["map_route"]["nodes"][0]["on_route"] is True
+    assert served["map_bad"]["warnings"] == ["suite_unavailable:ConnectionRefusedError"]
 
 
 def test_paths_carry_routes_and_pruning_counts(served: dict[str, Any]) -> None:

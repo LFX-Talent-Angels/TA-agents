@@ -19,6 +19,7 @@ from talent_angels.contracts import EdgeRef, EvidencePointer, NodeRef
 
 __all__ = [
     "CandidateRef",
+    "MapPayload",
     "NeighborsPayload",
     "PathRef",
     "PathsPayload",
@@ -95,6 +96,56 @@ class _Payload(BaseModel):
             "not_found, ambiguous, no_neighbors, node_not_found, no_path, "
             "suite_unavailable:<error>, capability_unavailable:<tool>, ..."
         ),
+    )
+
+
+class MapNodeRef(BaseModel):
+    id: str
+    label: str
+    kind: str
+    level: int = Field(..., description="Hops from the start; 0 is the start itself.")
+    on_route: bool | None = Field(default=None, description="Route mode only.")
+    stop: int | None = Field(default=None, description="Route mode: index along the route.")
+
+
+class MapEdgeRef(BaseModel):
+    from_id: str
+    to_id: str
+    relation: str = Field(..., description="parent | narrower | related | level | needs | ...")
+    graph_edge: str
+    strength: str | None = None
+
+
+class MapPrunedRef(BaseModel):
+    node: str
+    considered: int
+    kept: int
+
+
+class MapCandidateRef(BaseModel):
+    id: str
+    label: str
+    kind: str
+
+
+class MapStartRef(BaseModel):
+    id: str
+    label: str
+
+
+class MapPayload(_Payload):
+    """map_neighbors: a deterministic multi-hop neighbourhood of one node."""
+
+    start: MapStartRef | None = Field(default=None, description="Resolved start: id, label.")
+    route: list[str] = Field(default_factory=list, description="Route mode: stop IDs in order.")
+    depth: int
+    breadth: int
+    meaning: str = "linked in the graph; not a learning order"
+    nodes: list[MapNodeRef] = Field(default_factory=list)
+    edges: list[MapEdgeRef] = Field(default_factory=list)
+    pruned: list[MapPrunedRef] = Field(default_factory=list)
+    candidates: list[MapCandidateRef] = Field(
+        default_factory=list, description="Pick list, only with `ambiguous_start`."
     )
 
 

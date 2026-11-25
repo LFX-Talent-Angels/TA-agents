@@ -72,7 +72,7 @@ Check it with `/mcp` inside Claude Code.
 
 | File | Holds |
 | ---- | ----- |
-| `server.py` | The four tools, their descriptions, suite lifespan |
+| `server.py` | The four contract tools plus `map_neighbors`, their descriptions, suite lifespan |
 | `models.py` | Typed payloads returned to the client |
 | `mapping.py` | Suite `ToolResult` → those payloads; nothing interprets |
 | `protocol.py` | The contract surface, structurally — no concrete import |

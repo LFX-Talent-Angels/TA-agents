@@ -63,6 +63,16 @@ def turn_cancelled() -> bool:
     return event is not None and event.is_set()
 
 
+class TurnCancelled(BaseException):  # noqa: N818 - like CancelledError: no `except Exception` may eat it
+    """A long batch (``/discover``, ``/tag``) saw the reader's Esc at a loop boundary."""
+
+
+def check_cancelled() -> None:
+    """Raise ``TurnCancelled`` when Esc was pressed; call it between items, never inside one."""
+    if turn_cancelled():
+        raise TurnCancelled
+
+
 def seconds_left() -> float | None:
     """Time left in this turn, or None outside a turn."""
     deadline = _DEADLINE.get()

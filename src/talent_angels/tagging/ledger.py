@@ -10,6 +10,7 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
+from talent_angels.llm.protocol import check_cancelled
 from talent_angels.tagging.models import TagRecord
 from talent_angels.tagging.rewrite import Rewrite
 
@@ -90,6 +91,7 @@ class Ledger:
         return self._by_unit_suite.get((unit_key, suite))
 
     def append(self, record: TagRecord) -> None:
+        check_cancelled()  # Esc: no append after it (every ledger write checks first)
         self.root.mkdir(parents=True, exist_ok=True)
         with self.ledger_path.open("a", encoding="utf-8") as handle:
             handle.write(record.model_dump_json())
@@ -126,6 +128,7 @@ class Ledger:
         return self._rewrites.get(key)
 
     def rewrite_append(self, key: str, rewrite: Rewrite) -> None:
+        check_cancelled()
         self.root.mkdir(parents=True, exist_ok=True)
         with self.rewrites_path.open("a", encoding="utf-8") as handle:
             handle.write(json.dumps({"key": key, "rewrite": rewrite.model_dump()}))
@@ -158,6 +161,7 @@ class Ledger:
 
     def review_append(self, record: dict[str, object]) -> None:
         """Append one `reviews.jsonl` line; marks `record["review_key"]` as applied."""
+        check_cancelled()
         self.root.mkdir(parents=True, exist_ok=True)
         with self.reviews_path.open("a", encoding="utf-8") as handle:
             handle.write(json.dumps(record))

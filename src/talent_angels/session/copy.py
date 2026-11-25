@@ -35,10 +35,11 @@ COMMANDS_BLOCK = (
     "- `/quit` or `/exit` — leave\n"
     "\n"
     "`/map`, `/discover`, `/roadmap`, `/successors` and `/tag` print a short summary and "
-    "write the full result as files under your TA home, `outputs/`; they never call the model "
-    "(except `/tag` without `--no-llm`).\n\n"
-    "Press `esc` while a question is running to stop waiting for it."
+    "write the full result as files under your TA home, `outputs/` (JSON, and a web page "
+    "to open in a browser); they never call the model (except `/tag` without `--no-llm`).\n\n"
+    "Press `esc` while a question or a long command is running to stop it."
 )
+STOPPED = "Stopped. Nothing was written."
 
 HELP_TEXT = (
     f"{HELP_INTRO}\n\n{COMMANDS_BLOCK}\n\n"

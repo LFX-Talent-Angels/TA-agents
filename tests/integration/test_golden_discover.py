@@ -6,6 +6,7 @@ Skipped when Neo4j isn't reachable. Values: tests/evals/golden_discover.json.
 from __future__ import annotations
 
 import json
+import re
 from pathlib import Path
 
 import pytest
@@ -65,7 +66,8 @@ def test_the_three_files_exist_and_the_html_is_static(runs: dict[str, Path]) -> 
         "discovery.html",
     }
     html = (folder / "discovery.html").read_text(encoding="utf-8")
-    assert "<script" not in html and "src=" not in html and "href=" not in html
+    assert "<script" not in html and "src=" not in html
+    assert all(h.startswith("http") for h in re.findall(r'href="([^"]*)"', html))  # cites only
 
 
 def test_structure_and_never_guessed_items(runs: dict[str, Path]) -> None:
@@ -96,8 +98,11 @@ def test_every_node_is_cited_and_every_edge_and_link_stays_inside_the_map(
     assert all(e["from_id"] in ids and e["to_id"] in ids for e in data["edges"])
     assert all(x["a_id"] in ids and x["b_id"] in ids for x in data["links"])
     assert all(c["id"] in ids and c["item_count"] >= 2 for c in data["connectors"])
-    order = [(c["broad"], -c["item_count"]) for c in data["connectors"]]
-    assert order == sorted(order)  # specific before broad, then most items first
+    order = [(c["tool_only"], c["broad"], -c["item_count"]) for c in data["connectors"]]
+    assert order == sorted(order)  # specific, then broad, then tool-only; most items first
+    flags = {c["label"]: c["tool_only"] for c in data["connectors"]}
+    assert all(flags[label] for label in GOLDEN["expect_tool_only"] if label in flags)
+    assert not any(flags[label] for label in GOLDEN["expect_not_tool_only"] if label in flags)
     assert all(g["verdict"] != "confirmed" or data["links"] for g in data["guesses"])
     assert all(r["edges"] >= 1 for r in data["routes"])
     assert {s["status"] for s in data["suites"].values()} == {"ok"}

@@ -8,9 +8,7 @@ Syntax: a route is ``A | B`` (``/map --route A | B``, ``/roadmap A | B``); flags
 from __future__ import annotations
 
 import argparse
-import contextlib
 import hashlib
-import io
 import json
 import logging
 import re
@@ -19,7 +17,9 @@ from collections.abc import Callable
 from pathlib import Path
 from typing import Any, NoReturn
 
+from talent_angels.llm.protocol import check_cancelled
 from talent_angels.memory.paths import outputs_dir
+from talent_angels.report.pages import map_page, plain, roadmap_page, successors_page
 from talent_angels.session.commands import UnknownCommand, parse_command
 from talent_angels.skills.connect.discover import (
     DEFAULT_DISCOVER_MAX_NODES,
@@ -51,6 +51,13 @@ class _Bad(Exception):
 class _Parser(argparse.ArgumentParser):
     def error(self, message: str) -> NoReturn:
         raise _Bad(message)
+
+
+class _TagParser(_Parser):
+    """The tag runner's parser with no ``-h``: help would print on the terminal and exit."""
+
+    def __init__(self, prog: str) -> None:
+        super().__init__(prog=prog, add_help=False)
 
 
 def _csv(value: str) -> list[str]:
@@ -95,11 +102,15 @@ def _out(command: str, argument: str | None, label: str | None = None) -> Path:
     return outputs_dir() / f"{command}-{slug}-{hashlib.sha1(key.encode()).hexdigest()[:8]}"
 
 
-def _write_json(folder: Path, name: str, data: dict[str, Any]) -> Path:
+def _save(folder: Path, stem: str, data: dict[str, Any], page: str) -> tuple[Path, Path]:
+    """Write ``<stem>.json`` and ``<stem>.html``: after one last look at Esc, never before it."""
+    check_cancelled()  # Esc while the result was being computed: write nothing
     folder.mkdir(parents=True, exist_ok=True)
-    path = folder / name
+    path = folder / f"{stem}.json"
     path.write_text(json.dumps(data, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
-    return path
+    html = folder / f"{stem}.html"
+    html.write_text(page, encoding="utf-8")
+    return path, html
 
 
 def _names(words: list[str], what: str, *, pair: bool) -> list[str]:
@@ -141,17 +152,18 @@ def _map(argument: str | None, registry: SuiteRegistry) -> list[str]:
         map_all_route(registry, *names, **walk) if a.route else map_all(registry, *names, **walk)
     )
     data = found.to_dict()
-    path = _write_json(_out("map", argument), "map.json", data)
+    path, html = _save(_out("map", argument), "map", data, map_page(data))
     s = data["summary"]
     lines = [
         f'Map for "{data["query"]}": {s["nodes"]} nodes, {s["edges"]} edges in '  # type: ignore[index]
         f"{s['suites_mapped']} taxonomies, {s['crosswalk_links']} crosswalk links.",  # type: ignore[index]
-        "Per taxonomy: " + ", ".join(f"{n} {p['status']}" for n, p in data["suites"].items()),  # type: ignore[attr-defined]
+        "Per taxonomy: "
+        + ", ".join(f"{n} {plain(p['status'], n)}" for n, p in data["suites"].items()),  # type: ignore[attr-defined]
     ]
     nodes = [str(n["label"]) for n in data["nodes"]]  # type: ignore[attr-defined]
     if nodes:
         lines.append("Top: " + _shown(nodes))
-    return [*lines, *_pick_hints(data["suites"])] + [f"json: {path}"]  # type: ignore[arg-type]
+    return [*lines, *_pick_hints(data["suites"])] + [f"json: {path}", f"html: {html}"]  # type: ignore[arg-type]
 
 
 def _discover(argument: str | None, registry: SuiteRegistry) -> list[str]:
@@ -172,6 +184,7 @@ def _discover(argument: str | None, registry: SuiteRegistry) -> list[str]:
         registry, items, suites=a.suites, depth=a.depth, breadth=a.breadth, kinds=a.kinds,
         max_nodes=a.max_nodes, recorded=recorded, notes=notes,
     )  # fmt: skip
+    check_cancelled()  # Esc during the last step still writes nothing
     paths = write_outputs(data, _out("discover", argument, Path(a.file).stem))
     down = [f"{n}: {st['status']}" for n, st in data["suites"].items() if st["status"] != "ok"]
     return [*discover_summary(data).split("\n"), *down, *(f"{k}: {v}" for k, v in paths.items())]
@@ -185,15 +198,15 @@ def _roadmap(argument: str | None, registry: SuiteRegistry) -> list[str]:
     a = p.parse_intermixed_args(_tokens(argument))
     start, target = _names(a.words, "two names", pair=True)
     data = roadmap(registry, start, target, suites=a.suites, per_step=a.per_step)
-    path = _write_json(_out("roadmap", argument), "roadmap.json", data)
+    path, html = _save(_out("roadmap", argument), "roadmap", data, roadmap_page(data))
     lines = [
         f'Learning order from "{start}" to "{target}" ({data["policy"]}): '
-        + ", ".join(f"{n} {s['status']}" for n, s in data["suites"].items())
+        + ", ".join(f"{n} {plain(s['status'], n)}" for n, s in data["suites"].items())
     ]
     for step in data["steps"]:
         labels = [i["label"] for i in step["items"]]
         lines.append(f"{step['step']}. {step['name']}: {_shown(labels)}")
-    return [*lines, *_pick_hints(data["suites"]), f"json: {path}"]
+    return [*lines, *_pick_hints(data["suites"]), f"json: {path}", f"html: {html}"]
 
 
 def _successors(argument: str | None, registry: SuiteRegistry) -> list[str]:
@@ -204,30 +217,33 @@ def _successors(argument: str | None, registry: SuiteRegistry) -> list[str]:
     data = successors(
         registry, start, suites=a.suites, depth=a.depth, breadth=a.breadth, max_nodes=a.max_nodes
     )
-    path = _write_json(_out("successors", argument), "successors.json", data)
+    path, html = _save(_out("successors", argument), "successors", data, successors_page(data))
     lines = [f'What comes after "{start}" ({data["policy"]}):']
     for name, part in data["suites"].items():
         if part.get("status") == "ambiguous" and part.get("candidates"):
             continue  # listed once below, with the ids to rerun with
         labels = [n["label"] for n in part.get("nodes", [])[1:]]
-        lines.append(f"{name}: {part['status']}" + (f", {_shown(labels)}" if labels else ""))
-    return [*lines, *_pick_hints(data["suites"]), f"json: {path}"]
+        lines.append(
+            f"{name}: {plain(part['status'], name)}" + (f", {_shown(labels)}" if labels else "")
+        )
+    return [*lines, *_pick_hints(data["suites"]), f"json: {path}", f"html: {html}"]
 
 
 def _tag(argument: str | None, registry: SuiteRegistry) -> list[str]:
     from talent_angels.tagging.cli import main as tag_main
 
-    out, err = io.StringIO(), io.StringIO()
-    try:
-        with contextlib.redirect_stdout(out), contextlib.redirect_stderr(err):
-            code = tag_main(_tokens(argument), registry=registry)
-    except SystemExit as exc:  # argparse rejected the flags
-        code = int(exc.code or 2)
+    out: list[str] = []
+    err: list[str] = []
+    # The runner reports through these callbacks: no swap of the process-wide stdout, which
+    # the terminal keeps drawing on while this runs on a worker thread.
+    code = tag_main(
+        _tokens(argument), registry=registry, out=out.append, err=err.append,
+        parser_class=_TagParser,
+    )  # fmt: skip
     if code:
-        lines = [ln for ln in err.getvalue().splitlines() if ln.strip()]
-        usage = next((ln for ln in lines if ln.startswith("ta-agent tag: error")), None)
-        raise _Bad((usage or (lines[-1] if lines else f"tag exited with {code}")).strip())
-    return [ln for ln in out.getvalue().splitlines() if ln.strip()]
+        lines = [ln for ln in err if ln.strip()]
+        raise _Bad((lines[-1] if lines else f"tag exited with {code}").strip())
+    return [ln for ln in out if ln.strip()]
 
 
 _RUNNERS: dict[str, Callable[[str | None, SuiteRegistry], list[str]]] = {

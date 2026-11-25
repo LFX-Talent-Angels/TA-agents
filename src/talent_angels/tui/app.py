@@ -231,12 +231,11 @@ def main(argv: Sequence[str] | None = None, *, registry: SuiteRegistry | None = 
         # Esc sets this; the abandoned turn sees it at its next model call.
         cancel = threading.Event()
         line_context.run(bind_cancel, cancel)
-        if kind == "command":
+        batch = capability_command(line) is not None
+        if kind == "command" and not batch:
             # Commands can change session state, the active client, or the
             # process environment. Keep those effects on this thread so an
             # Esc cancellation cannot leave the UI and active client apart.
-            if capability_command(line) is not None:
-                console.print("[dim]Running… this can take a while; the files are listed below.[/]")
             reply = handle_line(
                 turn_state,
                 line,
@@ -246,6 +245,13 @@ def main(argv: Sequence[str] | None = None, *, registry: SuiteRegistry | None = 
             )
         else:
             label = "Looking that up…" if kind == "map" else "Thinking…"
+            if batch:
+                # /map /discover /roadmap /successors /tag change nothing but the copy of the
+                # state and their own files, so they run behind the same Esc watcher; they stop
+                # at the next item and write nothing. Esc waits for them to stop (they are not
+                # abandoned), so "Stopped" is never printed while a file can still be written.
+                label = "Running"
+                console.print("[dim]Running… this can take a while; esc stops it.[/]")
             try:
                 reply = run_with_status(
                     console,
@@ -257,8 +263,10 @@ def main(argv: Sequence[str] | None = None, *, registry: SuiteRegistry | None = 
                         line,
                         runner=make_runner(turn_outcomes),
                         llm_client=llm_client,
+                        registry=selected if batch else None,
                     ),
                     cancel=cancel,
+                    wait_on_cancel=batch,
                 )
             except Cancelled:
                 stage_scope.__exit__(None, None, None)

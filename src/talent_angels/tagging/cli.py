@@ -11,7 +11,7 @@ from __future__ import annotations
 import argparse
 import os
 import sys
-from collections.abc import Sequence
+from collections.abc import Callable, Sequence
 from pathlib import Path
 
 from rich.console import Console
@@ -55,8 +55,10 @@ def _parse_rows(spec: str) -> set[str]:
     return rows
 
 
-def _build_parser() -> argparse.ArgumentParser:
-    parser = argparse.ArgumentParser(prog="ta-agent tag")
+def _build_parser(
+    parser_class: type[argparse.ArgumentParser] = argparse.ArgumentParser,
+) -> argparse.ArgumentParser:
+    parser = parser_class(prog="ta-agent tag")
     parser.add_argument("path", help="A project folder (with inputs/) or a single input file.")
     parser.add_argument(
         "--no-llm", action="store_true", help="Search only; no model calls (review the top hit)."
@@ -89,25 +91,25 @@ def _build_parser() -> argparse.ArgumentParser:
     return parser
 
 
-def _print_summary(summary: RunSummary) -> None:
+def _print_summary(summary: RunSummary, out: Callable[[str], None] = print) -> None:
     if summary.profile:
-        print(f"profile={summary.profile}")
+        out(f"profile={summary.profile}")
     for suite in sorted(summary.counts):
         counts = ", ".join(f"{verdict}={n}" for verdict, n in sorted(summary.counts[suite].items()))
-        print(f"{suite}: {counts}")
-    print(
+        out(f"{suite}: {counts}")
+    out(
         f"units={summary.units} reused={summary.reused} searched={summary.searched} "
         f"seconds={summary.seconds:.1f}"
     )
     if summary.model_calls:
         cost_text = f"${summary.cost_usd:.4f}" if summary.cost_usd is not None else "unknown"
-        print(f"model_calls={summary.model_calls} cost_usd={cost_text}")
+        out(f"model_calls={summary.model_calls} cost_usd={cost_text}")
     if summary.reviews_applied or summary.retried:
-        print(f"reviews_applied={summary.reviews_applied} retried={summary.retried}")
+        out(f"reviews_applied={summary.reviews_applied} retried={summary.retried}")
     for warning in summary.warnings:
-        print(f"warning: {warning}")
+        out(f"warning: {warning}")
     for output in summary.outputs:
-        print(output)
+        out(output)
 
 
 class _ProgressView:
@@ -117,8 +119,9 @@ class _ProgressView:
     the spinner and the clock keep moving to show the run is alive.
     """
 
-    def __init__(self, *, live: bool) -> None:
+    def __init__(self, *, live: bool, sink: Callable[[str], None] | None = None) -> None:
         self.live = live
+        self._sink = sink
         self._progress: Progress | None = None
         self._task: TaskID | None = None
 
@@ -145,7 +148,7 @@ class _ProgressView:
 
     def message(self, text: str) -> None:
         if self._progress is None or self._task is None:
-            print(text, file=sys.stderr)
+            (self._sink or (lambda t: print(t, file=sys.stderr)))(text)
             return
         self._progress.console.print(text)
         _, _, step = text.partition(": ")
@@ -167,13 +170,21 @@ def main(
     *,
     registry: SuiteRegistry | None = None,
     llm_client: LLMClient | None = None,
+    out: Callable[[str], None] | None = None,
+    err: Callable[[str], None] | None = None,
+    parser_class: type[argparse.ArgumentParser] = argparse.ArgumentParser,
 ) -> int:
+    """Run the tagger. ``out``/``err`` receive its lines (default: stdout/stderr); a caller that
+    passes ``err`` gets no live progress bar either, so nothing is drawn on the terminal."""
+    out = out or print
+    sink = err
+    err = err or (lambda text: print(text, file=sys.stderr))
     load_local_dotenv()
-    args = _build_parser().parse_args(argv)
+    args = _build_parser(parser_class).parse_args(argv)
 
     path = Path(args.path)
     if not path.exists():
-        print(f"no such path: {path}", file=sys.stderr)
+        err(f"no such path: {path}")
         return 2
 
     # No `turn_deadline` governs a batch run (PILOT-PLAN.md); without this the
@@ -187,7 +198,7 @@ def main(
             # tokens can eat the whole budget, truncating the JSON reply.
             client = get_llm_client(reasoning_enabled=False)
         except Exception as exc:  # noqa: BLE001 - a bad client config must not traceback
-            print(f"could not start the model client: {exc} (try --no-llm)", file=sys.stderr)
+            err(f"could not start the model client: {exc} (try --no-llm)")
             return 2
 
     no_llm = args.no_llm or client is None or getattr(client, "provider", "none") == "none"
@@ -211,7 +222,7 @@ def main(
     )
 
     try:
-        with _ProgressView(live=sys.stderr.isatty()) as view:
+        with _ProgressView(live=sink is None and sys.stderr.isatty(), sink=sink) as view:
             summary = run(
                 path,
                 registry=selected_registry,
@@ -221,13 +232,13 @@ def main(
                 step_progress=view.step if view.live else None,
             )
     except (ReaderError, WorkbookOpenError, UnknownSuiteError) as exc:
-        print(str(exc), file=sys.stderr)
+        err(str(exc))
         return 2
     except Exception as exc:  # noqa: BLE001 - a batch run must report, not traceback
-        print(f"tag failed: {type(exc).__name__}: {exc}", file=sys.stderr)
+        err(f"tag failed: {type(exc).__name__}: {exc}")
         return 1
 
-    _print_summary(summary)
+    _print_summary(summary, out)
     return 0
 
 

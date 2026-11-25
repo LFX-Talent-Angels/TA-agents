@@ -29,7 +29,8 @@ result to files**, printing their paths:
 `<TA home>` is `TA_AGENTS_HOME`, else `<repo>/.ta-agents` in a checkout (git-ignored), else
 `~/.ta-agents`. The folder name comes from the command line, so the same command writes the same
 folder and the same bytes; a rerun overwrites only its own files. `map`, `roadmap` and
-`successors` write `<command>.json`; `discover` writes `discovery.json`, `.xlsx` and `.html`;
+`successors` write `<command>.json` and `<command>.html` (a static page to open in a
+browser: light and dark, no script); `discover` writes `discovery.json`, `.xlsx` and `.html`;
 `tag` writes its workbook where the CLI does (inside the project folder).
 
 These commands are not chat turns: they run without the 45 s turn clock (a `/tag` or `/discover`
@@ -48,6 +49,11 @@ line, never a traceback.
 `/roadmap data analyst | data scientist`, `/map --route web developer | software developer`.
 A pipe is the one character that cannot be part of a job title. Names can be plain text (no
 quotes needed) or node IDs; wrap a path with spaces in quotes.
+
+On the command line, `--html PATH` on `map`, `roadmap` and `successors` also writes that page
+(the JSON still prints); `discover` always writes `discovery.html`. HTTP and MCP stay JSON-only.
+Press Esc during a chat `/discover` or `/tag` to stop it: it prints "Stopped. Nothing was
+written." (`/tag` keeps its ledger of finished units but never overwrites the workbook).
 
 ## HTTP API
 

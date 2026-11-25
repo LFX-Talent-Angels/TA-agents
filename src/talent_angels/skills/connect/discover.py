@@ -19,6 +19,7 @@ from itertools import combinations
 from typing import Any
 
 from talent_angels.contracts import AgentResult, Route
+from talent_angels.llm.protocol import check_cancelled
 from talent_angels.skills.connect.crosswalk import crosswalk_links, suite_of
 from talent_angels.skills.connect.discover_io import MAX_ITEMS, Item
 from talent_angels.skills.connect.federated import _select
@@ -43,6 +44,7 @@ MAX_DISCOVER_NODES = 5000
 MAX_ROUTE_PAIRS = 30  # item pairs routed beyond the user's own guesses (those always are)
 INDIRECT_MAX_EDGES = 3  # a guess counts as indirect through a route of at most this many edges
 MAX_CANDIDATES = 3
+TOOL_EDGES = frozenset({"USES_SOFTWARE"})  # a job "uses" a tool: weak evidence two items relate
 MEANING_ONLY = "hybrid_rrf"  # the suite's match method when no label tier matched: a guess
 
 Json = dict[str, Any]
@@ -171,6 +173,7 @@ def discover(
                 if version := getattr(runtime.suite, "data_version", None):
                     versions[name] = str(version)
                 for item in items:
+                    check_cancelled()
                     res[(name, item.key)] = (
                         _recorded(by_record.get((name, item.key)))
                         if recorded is not None
@@ -186,6 +189,7 @@ def discover(
         for name, suite in list(live.items()):
             try:
                 for item in items:
+                    check_cancelled()
                     r = res[(name, item.key)]
                     if r["status"] != "resolved":
                         continue
@@ -302,6 +306,34 @@ def discover(
         links.sort(key=lambda x: (x["_a"], x["_b"], x["graph_edge"], x["a_id"], x["b_id"]))
         linked = {(x["_a"], x["_b"]) for x in links}
 
+        by_tool: dict[tuple[str, str], set[str]] = {}
+
+        def tool_reached(suite: str, key: str) -> set[str]:
+            """Nodes this item's walk reaches only through a tool edge (O*NET USES_SOFTWARE: a
+            job uses it), directly or by going on from such a node. One mixed way in, say a plain
+            RELATED_TO, and the node is not here. Edges elsewhere in the walk do not matter."""
+            if (suite, key) not in by_tool:
+                done: set[str] = set()
+                by_tool[(suite, key)] = done
+                walk = walks[(suite, key)]
+                level = {n.ref.id: n.level for n in walk.nodes}
+                into: dict[str, list[tuple[str, str]]] = defaultdict(list)  # node -> (from, edge)
+                for e in walk.edges:
+                    a, b = e.ref.source_node_id, e.ref.target_node_id
+                    if level.get(b, -9) == level.get(a, -9) + 1:
+                        into[b].append((a, e.ref.type))
+                    elif level.get(a, -9) == level.get(b, -9) + 1:
+                        into[a].append((b, e.ref.type))
+                for node in sorted(into, key=lambda i: (level[i], i)):
+                    if all(t in TOOL_EDGES or src in done for src, t in into[node]):
+                        done.add(node)
+            return by_tool[(suite, key)]
+
+        def tool_only(suite: str, node_id: str, keys: Iterable[str]) -> bool:
+            """Every item reaches the node only through a tool: what the items share is "jobs use
+            both tools", not a relation between the items."""
+            return all((suite, k) in walks and node_id in tool_reached(suite, k) for k in keys)
+
         connectors: list[Json] = []
         shared: dict[tuple[str, str], list[str]] = defaultdict(list)
         for node_id, who in reach.items():
@@ -316,15 +348,19 @@ def discover(
                     "suite": n["suite"],
                     "cite": n["cite"],
                     "broad": n["kind"] in HUB_KINDS,
+                    "tool_only": tool_only(n["suite"], node_id, who),
                     "item_count": len(who),
                     "items": [{"item": text[k], "level": who[k]} for k in sorted(who)],
                     "_keys": sorted(who),
                 }
             )
-        # Specific connectors first; broad hubs (skill groups, ISCO groups) after them.
+        # Specific connectors first; broad hubs (skill groups, ISCO groups) after them; those
+        # linked only through a tool (O*NET USES_SOFTWARE) last of all.
         connectors.sort(
-            key=lambda c: (c["broad"], -c["item_count"], c["label"].casefold(), c["id"])
-        )
+            key=lambda c: (
+                c["tool_only"], c["broad"], -c["item_count"], c["label"].casefold(), c["id"],
+            )
+        )  # fmt: skip
         for c in connectors:
             for pair in combinations(c["_keys"], 2):
                 shared[pair].append(c["id"])
@@ -348,6 +384,7 @@ def discover(
         route_of: dict[tuple[str, str], Json] = {}
         failed: set[str] = set()  # items in a pair whose route search errored: not fully checked
         for a, b in [*first, *rest[:MAX_ROUTE_PAIRS]]:
+            check_cancelled()
             try:
                 route = _best_route(live, nodes_of, a, b)
             except Exception as exc:
@@ -395,6 +432,7 @@ def discover(
         shown = sorted(
             (c for c in connectors if len(inside & set(c["_keys"])) >= 2),
             key=lambda c: (
+                c["tool_only"],
                 -len(inside & set(c["_keys"])),
                 c["broad"],
                 c["label"].casefold(),

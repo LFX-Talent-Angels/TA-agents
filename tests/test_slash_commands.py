@@ -54,9 +54,10 @@ def test_roadmap_summary_files_and_byte_identical_json() -> None:
     first = _say(f"/roadmap {A.id} | {B.id} --per-step 2", reg)
     assert "learn-order-v1" in first and "algebra" in first
 
-    [path] = _files("roadmap")
+    [page, path] = _files("roadmap")
     assert path.name == "roadmap.json" and json.loads(path.read_text())["per_step"] == 2
-    assert str(path) in first
+    assert page.name == "roadmap.html" and "Foundations" in page.read_text()
+    assert str(path) in first and str(page) in first
     before = path.read_bytes()
     assert _say(f"/roadmap {A.id} | {B.id} --per-step 2", reg) == first
     assert path.read_bytes() == before
@@ -66,7 +67,8 @@ def test_roadmap_summary_files_and_byte_identical_json() -> None:
 def test_successors_and_map_write_json_and_name_the_top_items() -> None:
     text = _say(f"/successors {X.id} --depth 1 --breadth 2", registry(esco=_skills()))
     assert "esco: ok" in text
-    [out] = _files("successors")
+    [page, out] = _files("successors")
+    assert page.name == "successors.html" and "<!doctype html>" in page.read_text()
     assert [n["id"] for n in json.loads(out.read_text())["suites"]["esco"]["nodes"]][:2] == [
         "esco:x",
         "esco:sb",
@@ -77,7 +79,10 @@ def test_successors_and_map_write_json_and_name_the_top_items() -> None:
     assert "Map for" in text and "fake mapped" in text and "Top:" in text
     route = _say("/map --route software developer | programmer --suites fake", reg)
     assert "software developer -> programmer" in route
-    assert len(_files("map")) == 2
+    assert sorted(p.name for p in _files("map")) == ["map.html"] * 2 + ["map.json"] * 2
+    assert all(
+        "prefers-color-scheme:dark" in p.read_text() for p in _files("map") if p.suffix == ".html"
+    )
 
 
 def test_discover_writes_the_json_xlsx_and_html_reports() -> None:
@@ -151,7 +156,7 @@ def test_the_tui_loop_dispatches_a_command_with_its_registry(
     assert main([], registry=registry(esco=_esco())) == 0
     out = capsys.readouterr().out
     assert "Learning order from" in out and "Running" in out
-    assert len(_files("roadmap")) == 1
+    assert [p.suffix for p in _files("roadmap")] == [".html", ".json"]
 
 
 def test_an_unexpected_error_never_echoes_its_message_into_the_chat(monkeypatch, caplog) -> None:
@@ -164,3 +169,8 @@ def test_an_unexpected_error_never_echoes_its_message_into_the_chat(monkeypatch,
     assert reply == "/tag failed (RuntimeError); the details are in the log."
     assert "sk-secret" not in reply
     assert "/tag failed" in caplog.text
+
+
+def test_chat_summaries_use_plain_words_for_status_codes() -> None:
+    text = _say("/map zzzz-no-such-thing --suites fake --depth 1", fake_registry())
+    assert "fake no clear match" in text and "not_found" not in text

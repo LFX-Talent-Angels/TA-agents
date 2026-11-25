@@ -25,7 +25,7 @@ from talent_angels.assistant.synthesize import synthesize
 from talent_angels.assistant.turn import MAX_QUESTION_CHARS, TurnOutcome
 from talent_angels.contracts import AgentResult, NodeRef
 from talent_angels.llm import LLMClient
-from talent_angels.llm.protocol import turn_cancelled, turn_deadline
+from talent_angels.llm.protocol import TurnCancelled, turn_cancelled, turn_deadline
 from talent_angels.memory.episodes import recent_episodes
 from talent_angels.memory.erase import erase_all, erase_session, erase_summary
 from talent_angels.memory.profile import (
@@ -49,6 +49,7 @@ from talent_angels.session.copy import (
     GREETING,
     HELP_INTRO,
     HELP_TEXT,
+    STOPPED,
     UNKNOWN_COMMAND,
 )
 from talent_angels.session.followup import (
@@ -171,8 +172,13 @@ def handle_line(
     if capability is not None:
         # /map /discover /roadmap /successors /tag: batch work that can run for minutes.
         # No turn clock, no model call, never a chat turn (no runner, no run-log record).
+        # It does run under the reader's cancel scope: Esc stops it at the next item, and a
+        # stopped command writes nothing and leaves the session as it was (no transcript line).
         name, argument = capability
-        reply = run_slash(name, argument, registry or default_suite_registry())
+        try:
+            reply = run_slash(name, argument, registry or default_suite_registry())
+        except TurnCancelled:
+            return _reply(state, STOPPED)
         return _finish(state, text, reply)
     with turn_deadline():
         set_language(state.language)

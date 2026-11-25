@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 import random
+import re
 
 import pytest
 
@@ -403,7 +404,8 @@ def test_outputs_html_is_static_and_deterministic_and_xlsx_has_the_eight_tabs(tm
     paths = write_outputs(data, tmp_path)
     html = paths["html"].read_text(encoding="utf-8")
     assert html == render_html(data)
-    assert "<script" not in html and "src=" not in html and "href=" not in html
+    assert "<script" not in html and "src=" not in html
+    assert all(h.startswith("http") for h in re.findall(r'href="([^"]*)"', html))  # cites only
     assert "&lt;script&gt;x&lt;/script&gt;" in html
     assert json.loads(paths["json"].read_text(encoding="utf-8")) == data
     book = load_workbook(paths["xlsx"])
@@ -413,3 +415,27 @@ def test_outputs_html_is_static_and_deterministic_and_xlsx_has_the_eight_tabs(tm
     assert [c.value for c in book["Guesses"][2]][:3] == [
         "web developer", "JavaScript", "Yes, linked directly",
     ]  # fmt: skip
+
+
+def _tool_pair_graph() -> PathSuite:
+    nodes = [_node(f"n:{k}", "Skill", k) for k in ("alphaitem", "betaitem", "shared", "kiln")]
+    nodes += [_node("n:oven", "Software", "oven")]
+    edges = [
+        _edge("RELATED_TO", "n:alphaitem", "n:shared"),
+        _edge("USES_SOFTWARE", "n:alphaitem", "n:oven"),
+        _edge("USES_SOFTWARE", "n:betaitem", "n:oven"),  # oven: reached only by tool links
+        _edge("RELATED_TO", "n:alphaitem", "n:kiln"),
+        _edge("USES_SOFTWARE", "n:betaitem", "n:kiln"),  # kiln: one item reaches it by a relation
+    ]
+    return PathSuite(nodes, edges)
+
+
+def test_tool_only_looks_at_the_edges_into_the_connector_not_all_edges_at_the_item() -> None:
+    graph = _tool_pair_graph()
+    data = discover(_registry(graph), _items("alphaitem", "betaitem"), depth=1, breadth=4)
+    flags = {c["label"]: c["tool_only"] for c in data["connectors"]}
+    # alphaitem also has a RELATED_TO to "shared", which says nothing about how it reaches oven.
+    assert flags == {"oven": True, "kiln": False}
+    order = [(c["tool_only"], c["broad"], -c["item_count"], c["label"].casefold(), c["id"])
+             for c in data["connectors"]]  # fmt: skip
+    assert order == sorted(order) and data["connectors"][-1]["label"] == "oven"

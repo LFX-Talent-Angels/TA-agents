@@ -87,7 +87,10 @@ and JobTech, as far as they are registered and loaded) through the suite
 contract: search_nodes, get_neighbors, enumerate_paths, score_paths, plus
 map_neighbors (a multi-hop get_neighbors), discover_map (how a list of items
 connects), roadmap (what to learn from A to B, in order), successors (what comes
-after a skill) and pathfind (the skill gap and ranked routes between two occupations). Pass the
+after a skill) and pathfind (the skill gap and ranked routes between two occupations).
+`capabilities` lists everything the engine can do (name, question, input and output JSON Schema,
+cost, determinism); `run` runs any one of them by name; `tag` (batch-tag documents) is long, so
+use `start_job`, `job_status` and `cancel_job`. Pass the
 suite by name, e.g. suite=`esco`, `onet`, `sfia`, `bls` or `jobtech`.
 Do not treat IDs from one suite as belonging to another.
 
@@ -770,6 +773,12 @@ The result is graph data and may be cited as taxonomy fact; it is not career adv
         except (ValueError, UnknownSuiteError) as exc:
             return PathfindPayload(warnings=[f"invalid_input:{exc}"])
         return PathfindPayload.model_validate(found)
+
+    # The engine's front door (manifest, run, jobs). Imported here, not at module top: the
+    # engine's skills import `mcp.models`, so a top-level import would be an import cycle.
+    from talent_angels.mcp.engine_tools import add_engine_tools
+
+    add_engine_tools(server)
 
     return server
 

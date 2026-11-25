@@ -47,6 +47,13 @@ only; else `ambiguous` with `candidates`), a taxonomy without order data is `no_
 input is an `invalid_input:` warning. No model call, same bytes for the same data. See
 `docs/decisions/0013-learning-order-policy.md`.
 
+`pathfind` (`start`, `target`, optional `suites`) returns, per taxonomy, the skill gap
+(`essential`, `optional`, `software`), up to several ranked bridge `routes` (`route-rank-v1`
+`score`) and the compact `learning_order`: the data of the chat path card, without phrasing. An
+unclear end is `ambiguous` with a `side` and `candidates`, never guessed. No model call, same bytes
+for the same data. `tag` (batch document tagging) is deliberately not an MCP tool: it runs for
+minutes and uses a model. See `docs/interfaces.md`.
+
 `warnings` is machine-readable and load-bearing: `not_found`, `ambiguous`,
 `no_neighbors`, `node_not_found`, `no_path`, `endpoint_not_found`,
 `unknown_suite:<name>`, `suite_unavailable:<ErrorType>`,
@@ -95,7 +102,7 @@ Check it with `/mcp` inside Claude Code.
 
 | File | Holds |
 | ---- | ----- |
-| `server.py` | The four contract tools plus `map_neighbors`, `discover_map`, `roadmap` and `successors`, their descriptions, suite lifespan |
+| `server.py` | The four contract tools plus `map_neighbors`, `discover_map`, `roadmap`, `successors` and `pathfind`, their descriptions, suite lifespan |
 | `models.py` | Typed payloads returned to the client |
 | `mapping.py` | Suite `ToolResult` → those payloads; nothing interprets |
 | `protocol.py` | The contract surface, structurally — no concrete import |

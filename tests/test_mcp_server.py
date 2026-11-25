@@ -77,6 +77,13 @@ async def _drive() -> dict[str, Any]:
             await call("successors", "successors", {"start": "Python"})
             await call("successors_suite", "successors", {"start": "a", **bogus})
             await call("successors_limit", "successors", {"start": "a", "depth": 9})
+            await call(
+                "pathfind",
+                "pathfind",
+                {"start": "software developer", "target": "programmer", "suites": ["fake"]},
+            )
+            await call("pathfind_suite", "pathfind", {"start": "a", "target": "b", "suites": ["x"]})
+            await call("pathfind_blank", "pathfind", {"start": "", "target": "b"})
             await call("miss", "search_nodes", {"text": "stonemason"})
             await call("neighbors", "get_neighbors", {"node_id": DEV.id})
             await call("neighbors_missing", "get_neighbors", {"node_id": "fake:occupation:nope"})
@@ -122,7 +129,16 @@ def test_the_server_exposes_the_contract_tools_and_map_neighbors(served: dict[st
         "discover_map",
         "roadmap",
         "successors",
+        "pathfind",
     }
+
+
+def test_pathfind_returns_the_path_card_data_per_taxonomy(served: dict[str, Any]) -> None:
+    found = served["pathfind"]
+    assert found["suites"]["fake"]["status"] == "same_start_and_target"  # both names are one node
+    assert found["start"] == "software developer"
+    assert served["pathfind_suite"]["warnings"][0].startswith("invalid_input:unknown suite")
+    assert served["pathfind_blank"] is None  # refused up front, like the other limits
 
 
 def test_roadmap_and_successors_return_the_learn_order_json_as_structured_results(
@@ -192,6 +208,7 @@ def test_every_tool_declares_its_inputs_and_a_structured_output(
         "score_paths": {"paths", "policy_name", "policy_version", "suite"},
         "roadmap": {"start", "target", "suites", "per_step"},
         "successors": {"start", "suites", "depth", "breadth", "max_nodes"},
+        "pathfind": {"start", "target", "suites"},
         "map_neighbors": {
             "start",
             "depth",

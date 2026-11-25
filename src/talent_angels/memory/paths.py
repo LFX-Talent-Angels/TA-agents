@@ -90,3 +90,8 @@ def default_runlog_path() -> Path:
 
 def default_details_dir() -> Path:
     return home() / "query-details"
+
+
+def outputs_dir() -> Path:
+    """Where the chat's /map, /roadmap, /discover ... write their full results."""
+    return home() / "outputs"

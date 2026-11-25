@@ -274,4 +274,17 @@ def write_outputs(data: Json, out_dir: str | Path) -> dict[str, Path]:
     return paths
 
 
-__all__ = ["render_html", "write_outputs", "write_xlsx"]
+def discover_summary(data: Json) -> str:
+    """The three-line count summary the CLI and the chat command print."""
+    s, g = data["summary"], data["summary"]["guesses"]
+    return (
+        f"{s['items']} items: {s['resolved_items']} found, "
+        f"{s['not_in_any_taxonomy']} in no taxonomy\n"
+        f"{s['links']} links, {s['connectors']} connectors, {s['routes']} routes, "
+        f"{s['orphans']} orphans, {s['clusters']} clusters\n"
+        f"guesses: {g['confirmed']} confirmed, {g['indirect']} indirect, "
+        f"{g['not_in_graph']} not in graph, {g['unresolved']} unresolved"
+    )
+
+
+__all__ = ["discover_summary", "render_html", "write_outputs", "write_xlsx"]

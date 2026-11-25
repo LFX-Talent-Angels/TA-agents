@@ -41,6 +41,7 @@ from talent_angels.mcp.models import (
     MapPayload,
     NeighborsPayload,
     OrderPayload,
+    PathfindPayload,
     PathRef,
     PathsPayload,
     PolicyRef,
@@ -85,8 +86,8 @@ Read-only access to the Talent Angels taxonomy graphs (ESCO, O*NET, SFIA, BLS
 and JobTech, as far as they are registered and loaded) through the suite
 contract: search_nodes, get_neighbors, enumerate_paths, score_paths, plus
 map_neighbors (a multi-hop get_neighbors), discover_map (how a list of items
-connects), roadmap (what to learn from A to B, in order) and successors (what comes
-after a skill). Pass the
+connects), roadmap (what to learn from A to B, in order), successors (what comes
+after a skill) and pathfind (the skill gap and ranked routes between two occupations). Pass the
 suite by name, e.g. suite=`esco`, `onet`, `sfia`, `bls` or `jobtech`.
 Do not treat IDs from one suite as belonging to another.
 
@@ -732,6 +733,43 @@ prerequisites stated by a taxonomy. It is evidence, not a syllabus. {_ID_DOC}"""
         except (ValueError, UnknownSuiteError) as exc:
             return OrderPayload(warnings=[f"invalid_input:{exc}"])
         return OrderPayload.model_validate(found)
+
+    @server.tool(
+        name="pathfind",
+        title="Skill gap and routes between two occupations",
+        description=f"""\
+What separates occupation `start` from occupation `target`, per taxonomy: the skill gap
+(`essential`, `optional` and `software` skills the target has and the start lacks) and up to
+several ranked bridge `routes` through shared skills (route-rank-v1, `score` per route), plus
+the compact learn-order-v1 `learning_order` when the taxonomy has one. Deterministic, no model
+call, no phrasing: the same input and graph data give the same JSON.
+
+`start` and `target` are occupation names; each taxonomy locates them itself. An unclear name
+makes that taxonomy `ambiguous` with a `side` (`start` | `target`) and `candidates`; it is never
+guessed, so ask the user and call again with the exact title. Per taxonomy `status` is `ok`,
+`ambiguous`, `not_found`, `same_start_and_target` or `error:<Type>`; `gap_too_large` means the
+gap is a near-complete retrain. BLS has no skill gap (its skill list is shared by every
+occupation); its routes and gap are empty.
+
+The result is graph data and may be cited as taxonomy fact; it is not career advice.
+{_ID_DOC}""",
+    )
+    def pathfind_tool(
+        ctx: ToolContext,
+        start: Annotated[str, Field(min_length=1, description="Current occupation name.")],
+        target: Annotated[str, Field(min_length=1, description="Goal occupation name.")],
+        suites: Annotated[
+            list[str] | None, Field(description="Subset of taxonomies; omit for all.")
+        ] = None,
+    ) -> PathfindPayload:
+        from talent_angels.session.pathfind_view import pathfind_all  # import cycle via assistant
+
+        session = ctx.request_context.lifespan_context
+        try:
+            found = pathfind_all(session.registry, start, target, suites=suites)
+        except (ValueError, UnknownSuiteError) as exc:
+            return PathfindPayload(warnings=[f"invalid_input:{exc}"])
+        return PathfindPayload.model_validate(found)
 
     return server
 

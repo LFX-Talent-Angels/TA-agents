@@ -2,7 +2,8 @@
 
 Everything Talent Angels does is reachable from the command line, the chat, MCP and HTTP, so
 you can build on it. All four call the same core functions; there is one implementation per
-capability. No path below calls a model, except `tag` without `--no-llm`. The same input and the
+capability, declared once in the engine registry. No path below calls a model, except `tag`
+without `--no-llm`. The same input and the
 same graph data give the same JSON, byte for byte (no timestamps).
 
 | Capability | CLI | Chat (slash) | MCP tool | HTTP API |
@@ -12,10 +13,79 @@ same graph data give the same JSON, byte for byte (no timestamps).
 | **roadmap**: what to learn from job A to job B, in order (`learn-order-v1`) | `ta-agent roadmap "data analyst" "data scientist"` | `/roadmap data analyst \| data scientist` | `roadmap` | `POST /v1/capabilities/roadmap` |
 | **successors**: what comes after a skill (`learn-order-v1`) | `ta-agent successors "Python (computer programming)"` | `/successors Python (computer programming)` | `successors` | `POST /v1/capabilities/successors` |
 | **pathfind**: skill gap and ranked routes between two jobs | chat or API; `ta-agent map --route A B` maps around the best route | "path from nurse to data analyst" (the path card) | `pathfind` | `POST /v1/capabilities/pathfind` |
-| **tag**: batch-tag documents against the taxonomies | `ta-agent tag project/ --no-llm` | `/tag project/ --no-llm` | none, by design | none, by design |
+| **tag**: batch-tag documents against the taxonomies | `ta-agent tag project/ --no-llm` | `/tag project/ --no-llm` | `start_job`, `job_status`, `cancel_job` | `POST /v1/jobs` (see [Jobs](#jobs-tag)) |
+| **locate**, **connect**: resolve text to nodes, one hop around a node | `ta-agent locate`, `connect` (chat turns) | plain questions | `search_nodes`, `get_neighbors` | `POST /v1/run` (the suite calls) |
 
-`tag` is not on MCP or HTTP: it is a batch over files that runs for minutes and calls a model.
-Run it from the CLI or the chat.
+`tag` is a job: it runs for minutes and may call a model, so over HTTP and MCP it starts in the
+background and you poll it.
+
+## The engine front door
+
+One registry (`talent_angels.engine`) declares the eight capabilities: their input and output
+models, whether they are deterministic, whether they use a model, what they cost, and their name
+on each interface. The generic surfaces are built from it; the per-capability ones above keep
+working unchanged (a test asserts that every alias in the registry exists on every interface).
+
+| What | CLI | MCP | HTTP |
+| --- | --- | --- | --- |
+| The manifest: what can I do? | `ta-agent capabilities [--json]` | `capabilities` | `GET /v1/capabilities` |
+| Run any capability by name | `ta-agent run NAME '{...}'` (or `@file.json`) | `run` | `POST /v1/run` |
+| Long runs (`tag`) | `ta-agent tag` (foreground) | `start_job`, `job_status`, `cancel_job` | `POST /v1/jobs`, `GET /v1/jobs/{id}`, `POST /v1/jobs/{id}/cancel` |
+
+**Closed action set.** Only a registered capability name (or an MCP tool name such as
+`map_neighbors`) runs, and its input must validate against that capability's model: unknown
+fields are refused, limits are enforced, and nothing is a free-form tool, a query or a write.
+No capability calls a model, except `tag` without `no_llm`. The manifest says so per capability
+(`deterministic`, `uses_model`, `cost`, `latency`).
+
+`run` always answers with one envelope, `{status, call, output, warnings, candidates, error, errors}`.
+`output` is the capability's own JSON (the same bytes as the dedicated route), `call` is the
+resolved call with every default filled (rerun it for the same bytes), and `error` is one line
+that never carries a provider message (an unexpected failure shows its type only).
+
+| `status` | Meaning | HTTP | `ta-agent run` exit |
+| --- | --- | --- | --- |
+| `ok` | at least one taxonomy answered | 200 | 0 |
+| `ambiguous` | nobody answered; `candidates` has the pick list per taxonomy | 200 | 2 |
+| `no_result` | nobody answered: not found, no order data, no route, same ends | 200 | 2 |
+| `unavailable` | every selected taxonomy is down (`output` still says which) | 200 | 2 |
+| `invalid_input` | the input failed validation (`errors` lists the fields) | 422 | 2 |
+| `unknown_suite` | a suite name is not registered | 404 | 2 |
+| `unknown_capability` | not a registered name | 404 | 2 |
+| `use_job` | `tag` called synchronously over HTTP/MCP: start a job | 409 | n/a |
+| `cancelled` | a job was cancelled | n/a | 1 |
+| `error` | unexpected failure; `error` holds the type name only | 500 | 1 |
+
+```bash
+curl -s localhost:8000/v1/capabilities                       # the manifest, with JSON Schemas
+curl -s localhost:8000/v1/run -H 'content-type: application/json' \
+  -d '{"capability": "roadmap", "input": {"from": "data analyst", "to": "data scientist"}}'
+ta-agent run roadmap '{"from": "data analyst", "to": "data scientist", "per_step": 5}'
+```
+
+The existing `POST /v1/capabilities/{pathfind,map,discover,roadmap,successors}` routes now call
+the same engine and return the same JSON as before.
+
+### Jobs (`tag`)
+
+```bash
+curl -s localhost:8000/v1/jobs -H 'content-type: application/json' \
+  -d '{"capability": "tag", "input": {"path": "uca-pilot", "limit": 20}}'     # 202 + the job state
+curl -s localhost:8000/v1/jobs/<id>                                          # poll: status, progress, result
+curl -s -X POST localhost:8000/v1/jobs/<id>/cancel
+```
+
+- `path` is **relative to the tag root**: `TA_TAG_ROOT`, else `<TA home>/tag`. Absolute paths,
+  `..` and symlinks that leave the root are refused (`422`). There is no upload: put the project
+  folder on the server's disk under the root. The workbooks are written inside the project
+  folder, as `ta-agent tag` does, and listed in `result.output.outputs`.
+- `no_llm` is `true` by default here (the CLI's default is the model). A model run
+  (`"no_llm": false`) is refused unless the server sets `TA_JOBS_ALLOW_MODEL=1`, because the HTTP
+  API has no auth. With the model there is no cost estimate and no budget cap: try `limit` first.
+- State lives in `<TA home>/jobs/<id>.json` (`running`, `done`, `failed`, `cancelled`,
+  `interrupted` when the process died, `not_found`). One job runs at a time per server process.
+- Cancel is cooperative: the run stops at its next progress tick (an in-flight model call
+  finishes first). The ledger is append-only, so a rerun resumes where it stopped.
 
 ## Chat commands
 
@@ -34,7 +104,9 @@ browser: light and dark, no script); `discover` writes `discovery.json`, `.xlsx`
 `tag` writes its workbook where the CLI does (inside the project folder).
 
 These commands are not chat turns: they run without the 45 s turn clock (a `/tag` or `/discover`
-can take minutes), make no model call and add nothing to the run-log. Bad input gives one
+can take minutes), make no model call (except `/tag` without `--no-llm`) and add nothing to the
+run-log. `/map`, `/roadmap` and `/successors` run through the engine, so a name over 1000
+characters is now refused, as over HTTP. Bad input gives one
 line, never a traceback.
 
 | Command | Syntax |
@@ -62,7 +134,8 @@ uvicorn talent_angels.api.app:app          # then http://127.0.0.1:8000/docs
 ```
 
 Request bodies are validated (`422` on a bad or missing field, an unknown field, or a limit
-out of range); an unknown suite name is `404`, as on `/v1/query`. A taxonomy that is down or
+out of range); an unknown suite name is `404`, as on `/v1/query`. (`POST /v1/run` returns the
+status envelope above with the same codes.) A taxonomy that is down or
 cannot answer does not fail the call: its entry in `suites` carries `status` (`error:<Type>`,
 `ambiguous`, `not_found`, ...) and the others still answer. Responses are the CLI's JSON.
 
@@ -101,7 +174,7 @@ card without the phrasing. The conversational endpoints (`/v1/query`, `/v1/capab
 
 `ta-mcp` (see [`src/talent_angels/mcp/README.md`](../src/talent_angels/mcp/README.md)) serves the
 four suite-contract tools plus `map_neighbors`, `discover_map`, `roadmap`, `successors` and
-`pathfind`. Example call (`pathfind`):
+`pathfind`, and the engine tools `capabilities`, `run`, `start_job`, `job_status` and `cancel_job`. Example call (`pathfind`):
 
 ```json
 {"start": "nurse", "target": "data analyst", "suites": ["esco", "onet"]}

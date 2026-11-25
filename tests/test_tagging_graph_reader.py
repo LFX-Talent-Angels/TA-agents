@@ -256,3 +256,17 @@ def test_a_graph_job_title_is_searched_as_written(tmp_path: Path) -> None:
     assert queries_for(title) == ["Teaching and pedagogical technicians"]
     assert _needs_rewrite(title) is False
     assert _needs_rewrite(perf) is True and perf.seed_phrases == []
+
+
+def test_spanish_node_names_are_read(tmp_path: Path) -> None:
+    def nodo(identity: int, label: str, nombre: str) -> dict:
+        return {"identity": identity, "labels": [label], "properties": {"nombre": nombre}}
+
+    area = nodo(1, "AreaFormacion", "Desarrollo de software")
+    materia = nodo(2, "Asignatura", "Desarrollo Back-End")
+    path = _write_json(tmp_path, [_edge(area, "INTEGRA_MATERIA", materia)])
+
+    texts = [row.text for row in read_document(path).rows]
+
+    assert "Desarrollo Back-End" in texts
+    assert "Desarrollo de software" in texts

@@ -134,6 +134,8 @@ def test_litellm_maps_request_text_and_exclusive_usage_buckets() -> None:
         "max_tokens": 1024,
         "timeout": DEFAULT_LLM_TIMEOUT_SECONDS,
         "num_retries": 1,
+        "temperature": 0,
+        "drop_params": True,
         "extra_body": {"reasoning": {"enabled": True}},
     }
     assert result.text == "Found it."

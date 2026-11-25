@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from pathlib import Path
+
 import pytest
 from fastapi.testclient import TestClient
 
@@ -123,3 +125,132 @@ def test_an_unknown_suite_is_a_404_like_the_query_endpoint() -> None:
 
 def test_tag_is_not_exposed_over_http() -> None:
     assert _client(fake_registry()).post("/v1/capabilities/tag", json={}).status_code == 404
+
+
+# --- the engine front door: manifest, /v1/run, jobs ---------------------------------------
+def test_the_manifest_lists_the_eight_capabilities_with_schemas() -> None:
+    r = _client(fake_registry()).get("/v1/capabilities")
+    assert r.status_code == 200
+    m = r.json()
+    assert [c["name"] for c in m["capabilities"]] == [
+        "locate", "connect", "pathfind", "map", "discover", "roadmap", "successors", "tag",
+    ]  # fmt: skip
+    assert all(c["input_schema"] and c["output_schema"] for c in m["capabilities"])
+    assert [c["name"] for c in m["capabilities"] if c["uses_model"]] == ["tag"]
+    assert "POST /v1/run" == m["run"]["http"]
+
+
+def test_run_gives_the_same_output_as_the_dedicated_route_byte_for_byte() -> None:
+    reg = registry(esco=_esco())
+    c = _client(reg)
+    body = {"from": A.id, "to": B.id, "per_step": 2}
+    dedicated = c.post("/v1/capabilities/roadmap", json=body)
+    run = c.post("/v1/run", json={"capability": "roadmap", "input": body})
+    assert run.status_code == 200 and run.json()["status"] == "ok"
+    assert run.json()["call"]["capability"] == "roadmap"
+    assert run.json()["output"] == dedicated.json()
+    import json as _json
+
+    assert _json.dumps(run.json()["output"]) == _json.dumps(dedicated.json())  # key order too
+
+
+def test_run_covers_the_five_routes_and_an_mcp_alias() -> None:
+    c = _client(fake_registry())
+    for name, body, dedicated in (
+        ("map", {"start": "software developer", "suites": ["fake"]}, "map"),
+        ("discover", {"items": [{"item": "software developer"}], "suites": ["fake"]}, "discover"),
+        ("pathfind", {"from": "a", "to": "b", "suites": ["fake"]}, "pathfind"),
+        ("roadmap", {"from": "a", "to": "b", "suites": ["fake"]}, "roadmap"),
+        ("successors", {"skill": "a", "suites": ["fake"]}, "successors"),
+        ("map_neighbors", {"start": "software developer", "suites": ["fake"]}, "map"),
+    ):
+        run = c.post("/v1/run", json={"capability": name, "input": body}).json()
+        assert run["output"] == c.post(f"/v1/capabilities/{dedicated}", json=body).json(), name
+
+
+def test_run_always_answers_with_the_result_envelope() -> None:
+    c = _client(fake_registry())
+    cases = (
+        ({"capability": "roadmap", "input": {"from": "a"}}, 422, "invalid_input"),
+        ({"capability": "roadmap", "input": {"from": "a", "to": "b", "x": 1}},
+         422, "invalid_input"),
+        ({"capability": "nope", "input": {}}, 404, "unknown_capability"),
+        ({"capability": "roadmap", "input": {"from": "a", "to": "b", "suites": ["x"]}}, 404,
+         "unknown_suite"),
+        ({"capability": "tag", "input": {"path": "x"}}, 409, "use_job"),
+    )  # fmt: skip
+    for body, code, status in cases:
+        r = c.post("/v1/run", json=body)
+        assert (r.status_code, r.json()["status"]) == (code, status), body
+        assert r.json()["output"] is None
+    assert c.post("/v1/run", json={"capability": "map", "input": {}, "extra": 1}).status_code == 422
+    assert c.post("/v1/run", json={"input": {}}).status_code == 422
+
+
+def test_an_unexpected_error_over_http_is_a_500_with_the_type_only(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    import talent_angels.skills.roadmap as skill
+
+    def boom(*_a: object, **_k: object) -> None:
+        raise RuntimeError("sk-SECRET")
+
+    monkeypatch.setattr(skill, "roadmap", boom)
+    c = _client(fake_registry())
+    for url, body in (
+        ("/v1/run", {"capability": "roadmap", "input": {"from": "a", "to": "b"}}),
+        ("/v1/capabilities/roadmap", {"from": "a", "to": "b"}),
+    ):
+        r = c.post(url, json=body)
+        assert r.status_code == 500 and "SECRET" not in r.text and "RuntimeError" in r.text
+
+
+def _tag_env(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> Path:
+    import shutil
+
+    from tests.test_tagging_run import FIXTURE
+
+    root = tmp_path / "root"
+    (root / "proj" / "inputs").mkdir(parents=True)
+    shutil.copy(FIXTURE, root / "proj" / "inputs" / "standard.json")
+    monkeypatch.setenv("TA_AGENTS_HOME", str(tmp_path / "home"))
+    monkeypatch.setenv("TA_TAG_ROOT", str(root))
+    monkeypatch.delenv("TA_JOBS_ALLOW_MODEL", raising=False)
+    return root
+
+
+def test_a_tag_job_starts_polls_to_done_and_stays_in_the_root(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    from talent_angels.engine import jobs
+    from tests.test_tagging_run import _registry as tag_registry
+
+    root = _tag_env(monkeypatch, tmp_path)
+    c = _client(tag_registry())
+    r = c.post("/v1/jobs", json={"capability": "tag", "input": {"path": "proj", "limit": 3}})
+    assert r.status_code == 202 and r.json()["status"] == "running"
+    job_id = r.json()["id"]
+    jobs._join(job_id)
+    done = c.get(f"/v1/jobs/{job_id}").json()
+    assert done["status"] == "done" and done["result"]["output"]["units"] > 0
+    assert list((root / "proj").rglob("*.xlsx"))
+    assert c.post(f"/v1/jobs/{job_id}/cancel").json()["status"] == "done"  # harmless
+
+    # the guardrails, over HTTP
+    for body in (
+        {"capability": "tag", "input": {"path": "../x"}},
+        {"capability": "tag", "input": {"path": str(root)}},
+        {"capability": "tag", "input": {"path": "proj", "no_llm": False}},  # no TA_JOBS_ALLOW_MODEL
+        {"capability": "tag", "input": {"path": "proj", "extra": 1}},
+    ):
+        bad = c.post("/v1/jobs", json=body)
+        assert bad.status_code == 422 and bad.json()["status"] == "invalid_input", body
+    assert c.post("/v1/jobs", json={"capability": "shell", "input": {}}).status_code == 404
+
+
+def test_job_ids_are_validated_and_unknown_ones_are_404() -> None:
+    c = _client(fake_registry())
+    assert c.get(f"/v1/jobs/{'0' * 32}").status_code == 404
+    assert c.post(f"/v1/jobs/{'0' * 32}/cancel").status_code == 404
+    assert c.get("/v1/jobs/..%2F..%2Fetc%2Fpasswd").status_code in (404, 422)
+    assert c.get("/v1/jobs/not-an-id").status_code == 422

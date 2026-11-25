@@ -7,12 +7,14 @@ from __future__ import annotations
 
 import logging
 import os
-from collections.abc import AsyncIterator, Callable
+from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
 from typing import Any
 
 from fastapi import FastAPI, HTTPException, Path
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import JSONResponse
+from pydantic import BaseModel
 
 from talent_angels.api.schemas import (
     SESSION_ID_PATTERN,
@@ -23,6 +25,7 @@ from talent_angels.api.schemas import (
     QueryRequest,
     QueryResponse,
     RoadmapRequest,
+    RunRequest,
     SessionCreated,
     SessionErased,
     SessionHistory,
@@ -36,12 +39,21 @@ from talent_angels.assistant.intent import CAPABILITY_CONNECT, Capability
 from talent_angels.assistant.turn import TurnOutcome
 from talent_angels.assistant.turn_graph import conversation_history
 from talent_angels.contracts import NodeRef
+from talent_angels.engine import Result, manifest, run
+from talent_angels.engine.jobs import (
+    JOB_ID,
+    JobBusy,
+    JobRejected,
+    JobState,
+    cancel_job,
+    job_status,
+    start_job,
+)
 from talent_angels.env import load_local_dotenv
 from talent_angels.llm.factory import get_answer_mode, get_llm_client
 from talent_angels.llm.stub_client import StubLLMClient
 from talent_angels.memory.erase import erase_session
 from talent_angels.session.models import LastBinding, SessionState
-from talent_angels.session.pathfind_view import pathfind_all
 from talent_angels.session.store import (
     load_session,
     new_session,
@@ -49,10 +61,6 @@ from talent_angels.session.store import (
     session_exists,
     sessions_dir,
 )
-from talent_angels.skills.connect.discover import discover
-from talent_angels.skills.connect.discover_io import build_items
-from talent_angels.skills.connect.federated import map_all, map_all_route
-from talent_angels.skills.roadmap import roadmap, successors
 from talent_angels.suites import SuiteRegistry, UnknownSuiteError, default_suite_registry
 
 logger = logging.getLogger(__name__)
@@ -124,62 +132,58 @@ def create_app(*, registry: SuiteRegistry | None = None) -> FastAPI:
     def connect_capability(payload: QueryRequest) -> QueryResponse:
         return _handle(app, payload, force_capability=CAPABILITY_CONNECT)
 
-    # Deterministic capabilities: thin wrappers over the skills, same JSON as the CLI. No model
-    # call. `tag` is not here: it is a minutes-long batch over files that calls the model.
-    def capability(run: Callable[[], dict[str, Any]]) -> dict[str, Any]:
-        try:
-            return run()
-        except UnknownSuiteError as exc:
-            raise HTTPException(status_code=404, detail=str(exc)) from exc
-        except ValueError as exc:
-            raise HTTPException(status_code=422, detail=str(exc)) from exc
-
+    # Deterministic capabilities: one-line calls into the engine, same JSON as the CLI. No model
+    # call. `tag` is not here: it is a minutes-long batch over files, so it runs as a job.
     @app.post("/v1/capabilities/pathfind")
     def pathfind_capability(p: PathfindRequest) -> dict[str, Any]:
-        return capability(lambda: pathfind_all(app.state.registry, p.from_, p.to, suites=p.suites))
+        return _via_engine(app, "pathfind", p)
 
     @app.post("/v1/capabilities/map")
     def map_capability(p: MapRequest) -> dict[str, Any]:
-        walk: dict[str, Any] = {
-            "suites": p.suites,
-            "depth": p.depth,
-            "breadth": p.breadth or (3 if p.start is None else 4),
-            "kinds": p.kinds,
-            "max_nodes": p.max_nodes,
-        }
-        return capability(
-            lambda: (
-                map_all(app.state.registry, p.start, **walk)
-                if p.start
-                else map_all_route(app.state.registry, p.route_from or "", p.route_to or "", **walk)
-            ).to_dict()
-        )
+        return _via_engine(app, "map", p)
 
     @app.post("/v1/capabilities/discover")
     def discover_capability(p: DiscoverRequest) -> dict[str, Any]:
-        def run() -> dict[str, Any]:
-            items, notes = build_items(i.model_dump() for i in p.items)
-            return discover(
-                app.state.registry, items, suites=p.suites, depth=p.depth, breadth=p.breadth,
-                kinds=p.kinds, max_nodes=p.max_nodes, recorded=p.nodes, notes=notes,
-            )  # fmt: skip
-
-        return capability(run)
+        return _via_engine(app, "discover", p)
 
     @app.post("/v1/capabilities/roadmap")
     def roadmap_capability(p: RoadmapRequest) -> dict[str, Any]:
-        return capability(
-            lambda: roadmap(app.state.registry, p.from_, p.to, suites=p.suites, per_step=p.per_step)
-        )
+        return _via_engine(app, "roadmap", p)
 
     @app.post("/v1/capabilities/successors")
     def successors_capability(p: SuccessorsRequest) -> dict[str, Any]:
-        return capability(
-            lambda: successors(
-                app.state.registry, p.skill, suites=p.suites, depth=p.depth,
-                breadth=p.breadth, max_nodes=p.max_nodes,
+        return _via_engine(app, "successors", p)
+
+    # The engine front door: the manifest, one task entry point, and jobs.
+    @app.get("/v1/capabilities")
+    def capabilities_manifest() -> dict[str, Any]:
+        return manifest()
+
+    @app.post("/v1/run", response_model=Result)
+    def run_capability(body: RunRequest) -> JSONResponse:
+        result = run(body.capability, body.input, registry=app.state.registry)
+        code = _HTTP.get(result.status, 200)
+        return JSONResponse(result.model_dump(mode="json"), status_code=code)
+
+    @app.post("/v1/jobs", response_model=JobState, status_code=202)
+    def start_job_endpoint(body: RunRequest) -> JSONResponse:
+        try:
+            state = start_job(body.capability, body.input, registry=app.state.registry)
+        except JobRejected as exc:
+            return JSONResponse(
+                exc.result.model_dump(mode="json"), status_code=_HTTP[exc.result.status]
             )
-        )  # fmt: skip
+        except JobBusy as exc:
+            raise HTTPException(status_code=409, detail=str(exc)) from exc
+        return JSONResponse(state.model_dump(mode="json"), status_code=202)
+
+    @app.get("/v1/jobs/{job_id}", response_model=JobState)
+    def job_status_endpoint(job_id: str = Path(pattern=JOB_ID.pattern)) -> JobState:
+        return _found(job_status(job_id))
+
+    @app.post("/v1/jobs/{job_id}/cancel", response_model=JobState)
+    def cancel_job_endpoint(job_id: str = Path(pattern=JOB_ID.pattern)) -> JobState:
+        return _found(cancel_job(job_id))
 
     @app.post("/v1/sessions", response_model=SessionCreated, status_code=201)
     def create_session() -> SessionCreated:
@@ -208,6 +212,29 @@ def create_app(*, registry: SuiteRegistry | None = None) -> FastAPI:
         )
 
     return app
+
+
+_HTTP = {
+    "invalid_input": 422,
+    "unknown_suite": 404,
+    "unknown_capability": 404,
+    "use_job": 409,
+    "error": 500,
+}
+
+
+def _via_engine(app: FastAPI, name: str, payload: BaseModel) -> dict[str, Any]:
+    """The per-capability routes: the skill's own dict (same bytes), same 404/422 as before."""
+    result = run(name, payload, registry=app.state.registry)
+    if result.status in _HTTP:
+        raise HTTPException(status_code=_HTTP[result.status], detail=result.error)
+    return result.output or {}
+
+
+def _found(state: JobState) -> JobState:
+    if state.status == "not_found":
+        raise HTTPException(status_code=404, detail="unknown job")
+    return state
 
 
 def _require_session(session_id: str) -> None:

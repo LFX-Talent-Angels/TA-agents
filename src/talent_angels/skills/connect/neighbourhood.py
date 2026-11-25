@@ -11,7 +11,7 @@ from __future__ import annotations
 
 from collections.abc import Iterable, Sequence
 from dataclasses import dataclass, field
-from typing import Protocol
+from typing import Any, Protocol
 
 from talent_angels.contracts import EdgeRef, NodeRef
 from talent_angels.skills.connect.crosswalk import crosswalk_props
@@ -325,6 +325,57 @@ class MapperSuite(MapperNeighbors, SearchableSuite, Protocol):
     """A suite that can both resolve a name and list neighbors."""
 
 
+@dataclass(frozen=True)
+class StartMatch:
+    """How a start name resolved: one node ID, or (when unsure) a pick list, or neither."""
+
+    id: str | None = None
+    confidence: float | None = None  # Locate's confidence of the best hit
+    candidates: tuple[NodeRef, ...] = ()
+    # per candidate ID: (confidence, match method), as the suite reported them
+    candidate_hits: dict[str, tuple[float, str]] = field(default_factory=dict)
+
+
+class _Spy:
+    """Passes search through and keeps the raw result, so per-candidate confidence survives."""
+
+    def __init__(self, suite: SearchableSuite) -> None:
+        self.suite = suite
+        self.last: Any = None
+
+    def search_nodes(self, text: str, kind: str | None = None) -> Any:
+        self.last = self.suite.search_nodes(text, kind=kind)
+        return self.last
+
+
+def resolve_start(suite: SearchableSuite, suite_name: str, text: str) -> StartMatch:
+    """Resolve a node ID or a name; only a clear match is taken, never a guess."""
+    if text.startswith(f"{suite_name}:"):
+        return StartMatch(id=text)
+    spy = _Spy(suite)
+    located = locate(spy, suite_name, text)  # type: ignore[arg-type]
+    found = located.nodes
+    if not found:
+        return StartMatch()
+    # A lone hit is only taken when it is a label match (exact, alternative or
+    # case-insensitive, the tiers Locate itself auto-selects). A substring or
+    # meaning hit ("data analyst" -> "Data scientist") is shown, never picked.
+    exact = found[0].pref_label.casefold() == text.casefold()
+    sure = (
+        len(found) == 1
+        and "ambiguous" not in located.warnings
+        and (located.confidence or 0.0) >= AUTO_PICK_CONFIDENCE
+    )
+    if exact or sure:
+        return StartMatch(id=found[0].id, confidence=located.confidence)
+    hits = {c.node.id: (c.confidence, c.method) for c in spy.last.candidates} if spy.last else {}
+    return StartMatch(
+        confidence=located.confidence,
+        candidates=tuple(found[:10]),
+        candidate_hits=hits,
+    )
+
+
 def map_from_text(
     suite: MapperSuite,
     suite_name: str,
@@ -337,39 +388,20 @@ def map_from_text(
 ) -> Neighbourhood:
     """Map from a node ID or a name; an ambiguous name returns candidates, never a guess."""
     _check_limits(depth, breadth)
-
-    def walk(start: str) -> Neighbourhood:
-        return map_neighbourhood(
-            suite, suite_name, start, depth=depth, breadth=breadth, kinds=kinds, max_nodes=max_nodes
-        )
-
     empty = Neighbourhood(suite=suite_name, start_id="", depth=depth, breadth=breadth)
-    if text.startswith(f"{suite_name}:"):
-        by_id = walk(text)
-        if by_id.nodes:
-            return by_id
+    match = resolve_start(suite, suite_name, text)
+    if match.id is None:
+        empty.warnings.append("ambiguous_start" if match.candidates else f"start_not_found:{text}")
+        empty.candidates = list(match.candidates)
+        return empty
+    walked = map_neighbourhood(
+        suite, suite_name, match.id, depth=depth, breadth=breadth, kinds=kinds, max_nodes=max_nodes
+    )
+    if text.startswith(f"{suite_name}:") and not walked.nodes:
         # An ID that does not exist is a miss; searching its text would guess.
         empty.warnings.append(f"start_not_found:{text}")
         return empty
-    located = locate(suite, suite_name, text)
-    found = located.nodes
-    if not found:
-        empty.warnings.append(f"start_not_found:{text}")
-        return empty
-    # A lone hit is only taken when it is a label match (exact, alternative or
-    # case-insensitive, the tiers Locate itself auto-selects). A substring or
-    # meaning hit ("data analyst" -> "Data scientist") is shown, never picked.
-    exact = found[0].pref_label.casefold() == text.casefold()
-    sure = (
-        len(found) == 1
-        and "ambiguous" not in located.warnings
-        and (located.confidence or 0.0) >= AUTO_PICK_CONFIDENCE
-    )
-    if exact or sure:
-        return walk(found[0].id)
-    empty.warnings.append("ambiguous_start")
-    empty.candidates = found[:10]
-    return empty
+    return walked
 
 
 @dataclass
@@ -514,7 +546,9 @@ __all__ = [
     "MapperSuite",
     "RouteMap",
     "Pruned",
+    "StartMatch",
     "map_from_text",
     "map_neighbourhood",
     "map_route",
+    "resolve_start",
 ]

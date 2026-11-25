@@ -61,6 +61,15 @@ async def _drive() -> dict[str, Any]:
             )
             await call("map_route", "map_neighbors", {"route_node_ids": [DEV.id], "suite": "fake"})
             await call("map_bad", "map_neighbors", {"start": "x", "suite": "down"})
+            await call(
+                "discover",
+                "discover_map",
+                {
+                    "items": ["software developer", "stonemason"],
+                    "related_to": [["software developer", "stonemason"], ["Rust", "stonemason"]],
+                },
+            )
+            await call("discover_big", "discover_map", {"items": [f"i{n}" for n in range(101)]})
             await call("miss", "search_nodes", {"text": "stonemason"})
             await call("neighbors", "get_neighbors", {"node_id": DEV.id})
             await call("neighbors_missing", "get_neighbors", {"node_id": "fake:occupation:nope"})
@@ -103,7 +112,28 @@ def test_the_server_exposes_the_contract_tools_and_map_neighbors(served: dict[st
         "enumerate_paths",
         "score_paths",
         "map_neighbors",
+        "discover_map",
     }
+
+
+def test_discover_map_returns_the_cited_discovery_json(served: dict[str, Any]) -> None:
+    found = served["discover"]
+    assert found["policy"] == "discover-v1"
+    assert [(i["item"], i["status"]) for i in found["items"]] == [
+        ("software developer", "resolved"),
+        ("stonemason", "not_found"),
+    ]
+    assert found["suites"]["broken"]["status"] == "error:RuntimeError"
+    assert [(g["item"], g["verdict"]) for g in found["guesses"]] == [
+        ("software developer", "unresolved")
+    ]
+    assert found["warnings"] == ["related_to_ignored:Rust;stonemason"]
+    assert all(n["cite"] for n in found["nodes"])
+
+
+def test_discover_map_refuses_more_than_a_hundred_items(served: dict[str, Any]) -> None:
+    # The tool's own input limit rejects the call before any suite is opened.
+    assert served["discover_big"] is None
 
 
 def test_instructions_state_the_two_rules_a_client_can_get_wrong(

@@ -98,6 +98,7 @@ def test_a_tag_job_without_a_model_over_http(
     monkeypatch.setenv("TA_AGENTS_HOME", str(tmp_path / "home"))
     monkeypatch.setenv("TA_TAG_ROOT", str(root))
     monkeypatch.delenv("TA_JOBS_ALLOW_MODEL", raising=False)
+    monkeypatch.setenv("TA_JOBS_ENABLED", "1")
     started = client.post(
         "/v1/jobs",
         json={"capability": "tag", "input": {"path": "proj", "limit": 2, "suites": ["esco"]}},

@@ -84,7 +84,7 @@ _SAVED_STREAMS: list[object] = []
 
 
 @contextlib.contextmanager
-def _quiet_stdio() -> Iterator[None]:
+def quiet_stdio() -> Iterator[None]:
     """Hide LiteLLM's banners without hiding anyone else's output."""
     here = threading.get_ident()
     with _MUTE_LOCK:
@@ -101,6 +101,9 @@ def _quiet_stdio() -> Iterator[None]:
             if not _MUTED_THREADS and _SAVED_STREAMS:
                 sys.stdout, sys.stderr = _SAVED_STREAMS  # type: ignore[assignment]
                 _SAVED_STREAMS.clear()
+
+
+_quiet_stdio = quiet_stdio  # the old private name, kept for callers and tests
 
 
 def _silence_litellm_runtime() -> None:
@@ -192,7 +195,7 @@ class LiteLLMClient:
         if completion_fn is None:
             ensure_local_model_cost_map()
             os.environ.setdefault("LITELLM_LOG", "ERROR")
-            with _quiet_stdio():
+            with quiet_stdio():
                 from litellm import completion
 
                 _silence_litellm_runtime()
@@ -208,6 +211,10 @@ class LiteLLMClient:
             "max_tokens": DEFAULT_MAX_TOKENS,
             "timeout": llm_timeout_seconds(),
             "num_retries": llm_num_retries(),
+            # Reproducible prose where the model allows it; drop_params lets LiteLLM drop
+            # `temperature` for a model that rejects it instead of failing the call.
+            "temperature": 0,
+            "drop_params": True,
         }
         if tools:
             # OpenAI-shaped tools only. Do not send tool_choice="auto": some
@@ -220,13 +227,13 @@ class LiteLLMClient:
             kwargs["extra_body"] = {"reasoning": {"enabled": True}}
 
         try:
-            with _quiet_stdio():
+            with quiet_stdio():
                 raw = self._completion(**kwargs)
         except Exception as first:
             if "extra_body" in kwargs:
                 kwargs.pop("extra_body", None)
                 try:
-                    with _quiet_stdio():
+                    with quiet_stdio():
                         raw = self._completion(**kwargs)
                 except Exception as exc:
                     raise LLMError(f"LiteLLM provider request failed: {exc}") from exc

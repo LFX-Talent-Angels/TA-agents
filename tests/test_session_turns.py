@@ -1029,7 +1029,7 @@ def test_greeting_after_bind_passes_bound_title_into_phrasing() -> None:
         def complete(self, messages: list[Message], **_kwargs: object) -> LLMResult:
             self.calls.append(messages)
             return LLMResult(
-                text="Still bound to nurse — ask for skills or another title.",
+                text="You are bound to nurse — ask for skills or another title.",
                 provider=self.provider,
                 model=self.model,
                 usage=LLMUsage(),
@@ -1043,7 +1043,7 @@ def test_greeting_after_bind_passes_bound_title_into_phrasing() -> None:
     blob = "\n".join(message.content for call in client.calls for message in call)
     assert "Bound title this session: nurse. Do not pretend you forgot." in blob
     assert "Bound occupation: nurse" in blob
-    assert "Still bound to nurse" in reply.text
+    assert "bound to nurse" in reply.text
 
 
 def test_help_plain_after_bind_passes_bound_title_into_phrasing() -> None:

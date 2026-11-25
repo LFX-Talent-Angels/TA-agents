@@ -118,7 +118,7 @@ def test_phrase_map_unique_locate_rejects_related_titles_not_on_card() -> None:
 
 def test_phrase_map_keeps_allowed_bold_title() -> None:
     result = AgentResult(capability="locate", suite="esco", nodes=[_occ()], confidence=0.95)
-    client = _Scripted("Located **software developer**. Ask for essential skills next.")
+    client = _Scripted("This is the **software developer** title. Ask for essential skills next.")
     text = phrase_map(
         client,
         question="software developer",

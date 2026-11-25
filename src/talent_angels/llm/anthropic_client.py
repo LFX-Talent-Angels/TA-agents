@@ -49,6 +49,7 @@ class AnthropicLLMClient:
             "model": self.model,
             "messages": turns,
             "max_tokens": DEFAULT_MAX_TOKENS,
+            "temperature": 0,
         }
         if system_text:
             kwargs["system"] = system_text

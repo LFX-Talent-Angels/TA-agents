@@ -5,6 +5,7 @@ from __future__ import annotations
 import json
 import re
 from dataclasses import dataclass
+from typing import Any
 
 from pydantic import BaseModel, ConfigDict, Field, ValidationError, field_validator
 
@@ -297,6 +298,8 @@ def _strip_suite_suffix(text: str) -> str:
     return text
 
 
+strip_suite_suffix = _strip_suite_suffix  # public name for the plain-language router
+
 #: "from X to Y": X is the start, Y is the destination (ADR-0008 decision 1/2).
 _PATHFIND_RES = (
     re.compile(
@@ -550,15 +553,20 @@ def uses_llm_planner(client: LLMClient) -> bool:
     return getattr(client, "provider", "none") != "none"
 
 
-def parse_plan_text(text: str) -> PlanDraft:
-    cleaned = text.strip()
-    fenced = re.sub(r"^```(?:json)?\s*|\s*```$", "", cleaned)
+def json_object(text: str) -> dict[str, Any]:
+    """The first JSON object in a model reply (fences stripped). ValueError when there is none."""
+    fenced = re.sub(r"^```(?:json)?\s*|\s*```$", "", text.strip())
     match = _JSON_OBJECT.search(fenced)
     if match is None:
         raise ValueError("planner response did not contain a JSON object")
     payload = json.loads(match.group(0))
     if not isinstance(payload, dict):
         raise ValueError("planner JSON must be an object")
+    return payload
+
+
+def parse_plan_text(text: str) -> PlanDraft:
+    payload = json_object(text)
     draft = PlanDraft.model_validate(payload)
     # A suite suffix ("web developer in ESCO") is reliably stripped by code
     # for the pathfind/compare regex heuristics below, but the model's own

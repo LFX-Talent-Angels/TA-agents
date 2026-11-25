@@ -11,6 +11,7 @@ from talent_angels.assistant.llm_call import measure_complete
 from talent_angels.contracts import AgentResult
 from talent_angels.llm import LLMClient, Message
 from talent_angels.runlog import StageUsage
+from talent_angels.session.grounding import grounded
 
 AMBIGUOUS_CHOICE_LIMIT = 3
 
@@ -136,4 +137,4 @@ def build_answer(
         llm_result, stage = measure_complete(llm_client, messages, stage="answer")
     except RuntimeError:
         return summary, None
-    return llm_result.text, stage
+    return grounded(llm_result.text, summary) or summary, stage

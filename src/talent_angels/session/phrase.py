@@ -17,6 +17,7 @@ from talent_angels.llm.protocol import uses_chat_phrasing
 from talent_angels.memory.agent_notes import notes_prefix
 from talent_angels.memory.profile import profile_prefix
 from talent_angels.session.followup import relation_tags
+from talent_angels.session.grounding import grounded
 from talent_angels.session.i18n import language
 from talent_angels.skills.locate.rank import code_facts, published_facts
 
@@ -113,7 +114,7 @@ def phrase_chat(
         return fallback
     if mode == "miss" and _looks_like_invented_miss(text):
         return fallback
-    return text
+    return grounded(text, fallback + "\n" + hint) or fallback
 
 
 def phrase_map(
@@ -150,7 +151,7 @@ def phrase_map(
         return fallback
     if _names_the_product(text):
         return fallback
-    return text
+    return grounded(text, card) or fallback
 
 
 def locate_card(result: AgentResult) -> str:

@@ -18,6 +18,7 @@ from talent_angels.llm import LLMClient, Message
 from talent_angels.llm.protocol import uses_chat_phrasing
 from talent_angels.memory.agent_notes import notes_prefix
 from talent_angels.memory.profile import profile_prefix
+from talent_angels.session.grounding import grounded
 from talent_angels.skills.connect.compare import CAPABILITY_COMPARE, skill_overlap
 from talent_angels.skills.locate.rank import code_facts, published_facts
 from talent_angels.skills.pathfind.dispatch import CAPABILITY_PATHFIND
@@ -292,6 +293,9 @@ def synthesize(
         return fallback
     text = prose_only(llm_result.text or "")
     if not text or _phrasing_is_unsafe(text):
+        return fallback
+    text = grounded(text, fallback)
+    if not text:
         return fallback
     sources = sources_line(results, extra_warnings=extra_warnings)
     if "Sources used:" not in text:

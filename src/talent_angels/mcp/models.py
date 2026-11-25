@@ -198,6 +198,15 @@ class OrderPayload(BaseModel):
     warnings: list[str] = Field(default_factory=list)
 
 
+class PathfindPayload(BaseModel):
+    """pathfind: skill gap and ranked routes between two occupations, per taxonomy, as is."""
+
+    model_config = ConfigDict(extra="allow")
+
+    meaning: str = "skill gap and routes from the taxonomy graph; not advice"
+    warnings: list[str] = Field(default_factory=list)
+
+
 class SearchPayload(_Payload):
     """search_nodes: free text resolved to candidate nodes."""
 

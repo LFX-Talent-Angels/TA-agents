@@ -31,6 +31,7 @@ from talent_angels.session.credentials import (
 from talent_angels.session.kernel import handle_line
 from talent_angels.session.models import SessionState
 from talent_angels.session.router import route_line
+from talent_angels.session.slash import capability_command
 from talent_angels.session.store import load_last, new_session, save_session, sessions_dir
 from talent_angels.session.switch import SwitchError, apply, current_choice, load_catalogue, resolve
 from talent_angels.suites import SuiteRegistry, default_suite_registry
@@ -234,11 +235,14 @@ def main(argv: Sequence[str] | None = None, *, registry: SuiteRegistry | None = 
             # Commands can change session state, the active client, or the
             # process environment. Keep those effects on this thread so an
             # Esc cancellation cannot leave the UI and active client apart.
+            if capability_command(line) is not None:
+                console.print("[dim]Running… this can take a while; the files are listed below.[/]")
             reply = handle_line(
                 turn_state,
                 line,
                 runner=make_runner(turn_outcomes),
                 llm_client=llm_client,
+                registry=selected,
             )
         else:
             label = "Looking that up…" if kind == "map" else "Thinking…"

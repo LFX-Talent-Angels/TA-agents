@@ -5,7 +5,10 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Literal
 
-CommandName = Literal["help", "quit", "save", "resume", "reset", "reset-all", "model", "login"]
+CommandName = Literal[
+    "help", "quit", "save", "resume", "reset", "reset-all", "model", "login",
+    "map", "discover", "roadmap", "successors", "tag",
+]  # fmt: skip
 
 _NAME_MAP: dict[str, CommandName] = {
     "help": "help",
@@ -23,6 +26,11 @@ _NAME_MAP: dict[str, CommandName] = {
     "forget": "reset-all",
     "model": "model",
     "login": "login",
+    "map": "map",
+    "discover": "discover",
+    "roadmap": "roadmap",
+    "successors": "successors",
+    "tag": "tag",
 }
 
 

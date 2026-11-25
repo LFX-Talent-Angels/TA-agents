@@ -305,6 +305,10 @@ Expect JSON with `plan`, `answer`, `tools`, `tokens`, `cost_usd`.
 | Ambiguous *developer* | Locate + clarification, no neighbors |
 | Path / gap from A to B | Pathfind: the real skill gap, routes, and a full-retrain flag when the gap is too large |
 
+Every capability (map, discover, roadmap, successors, pathfind, tag) is reachable from the CLI,
+the chat (`/map`, `/discover`, `/roadmap`, `/successors`, `/tag`), MCP and HTTP: see
+[`docs/interfaces.md`](./docs/interfaces.md) for the matrix and example calls.
+
 Batch-tag a whole client document instead of chatting row by row: see [`docs/tagging.md`](./docs/tagging.md) (`ta-agent tag <project>`).
 
 ### HTTP / Swagger
@@ -316,7 +320,10 @@ uvicorn talent_angels.api.app:app --reload
 Endpoints: `GET /v1/health` (per suite + LLM), `POST /v1/query`,
 `POST /v1/sessions` → `session_id` (pass it in later queries for follow-ups
 like "what skills does it need?"), `GET /v1/sessions/{id}/history`,
-`DELETE /v1/sessions/{id}` (forget one conversation). Set `TA_CORS_ORIGINS` for
+`DELETE /v1/sessions/{id}` (forget one conversation); the deterministic
+capabilities `POST /v1/capabilities/{pathfind,map,discover,roadmap,successors}`
+(no model call; `curl` examples in [`docs/interfaces.md`](./docs/interfaces.md); `tag` is not
+exposed over HTTP, it is a minutes-long batch that uses the model). Set `TA_CORS_ORIGINS` for
 a browser UI.
 
 Open http://127.0.0.1:8000/docs and `POST /v1/query` with

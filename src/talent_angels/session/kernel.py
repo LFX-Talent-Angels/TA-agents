@@ -88,6 +88,7 @@ from talent_angels.session.phrase import (
 from talent_angels.session.picker import PICKER_LIMIT, bind_pick, choices_from_result, render_picker
 from talent_angels.session.recall import recall_reply
 from talent_angels.session.router import route_line
+from talent_angels.session.slash import capability_command, run_slash
 from talent_angels.session.store import (
     clear_conversation,
     load_last,
@@ -102,6 +103,7 @@ from talent_angels.skills.connect.compare import CAPABILITY_COMPARE
 from talent_angels.skills.locate.areas import AreaRequest
 from talent_angels.skills.locate.rank import published_facts
 from talent_angels.skills.pathfind.dispatch import CAPABILITY_PATHFIND
+from talent_angels.suites import SuiteRegistry, default_suite_registry
 
 _NO_PENDING = "There's no numbered list to pick from. Type a job title first."
 _BAD_PICK = "That number isn't in the list. Reply with a number from the options."
@@ -158,12 +160,20 @@ def handle_line(
     *,
     runner: TurnRunner,
     llm_client: LLMClient | None = None,
+    registry: SuiteRegistry | None = None,
 ) -> ChatReply:
     """Mutate state (transcript, binding, pending). Never search for a bare number.
 
     One line is one turn with one clock (``turn_deadline``): every model call it
     makes, from narrowing to phrasing, shares it.
     """
+    capability = capability_command(text)
+    if capability is not None:
+        # /map /discover /roadmap /successors /tag: batch work that can run for minutes.
+        # No turn clock, no model call, never a chat turn (no runner, no run-log record).
+        name, argument = capability
+        reply = run_slash(name, argument, registry or default_suite_registry())
+        return _finish(state, text, reply)
     with turn_deadline():
         set_language(state.language)
         return _handle_line(state, text, runner=runner, llm_client=llm_client)

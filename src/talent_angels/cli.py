@@ -51,7 +51,7 @@ from talent_angels.skills.connect.discover import (
     discover,
 )
 from talent_angels.skills.connect.discover_io import read_items
-from talent_angels.skills.connect.discover_report import write_outputs
+from talent_angels.skills.connect.discover_report import discover_summary, write_outputs
 from talent_angels.skills.connect.federated import map_all, map_all_route
 from talent_angels.skills.connect.neighbourhood import (
     DEFAULT_MAX_NODES,
@@ -530,15 +530,7 @@ def _run_discover(args: argparse.Namespace, registry: SuiteRegistry) -> int:
         print(f"discover: {exc}", file=sys.stderr)
         return 2
     paths = write_outputs(data, args.out or Path(args.file).resolve().parent)
-    s, g = data["summary"], data["summary"]["guesses"]
-    print(
-        f"{s['items']} items: {s['resolved_items']} found, "
-        f"{s['not_in_any_taxonomy']} in no taxonomy\n"
-        f"{s['links']} links, {s['connectors']} connectors, {s['routes']} routes, "
-        f"{s['orphans']} orphans, {s['clusters']} clusters\n"
-        f"guesses: {g['confirmed']} confirmed, {g['indirect']} indirect, "
-        f"{g['not_in_graph']} not in graph, {g['unresolved']} unresolved"
-    )
+    print(discover_summary(data))
     for name, state in data["suites"].items():
         if state["status"] != "ok":
             print(f"{name}: {state['status']}", file=sys.stderr)

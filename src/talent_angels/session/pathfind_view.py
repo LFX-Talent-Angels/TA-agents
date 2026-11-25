@@ -17,7 +17,9 @@ from talent_angels.assistant.merge import suite_heading
 from talent_angels.contracts import AgentResult, NodeRef, Route
 from talent_angels.session.i18n import t
 from talent_angels.skills.locate.rank import published_facts
+from talent_angels.skills.pathfind.dispatch import pathfind_one
 from talent_angels.skills.roadmap.card import PREFIX
+from talent_angels.suites import SuiteRegistry
 
 #: Names shown per gap bucket before "+N more".
 GAP_PREVIEW = 5
@@ -162,3 +164,85 @@ def render_pathfind(result: AgentResult) -> str:
     if (order := _learning_order(result)) is not None:
         blocks.append(order)
     return "\n\n".join(blocks).strip()
+
+
+def _brief(node: NodeRef) -> dict[str, str]:
+    return {"id": node.id, "label": node.pref_label}
+
+
+def pathfind_data(result: AgentResult) -> dict[str, object]:
+    """The path card as JSON for one taxonomy: same facts as ``render_pathfind``, no phrasing."""
+    warnings = [w for w in result.warnings if not w.startswith(("route_scores:", PREFIX))]
+    if "same_start_and_target" in result.warnings:
+        status = "same_start_and_target"
+    elif "ambiguous" in result.warnings:
+        status = "ambiguous"
+    elif len(result.nodes) < 2:
+        status = "not_found"
+    else:
+        status = "ok"
+    data: dict[str, object] = {"status": status, "warnings": warnings}
+    if status == "ambiguous":
+        side = next(
+            (w.split(":", 1)[1] for w in result.warnings if w.startswith("pathfind_side:")), ""
+        )
+        data["side"] = side
+        data["candidates"] = [_brief(n) for n in result.nodes[:10]]
+    if status != "ok":
+        return data
+    start, target = result.nodes[0], result.nodes[1]
+    essential, optional, software = _gap_buckets(result)
+    labels = {node.id: node.pref_label for node in result.nodes}
+    raw = next((w for w in result.warnings if w.startswith("route_scores:")), "route_scores:")
+    scores = [x for x in raw.split(":", 1)[1].split(",") if x]
+    order = next((w for w in result.warnings if w.startswith(PREFIX)), None)
+    data.update(
+        start=_brief(start),
+        target=_brief(target),
+        confidence=result.confidence,
+        gap={
+            "essential": [_brief(n) for n in essential],
+            "optional": [_brief(n) for n in optional],
+            "software": [_brief(n) for n in software],
+        },
+        gap_too_large="gap_too_large" in result.warnings,
+        routes=[
+            {
+                "node_ids": r.node_ids,
+                "labels": [labels.get(i, i) for i in r.node_ids],
+                "score": float(scores[i]) if i < len(scores) else None,
+            }
+            for i, r in enumerate(result.routes)
+        ],
+        learning_order=[
+            {
+                "step": n,
+                "items": [{"label": label, "stated": s} for label, s in items],
+                "more": more,
+            }
+            for n, items, more in (json.loads(order[len(PREFIX) :]) if order else [])
+        ],
+    )
+    return data
+
+
+def pathfind_all(
+    registry: SuiteRegistry, start: str, target: str, *, suites: list[str] | None = None
+) -> dict[str, object]:
+    """The path card of every (or the chosen) taxonomy, as JSON. No model call, no phrasing."""
+    from talent_angels.skills.connect.federated import _select
+
+    parts: dict[str, object] = {}
+    for name in _select(registry, suites):
+        try:
+            with registry.open(name) as runtime:
+                result, _ = pathfind_one(runtime.suite, name, start, target)  # type: ignore[arg-type]
+            parts[name] = pathfind_data(result)
+        except Exception as exc:  # one broken taxonomy must not hide the others
+            parts[name] = {"status": f"error:{type(exc).__name__}", "warnings": []}
+    return {
+        "start": start,
+        "target": target,
+        "suites": parts,
+        "meaning": "skill gap and routes from the taxonomy graph; not advice",
+    }

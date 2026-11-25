@@ -7,20 +7,26 @@ from __future__ import annotations
 
 import logging
 import os
-from collections.abc import AsyncIterator
+from collections.abc import AsyncIterator, Callable
 from contextlib import asynccontextmanager
+from typing import Any
 
 from fastapi import FastAPI, HTTPException, Path
 from fastapi.middleware.cors import CORSMiddleware
 
 from talent_angels.api.schemas import (
     SESSION_ID_PATTERN,
+    DiscoverRequest,
     HealthResponse,
+    MapRequest,
+    PathfindRequest,
     QueryRequest,
     QueryResponse,
+    RoadmapRequest,
     SessionCreated,
     SessionErased,
     SessionHistory,
+    SuccessorsRequest,
     SuiteHealth,
     UsageInfo,
 )
@@ -35,6 +41,7 @@ from talent_angels.llm.factory import get_answer_mode, get_llm_client
 from talent_angels.llm.stub_client import StubLLMClient
 from talent_angels.memory.erase import erase_session
 from talent_angels.session.models import LastBinding, SessionState
+from talent_angels.session.pathfind_view import pathfind_all
 from talent_angels.session.store import (
     load_session,
     new_session,
@@ -42,6 +49,10 @@ from talent_angels.session.store import (
     session_exists,
     sessions_dir,
 )
+from talent_angels.skills.connect.discover import discover
+from talent_angels.skills.connect.discover_io import build_items
+from talent_angels.skills.connect.federated import map_all, map_all_route
+from talent_angels.skills.roadmap import roadmap, successors
 from talent_angels.suites import SuiteRegistry, UnknownSuiteError, default_suite_registry
 
 logger = logging.getLogger(__name__)
@@ -112,6 +123,63 @@ def create_app(*, registry: SuiteRegistry | None = None) -> FastAPI:
     @app.post("/v1/capabilities/connect", response_model=QueryResponse)
     def connect_capability(payload: QueryRequest) -> QueryResponse:
         return _handle(app, payload, force_capability=CAPABILITY_CONNECT)
+
+    # Deterministic capabilities: thin wrappers over the skills, same JSON as the CLI. No model
+    # call. `tag` is not here: it is a minutes-long batch over files that calls the model.
+    def capability(run: Callable[[], dict[str, Any]]) -> dict[str, Any]:
+        try:
+            return run()
+        except UnknownSuiteError as exc:
+            raise HTTPException(status_code=404, detail=str(exc)) from exc
+        except ValueError as exc:
+            raise HTTPException(status_code=422, detail=str(exc)) from exc
+
+    @app.post("/v1/capabilities/pathfind")
+    def pathfind_capability(p: PathfindRequest) -> dict[str, Any]:
+        return capability(lambda: pathfind_all(app.state.registry, p.from_, p.to, suites=p.suites))
+
+    @app.post("/v1/capabilities/map")
+    def map_capability(p: MapRequest) -> dict[str, Any]:
+        walk: dict[str, Any] = {
+            "suites": p.suites,
+            "depth": p.depth,
+            "breadth": p.breadth or (3 if p.start is None else 4),
+            "kinds": p.kinds,
+            "max_nodes": p.max_nodes,
+        }
+        return capability(
+            lambda: (
+                map_all(app.state.registry, p.start, **walk)
+                if p.start
+                else map_all_route(app.state.registry, p.route_from or "", p.route_to or "", **walk)
+            ).to_dict()
+        )
+
+    @app.post("/v1/capabilities/discover")
+    def discover_capability(p: DiscoverRequest) -> dict[str, Any]:
+        def run() -> dict[str, Any]:
+            items, notes = build_items(i.model_dump() for i in p.items)
+            return discover(
+                app.state.registry, items, suites=p.suites, depth=p.depth, breadth=p.breadth,
+                kinds=p.kinds, max_nodes=p.max_nodes, recorded=p.nodes, notes=notes,
+            )  # fmt: skip
+
+        return capability(run)
+
+    @app.post("/v1/capabilities/roadmap")
+    def roadmap_capability(p: RoadmapRequest) -> dict[str, Any]:
+        return capability(
+            lambda: roadmap(app.state.registry, p.from_, p.to, suites=p.suites, per_step=p.per_step)
+        )
+
+    @app.post("/v1/capabilities/successors")
+    def successors_capability(p: SuccessorsRequest) -> dict[str, Any]:
+        return capability(
+            lambda: successors(
+                app.state.registry, p.skill, suites=p.suites, depth=p.depth,
+                breadth=p.breadth, max_nodes=p.max_nodes,
+            )
+        )  # fmt: skip
 
     @app.post("/v1/sessions", response_model=SessionCreated, status_code=201)
     def create_session() -> SessionCreated:

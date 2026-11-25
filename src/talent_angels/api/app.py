@@ -167,6 +167,12 @@ def create_app(*, registry: SuiteRegistry | None = None) -> FastAPI:
 
     @app.post("/v1/jobs", response_model=JobState, status_code=202)
     def start_job_endpoint(body: RunRequest) -> JSONResponse:
+        if os.environ.get("TA_JOBS_ENABLED") != "1":  # no auth here: an operator opts in
+            raise HTTPException(
+                status_code=403,
+                detail="starting jobs over HTTP is disabled; the operator must set "
+                "TA_JOBS_ENABLED=1 on the server (status and cancel stay open)",
+            )
         try:
             state = start_job(body.capability, body.input, registry=app.state.registry)
         except JobRejected as exc:

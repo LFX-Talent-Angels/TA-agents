@@ -13,7 +13,7 @@ same graph data give the same JSON, byte for byte (no timestamps).
 | **roadmap**: what to learn from job A to job B, in order (`learn-order-v1`) | `ta-agent roadmap "data analyst" "data scientist"` | `/roadmap data analyst \| data scientist` | `roadmap` | `POST /v1/capabilities/roadmap` |
 | **successors**: what comes after a skill (`learn-order-v1`) | `ta-agent successors "Python (computer programming)"` | `/successors Python (computer programming)` | `successors` | `POST /v1/capabilities/successors` |
 | **pathfind**: skill gap and ranked routes between two jobs | chat or API; `ta-agent map --route A B` maps around the best route | "path from nurse to data analyst" (the path card) | `pathfind` | `POST /v1/capabilities/pathfind` |
-| **tag**: batch-tag documents against the taxonomies | `ta-agent tag project/ --no-llm` | `/tag project/ --no-llm` | `start_job`, `job_status`, `cancel_job` | `POST /v1/jobs` (see [Jobs](#jobs-tag)) |
+| **tag**: batch-tag documents against the taxonomies | `ta-agent tag project/ --no-llm` | `/tag project/ --no-llm` | `start_job`, `job_status`, `cancel_job` | `POST /v1/jobs` (needs `TA_JOBS_ENABLED=1`; see [Jobs](#jobs-tag)) |
 | **locate**, **connect**: resolve text to nodes, one hop around a node | `ta-agent locate`, `connect` (chat turns) | plain questions | `search_nodes`, `get_neighbors` | `POST /v1/run` (the suite calls) |
 
 `tag` is a job: it runs for minutes and may call a model, so over HTTP and MCP it starts in the
@@ -68,6 +68,10 @@ the same engine and return the same JSON as before.
 
 ### Jobs (`tag`)
 
+The HTTP API has no auth, so **starting a job over HTTP is off by default**: `POST /v1/jobs`
+answers `403` until the operator sets `TA_JOBS_ENABLED=1` on the server. `GET /v1/jobs/{id}` and
+`POST /v1/jobs/{id}/cancel` stay open. MCP is a local stdio process and is not gated.
+
 ```bash
 curl -s localhost:8000/v1/jobs -H 'content-type: application/json' \
   -d '{"capability": "tag", "input": {"path": "uca-pilot", "limit": 20}}'     # 202 + the job state
@@ -82,6 +86,8 @@ curl -s -X POST localhost:8000/v1/jobs/<id>/cancel
 - `no_llm` is `true` by default here (the CLI's default is the model). A model run
   (`"no_llm": false`) is refused unless the server sets `TA_JOBS_ALLOW_MODEL=1`, because the HTTP
   API has no auth. With the model there is no cost estimate and no budget cap: try `limit` first.
+- The root check runs twice: at start, and again inside the worker just before the tag runner
+  gets the path. If a link was swapped in between, the job fails with `path_outside_root`.
 - State lives in `<TA home>/jobs/<id>.json` (`running`, `done`, `failed`, `cancelled`,
   `interrupted` when the process died, `not_found`). One job runs at a time per server process.
 - Cancel is cooperative: the run stops at its next progress tick (an in-flight model call

@@ -62,7 +62,7 @@ refused, no model call), and `start_job` / `job_status` / `cancel_job` for `tag`
 tagging), which runs for minutes. A job reads `path` under the server's tag root (`TA_TAG_ROOT`,
 default `<TA home>/tag`; set it in the client's MCP config to the projects folder), searches without a
 model unless the server sets `TA_JOBS_ALLOW_MODEL=1`, and keeps its state in
-`<TA home>/jobs/<id>.json`. One job runs at a time per server process.
+`<TA home>/jobs/<id>.json`. MCP needs no `TA_JOBS_ENABLED` (that gates HTTP only). One job runs at a time per server process.
 
 `warnings` is machine-readable and load-bearing: `not_found`, `ambiguous`,
 `no_neighbors`, `node_not_found`, `no_path`, `endpoint_not_found`,

@@ -7,7 +7,10 @@ tag runs off the same project ledger.
 
 Guardrails for `tag` (the HTTP API has no auth): `path` must resolve inside the tag root
 (`TA_TAG_ROOT`, else `<TA home>/tag`), symlinks included; a model run needs
-`TA_JOBS_ALLOW_MODEL=1` on the server, so a caller cannot spend money on its own.
+`TA_JOBS_ALLOW_MODEL=1` on the server, so a caller cannot spend money on its own. The check
+runs twice: when the job starts and again in the worker right before the tag runner gets the path.
+Starting a job over HTTP also needs `TA_JOBS_ENABLED=1` (see `api/app.py`); MCP is a local stdio
+process and is not gated.
 shortcut: no upload; add a multipart endpoint that writes into tag_root()/uploads/<job id>/ when a
 remote UI needs it (python-multipart is not a dependency).
 """
@@ -68,6 +71,10 @@ class JobState(BaseModel):
     progress: list[str] = []
     step: dict[str, Any] | None = None  # {"label", "done", "total"}
     result: Result | None = None
+
+
+class _PathMoved(Exception):
+    """The tag path no longer passes the root check when the worker is about to use it."""
 
 
 class JobBusy(RuntimeError):
@@ -174,7 +181,7 @@ def start_job(capability: str, payload: Mapping[str, Any], *, registry: SuiteReg
         _write(state)
         thread = threading.Thread(
             target=_work,
-            args=(state, inp, registry, event),
+            args=(state, inp, asked, registry, event),
             daemon=True,
             name=f"ta-job-{job_id[:8]}",
         )
@@ -183,8 +190,14 @@ def start_job(capability: str, payload: Mapping[str, Any], *, registry: SuiteReg
     return state.model_copy(deep=True)  # the worker keeps mutating its own copy
 
 
-def _work(state: JobState, inp: BaseModel, registry: SuiteRegistry, event: threading.Event) -> None:
-    from talent_angels.llm.protocol import bind_cancel
+def _work(
+    state: JobState,
+    inp: BaseModel,
+    asked: BaseModel,
+    registry: SuiteRegistry,
+    event: threading.Event,
+) -> None:
+    from talent_angels.llm.protocol import TurnCancelled, bind_cancel
 
     bind_cancel(event)  # model calls stop once the job is cancelled
     marker = _marker(state.id)
@@ -213,7 +226,21 @@ def _work(state: JobState, inp: BaseModel, registry: SuiteRegistry, event: threa
 
     ctx = RunContext(progress=progress, step=step, cancel=event)
     try:
+        if isinstance(asked, TagRequest) and isinstance(inp, TagRequest):
+            # The start check is old by now: a link may have been swapped. Check again, and hand
+            # the runner only a path that is still the one checked (a tiny window remains
+            # between this line and the runner's own open; closing it needs fd-based opens).
+            try:
+                again = _checked_tag(asked)
+            except ValueError:
+                again = None
+            if again != inp:
+                raise _PathMoved
         result = run(state.capability, inp, registry=registry, ctx=ctx, allow_long=True)
+    except _PathMoved:
+        result = Result(status="error", call=state.call, error="path_outside_root")
+    except TurnCancelled:  # a ledger write saw the cancel event first: the same end as a tick
+        result = Result(status="cancelled", call=state.call)
     except BaseException as exc:  # noqa: BLE001 - a job thread must always write its end
         result = Result(status="error", call=state.call, error=type(exc).__name__)
     state.result = result

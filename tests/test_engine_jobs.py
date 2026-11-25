@@ -233,3 +233,50 @@ def test_a_running_file_with_a_dead_process_is_interrupted() -> None:
     )
     jobs._write(mine)
     assert job_status(mine.id).status == "interrupted"
+
+
+def test_a_link_swapped_after_the_start_check_fails_the_job(
+    _env: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    name = _project(_env)
+    outside = tmp_path / "outside"
+    (outside / "inputs").mkdir(parents=True)
+    shutil.copy(FIXTURE, outside / "inputs" / "standard.json")
+    link = _env / "link"
+    link.symlink_to(_env / name)  # fine at start: it points inside the root
+
+    real_work = jobs._work
+
+    def swap_then_work(*args: Any) -> None:  # between the start check and the worker's check
+        link.unlink()
+        link.symlink_to(outside)
+        real_work(*args)
+
+    monkeypatch.setattr(jobs, "_work", swap_then_work)
+    state = start_job("tag", {"path": "link"}, registry=tag_registry())
+    jobs._join(state.id)
+
+    end = job_status(state.id)
+    assert end.status == "failed" and end.result and end.result.error == "path_outside_root"
+    assert not list(outside.rglob("*.xlsx")) and not (outside / ".ta-tag").exists()
+
+
+def test_a_ledger_cancel_ends_the_job_as_cancelled(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Step 1's ledger raises TurnCancelled when the bound event is set: same end as a tick."""
+    from talent_angels.llm.protocol import check_cancelled
+
+    started = threading.Event()
+
+    def append(_inp: Any, _reg: Any, ctx: RunContext) -> dict[str, Any]:
+        started.set()
+        assert ctx.cancel is not None and ctx.cancel.wait(5)
+        check_cancelled()  # what every Ledger append does first
+        return {}
+
+    monkeypatch.setitem(CAPABILITIES, "tag", dataclasses.replace(CAPABILITIES["tag"], fn=append))
+    state = start_job("tag", {"path": "."}, registry=fake_registry())
+    assert started.wait(5)
+    cancel_job(state.id)
+    jobs._join(state.id)
+    end = job_status(state.id)
+    assert end.status == "cancelled" and end.result and end.result.status == "cancelled"

@@ -326,7 +326,8 @@ like "what skills does it need?"), `GET /v1/sessions/{id}/history`,
 capabilities `POST /v1/capabilities/{pathfind,map,discover,roadmap,successors}`
 (no model call; `curl` examples in [`docs/interfaces.md`](./docs/interfaces.md)), the engine front
 door `GET /v1/capabilities` and `POST /v1/run`, and `POST /v1/jobs` (+ `GET /v1/jobs/{id}`,
-`POST /v1/jobs/{id}/cancel`) for `tag`, the minutes-long batch. Set `TA_CORS_ORIGINS` for a browser
+`POST /v1/jobs/{id}/cancel`) for `tag`, the minutes-long batch (starting one needs
+`TA_JOBS_ENABLED=1` on the server; the API has no auth). Set `TA_CORS_ORIGINS` for a browser
 UI.
 
 Open http://127.0.0.1:8000/docs and `POST /v1/query` with

@@ -216,6 +216,7 @@ def _tag_env(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> Path:
     monkeypatch.setenv("TA_AGENTS_HOME", str(tmp_path / "home"))
     monkeypatch.setenv("TA_TAG_ROOT", str(root))
     monkeypatch.delenv("TA_JOBS_ALLOW_MODEL", raising=False)
+    monkeypatch.setenv("TA_JOBS_ENABLED", "1")  # starting jobs over HTTP is opt-in
     return root
 
 
@@ -246,6 +247,33 @@ def test_a_tag_job_starts_polls_to_done_and_stays_in_the_root(
         bad = c.post("/v1/jobs", json=body)
         assert bad.status_code == 422 and bad.json()["status"] == "invalid_input", body
     assert c.post("/v1/jobs", json={"capability": "shell", "input": {}}).status_code == 404
+
+
+def test_starting_a_job_over_http_is_forbidden_unless_the_server_enables_it(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    from talent_angels.engine import jobs
+    from tests.test_tagging_run import _registry as tag_registry
+
+    root = _tag_env(monkeypatch, tmp_path)
+    monkeypatch.delenv("TA_JOBS_ENABLED")
+    c = _client(tag_registry())
+    body = {"capability": "tag", "input": {"path": "proj", "limit": 3}}
+    for value in (None, "", "0", "true"):  # only "1" opens it
+        if value is not None:
+            monkeypatch.setenv("TA_JOBS_ENABLED", value)
+        denied = c.post("/v1/jobs", json=body)
+        assert denied.status_code == 403 and "TA_JOBS_ENABLED=1" in denied.json()["detail"]
+    assert not list((root / "proj").rglob("*.xlsx")) and not jobs.jobs_dir().exists()
+
+    monkeypatch.setenv("TA_JOBS_ENABLED", "1")
+    started = c.post("/v1/jobs", json=body)
+    assert started.status_code == 202
+    jobs._join(started.json()["id"])
+
+    monkeypatch.delenv("TA_JOBS_ENABLED")  # status and cancel of an existing job stay open
+    assert c.get(f"/v1/jobs/{started.json()['id']}").status_code == 200
+    assert c.post(f"/v1/jobs/{started.json()['id']}/cancel").status_code == 200
 
 
 def test_job_ids_are_validated_and_unknown_ones_are_404() -> None:

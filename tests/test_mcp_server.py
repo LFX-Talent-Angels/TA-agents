@@ -97,6 +97,8 @@ async def _drive() -> dict[str, Any]:
             )
             await call("run_tag", "run", {"capability": "tag", "input": {"path": "x"}})
             await call("job_bad", "start_job", {"capability": "roadmap", "input": {"nope": 1}})
+            # MCP is a local stdio process: no TA_JOBS_ENABLED needed; the root check answers
+            await call("job_tag", "start_job", {"capability": "tag", "input": {"path": "../x"}})
             await call("job_unknown", "job_status", {"job_id": "../../etc/passwd"})
             await call("miss", "search_nodes", {"text": "stonemason"})
             await call("neighbors", "get_neighbors", {"node_id": DEV.id})
@@ -180,6 +182,9 @@ def test_the_engine_tools_return_the_manifest_and_the_run_result(served: dict[st
     assert served["run_tag"]["status"] == "use_job"
     assert served["job_bad"]["status"] == "failed"
     assert served["job_bad"]["result"]["status"] == "invalid_input"
+    assert served["job_tag"]["status"] == "failed"  # refused by the root check, not by a gate
+    assert served["job_tag"]["result"]["status"] == "invalid_input"
+    assert "TA_JOBS_ENABLED" not in str(served["job_tag"])
     assert served["job_unknown"]["status"] == "not_found"
 
 

@@ -31,6 +31,13 @@ top-ranked route in each). Every node keeps its suite-scoped ID and carries
 official code links two nodes (BLS and O*NET by SOC code, JobTech and ESCO by
 their ESCO URIs). Names are never matched across suites.
 
+`discover_map` takes a list of up to 100 items (and optional `related_to` pairs, the
+user's guesses) and returns the `discover-v1` map: how the items link directly, the
+connectors they share, routes, orphans, clusters, a verdict per guess and the gaps
+(unclear or not found, per taxonomy). Same rules as `map_neighbors` (a clear label match
+only, never a guess), no model call, same bytes for the same matches. Pass its `resolved`
+block back as `nodes` to skip resolution. See `docs/decisions/0012-discovery-map.md`.
+
 `warnings` is machine-readable and load-bearing: `not_found`, `ambiguous`,
 `no_neighbors`, `node_not_found`, `no_path`, `endpoint_not_found`,
 `unknown_suite:<name>`, `suite_unavailable:<ErrorType>`,
@@ -79,7 +86,7 @@ Check it with `/mcp` inside Claude Code.
 
 | File | Holds |
 | ---- | ----- |
-| `server.py` | The four contract tools plus `map_neighbors`, their descriptions, suite lifespan |
+| `server.py` | The four contract tools plus `map_neighbors` and `discover_map`, their descriptions, suite lifespan |
 | `models.py` | Typed payloads returned to the client |
 | `mapping.py` | Suite `ToolResult` → those payloads; nothing interprets |
 | `protocol.py` | The contract surface, structurally — no concrete import |

@@ -15,12 +15,13 @@ from __future__ import annotations
 
 from typing import Any
 
-from pydantic import BaseModel, Field, model_serializer
+from pydantic import BaseModel, ConfigDict, Field, model_serializer
 
 from talent_angels.contracts import EdgeRef, EvidencePointer, NodeRef
 
 __all__ = [
     "CandidateRef",
+    "DiscoverPayload",
     "MapPayload",
     "NeighborsPayload",
     "PathRef",
@@ -171,6 +172,16 @@ class MapPayload(_Payload):
     candidates: list[MapCandidateRef] = Field(
         default_factory=list, description="Pick list, only with `ambiguous_start`."
     )
+
+
+class DiscoverPayload(BaseModel):
+    """discover_map: the discovery map of a list of items (the ``discover-v1`` JSON, as is)."""
+
+    model_config = ConfigDict(extra="allow")
+
+    policy: str = "discover-v1"
+    meaning: str = "linked in the graph; not a learning order"
+    warnings: list[str] = Field(default_factory=list)
 
 
 class SearchPayload(_Payload):

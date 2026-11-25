@@ -1,0 +1,26 @@
+item,kind,related_to
+web developer,role,JavaScript
+software developer,role,
+data analyst,role,SQL
+DevOps engineer,role,
+IT support technician,role,
+database administrator,role,
+Python,skill,machine learning
+pyhton,skill,
+SQL,skill,
+JavaScript,skill,
+Java,skill,
+Linux,skill,
+cloud computing,skill,
+cybersecurity,skill,
+machine learning,skill,
+statistics,skill,
+data visualisation,skill,
+project management,skill,agile
+agile,skill,
+UX design,skill,web developer
+teamwork,skill,
+write unit tests,task,
+deploy applications to the cloud,task,
+programación orientada a objetos,skill,
+blorptech,skill,Python

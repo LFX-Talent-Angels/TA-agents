@@ -257,7 +257,21 @@ python -m talent_angels.cli locate --suite sfia "PROG-4"
 # taxonomy merged (official BLS-O*NET and JobTech-ESCO links only); --suites esco,onet = a subset.
 python -m talent_angels.cli map "Software Developers" --depth 2 --breadth 4
 python -m talent_angels.cli map --route "web developer" "software developer"
+
+# Discovery map: a messy list of roles, tasks and skills in, one cited map out, no model call.
+# Writes discovery.json, discovery.xlsx and discovery.html next to the file (or --out DIR).
+ta-agent discover items.csv --depth 2 --breadth 4            # every taxonomy; --suites esco,onet
+ta-agent discover items.csv --nodes discovery.json           # rerun from the recorded matches
 ```
+
+`ta-agent discover` takes `.txt` (one item per line), `.csv`/`.xlsx` (column `item`, else
+the first column; optional `kind` and `related_to`, the guesses, `;`-separated) or `.json`;
+at most 100 items. Each item is matched only when a taxonomy has a clear label for it
+(anything else is listed as unclear or not found, never guessed), mapped, and merged. The
+report shows what links the items directly, the shared connectors, routes between the rest,
+items that connect to nothing, clusters, and whether each of your guesses holds in the graph.
+Same matches, same graph: byte-identical output. See
+[`docs/decisions/0012-discovery-map.md`](./docs/decisions/0012-discovery-map.md).
 
 Expect JSON with `plan`, `answer`, `tools`, `tokens`, `cost_usd`.
 

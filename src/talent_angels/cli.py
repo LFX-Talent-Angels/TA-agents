@@ -3,6 +3,7 @@
 python -m talent_angels.cli query "software developer"
 python -m talent_angels.cli locate "software developer" --kind occupation
 python -m talent_angels.cli map "Python" --suite esco --depth 2 --breadth 4
+python -m talent_angels.cli discover items.csv --depth 2 --breadth 4
 python -m talent_angels.cli bench
 python -m talent_angels.cli report --last 20
 python -m talent_angels.cli quality
@@ -42,6 +43,13 @@ from talent_angels.session.copy import (
     HELP_TEXT,
 )
 from talent_angels.session.router import route_line
+from talent_angels.skills.connect.discover import (
+    DEFAULT_DISCOVER_MAX_NODES,
+    MAX_DISCOVER_NODES,
+    discover,
+)
+from talent_angels.skills.connect.discover_io import read_items
+from talent_angels.skills.connect.discover_report import write_outputs
 from talent_angels.skills.connect.federated import map_all, map_all_route
 from talent_angels.skills.connect.neighbourhood import (
     DEFAULT_MAX_NODES,
@@ -156,6 +164,37 @@ def _build_parser() -> argparse.ArgumentParser:
         "taxonomies).",
     )
 
+    discover_parser = sub.add_parser(
+        "discover",
+        help="Discovery map: how a list of roles, tasks and skills connects (no model call).",
+    )
+    discover_parser.add_argument("file", help="Items: .txt, .csv, .xlsx or .json (max 100)")
+    discover_parser.add_argument(
+        "--suites",
+        default=None,
+        help="Comma-separated taxonomies, e.g. esco,jobtech (default all).",
+    )
+    discover_parser.add_argument("--depth", type=int, choices=range(1, MAX_DEPTH + 1), default=2)
+    discover_parser.add_argument(
+        "--breadth", type=int, choices=range(1, MAX_BREADTH + 1), default=4
+    )
+    discover_parser.add_argument("--kinds", default=None, help="Comma-separated node kinds to keep")
+    discover_parser.add_argument(
+        "--max-nodes",
+        type=int,
+        choices=range(1, MAX_DISCOVER_NODES + 1),
+        metavar=f"1..{MAX_DISCOVER_NODES}",
+        default=DEFAULT_DISCOVER_MAX_NODES,
+        help="Hard cap on nodes in the whole map, split across the resolved items.",
+    )
+    discover_parser.add_argument(
+        "--nodes",
+        default=None,
+        help="Skip resolution: use the `resolved` block of a previous discovery.json (or one "
+        "you edited). The same set gives byte-identical output.",
+    )
+    discover_parser.add_argument("--out", default=None, help="Output folder (default: the input's)")
+
     sub.add_parser(
         "bench",
         help="Run the golden Locate set (baseline vs. result-cache); report cost/latency/accuracy.",
@@ -236,6 +275,8 @@ def main(argv: Sequence[str] | None = None, *, registry: SuiteRegistry | None = 
 
     if args.command == "map":
         return _run_map(args, selected_registry)
+    if args.command == "discover":
+        return _run_discover(args, selected_registry)
     if args.command == "bench":
         return _run_bench(selected_registry)
     if args.command == "report":
@@ -391,6 +432,47 @@ def _run_map_all(
                 file=sys.stderr,
             )
     return 0 if result.mapped else 2
+
+
+def _run_discover(args: argparse.Namespace, registry: SuiteRegistry) -> int:
+    try:
+        items, notes = read_items(args.file)
+        recorded = None
+        if args.nodes:
+            loaded = json.loads(Path(args.nodes).read_text(encoding="utf-8"))
+            recorded = loaded.get("resolved") if isinstance(loaded, dict) else loaded
+            if not isinstance(recorded, list):
+                raise ValueError("--nodes needs a discovery.json or a list of resolved entries")
+        data = discover(
+            registry,
+            items,
+            suites=args.suites.split(",") if args.suites else None,
+            depth=args.depth,
+            breadth=args.breadth,
+            kinds=args.kinds.split(",") if args.kinds else None,
+            max_nodes=args.max_nodes,
+            recorded=recorded,
+            notes=notes,
+        )
+    except (OSError, ValueError, UnknownSuiteError) as exc:  # bad input is a message, not a trace
+        print(f"discover: {exc}", file=sys.stderr)
+        return 2
+    paths = write_outputs(data, args.out or Path(args.file).resolve().parent)
+    s, g = data["summary"], data["summary"]["guesses"]
+    print(
+        f"{s['items']} items: {s['resolved_items']} found, "
+        f"{s['not_in_any_taxonomy']} in no taxonomy\n"
+        f"{s['links']} links, {s['connectors']} connectors, {s['routes']} routes, "
+        f"{s['orphans']} orphans, {s['clusters']} clusters\n"
+        f"guesses: {g['confirmed']} confirmed, {g['indirect']} indirect, "
+        f"{g['not_in_graph']} not in graph, {g['unresolved']} unresolved"
+    )
+    for name, state in data["suites"].items():
+        if state["status"] != "ok":
+            print(f"{name}: {state['status']}", file=sys.stderr)
+    for kind, path in paths.items():
+        print(f"{kind}: {path}")
+    return 0
 
 
 def _run_map_route(

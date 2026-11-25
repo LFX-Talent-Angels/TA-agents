@@ -37,6 +37,7 @@ from talent_angels.mcp.mapping import (
     suite_path_arg,
 )
 from talent_angels.mcp.models import (
+    DiscoverPayload,
     MapPayload,
     NeighborsPayload,
     PathRef,
@@ -47,6 +48,12 @@ from talent_angels.mcp.models import (
 )
 from talent_angels.mcp.protocol import supports_enumerate_paths, supports_score_paths
 from talent_angels.mcp.session import SuiteSession, SuiteUnavailableError
+from talent_angels.skills.connect.discover import (
+    DEFAULT_DISCOVER_MAX_NODES,
+    MAX_DISCOVER_NODES,
+    discover,
+)
+from talent_angels.skills.connect.discover_io import MAX_ITEMS, build_items
 from talent_angels.skills.connect.federated import map_all, map_all_route
 from talent_angels.skills.connect.neighbourhood import (
     DEFAULT_MAX_NODES,
@@ -74,7 +81,8 @@ SERVER_INSTRUCTIONS = """\
 Read-only access to the Talent Angels taxonomy graphs (ESCO, O*NET, SFIA, BLS
 and JobTech, as far as they are registered and loaded) through the suite
 contract: search_nodes, get_neighbors, enumerate_paths, score_paths, plus
-map_neighbors (a multi-hop get_neighbors). Pass the
+map_neighbors (a multi-hop get_neighbors) and discover_map (how a list of items
+connects). Pass the
 suite by name, e.g. suite=`esco`, `onet`, `sfia`, `bls` or `jobtech`.
 Do not treat IDs from one suite as belonging to another.
 
@@ -553,6 +561,81 @@ what to learn first. {_ID_DOC}""",
                 suite=runtime.name, depth=depth, breadth=breadth, warnings=_operation_warning(exc)
             )
         return MapPayload.model_validate(result.to_dict())
+
+    @server.tool(
+        name="discover_map",
+        title="Map how a list of roles, tasks and skills connects",
+        description=f"""\
+Discovery map for a list of up to {MAX_ITEMS} items (market roles, tasks, skills; vague is fine).
+Each item is resolved in every taxonomy with the same rule as `map_neighbors` (a clear label
+match only; anything else is `unclear` with up to 3 candidates, or `not_found`, never guessed),
+mapped, and merged into one cited graph. Deterministic, no model call: the same resolved node
+set and graph data give the same JSON, whatever the order of the items.
+
+The result classifies in code: `links` (a direct edge between two items), `connectors` (nodes
+that two or more items reach, `broad` for groups/categories/levels), `routes` (Pathfind routes,
+route-rank-v1, for unconnected pairs), `orphans`, `clusters`, `gaps` (unclear / not found per
+taxonomy), and a verdict on each `related_to` pair the user guessed: `confirmed` (direct link),
+`indirect` (shared connector or a route of at most 3 edges), `not_in_graph`, `unresolved`.
+
+`resolved` is the recorded node set: pass it back as `nodes` to skip resolution and get the
+identical result (edit it to fix an `unclear` item by giving its `id`).
+
+The result means "linked in the graph", not a learning order, and nothing is inferred: every
+link comes from a taxonomy edge or an official crosswalk. {_ID_DOC}""",
+    )
+    def discover_map(
+        ctx: ToolContext,
+        items: Annotated[
+            list[str], Field(max_length=MAX_ITEMS, description="Role, task or skill names.")
+        ],
+        related_to: Annotated[
+            list[list[str]] | None,
+            Field(description="The user's guesses as pairs: ['Python', 'machine learning']."),
+        ] = None,
+        suites: Annotated[
+            list[str] | None, Field(description="Subset of taxonomies; omit for all.")
+        ] = None,
+        depth: Annotated[int, Field(ge=1, le=MAX_DEPTH, description="Levels per item.")] = 2,
+        breadth: Annotated[
+            int, Field(ge=1, le=MAX_BREADTH, description="New neighbours kept per node.")
+        ] = 4,
+        kinds: Annotated[list[str] | None, Field(description="Keep only these node kinds.")] = None,
+        max_nodes: Annotated[
+            int,
+            Field(ge=1, le=MAX_DISCOVER_NODES, description="Hard cap on nodes in the whole map."),
+        ] = DEFAULT_DISCOVER_MAX_NODES,
+        nodes: Annotated[
+            list[dict[str, Any]] | None,
+            Field(description="A previous result's `resolved` block: skips resolution."),
+        ] = None,
+    ) -> DiscoverPayload:
+        session = ctx.request_context.lifespan_context
+        guesses: dict[str, list[str]] = {}
+        stray: list[str] = []
+        for pair in related_to or []:
+            if len(pair) == 2 and pair[0].casefold() in {i.casefold() for i in items}:
+                guesses.setdefault(pair[0].casefold(), []).append(pair[1])
+            else:
+                stray.append(f"related_to_ignored:{';'.join(pair)}")
+        try:
+            listed, notes = build_items(
+                {"item": i, "related_to": guesses.get(i.casefold(), [])} for i in items
+            )
+            found = discover(
+                session.registry,
+                listed,
+                suites=suites,
+                depth=depth,
+                breadth=breadth,
+                kinds=kinds,
+                max_nodes=max_nodes,
+                recorded=nodes,
+                notes=notes,
+            )
+        except (ValueError, UnknownSuiteError) as exc:
+            return DiscoverPayload(warnings=[f"invalid_input:{exc}"])
+        return DiscoverPayload.model_validate({**found, "warnings": [*found["warnings"], *stray]})
 
     return server
 

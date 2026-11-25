@@ -152,3 +152,15 @@ def test_the_tui_loop_dispatches_a_command_with_its_registry(
     out = capsys.readouterr().out
     assert "Learning order from" in out and "Running" in out
     assert len(_files("roadmap")) == 1
+
+
+def test_an_unexpected_error_never_echoes_its_message_into_the_chat(monkeypatch, caplog) -> None:
+    def boom(argument: object, registry: object) -> list[str]:
+        raise RuntimeError("authorization failed: sk-secret-123")
+
+    monkeypatch.setitem(slash._RUNNERS, "tag", boom)
+    with caplog.at_level("WARNING"):
+        reply = slash.run_slash("tag", "project/", fake_registry())
+    assert reply == "/tag failed (RuntimeError); the details are in the log."
+    assert "sk-secret" not in reply
+    assert "/tag failed" in caplog.text

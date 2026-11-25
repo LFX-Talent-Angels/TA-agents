@@ -12,6 +12,7 @@ import contextlib
 import hashlib
 import io
 import json
+import logging
 import re
 import shlex
 from collections.abc import Callable
@@ -39,6 +40,8 @@ from talent_angels.suites import SuiteRegistry, UnknownSuiteError
 
 SLASH_COMMANDS = ("map", "discover", "roadmap", "successors", "tag")
 TOP = 5  # items named in a chat summary; the rest is in the files
+
+_log = logging.getLogger(__name__)
 
 
 class _Bad(Exception):
@@ -254,4 +257,6 @@ def run_slash(name: str, argument: str | None, registry: SuiteRegistry) -> str:
     except (OSError, ValueError, UnknownSuiteError) as exc:
         return f"/{name}: {exc}"
     except Exception as exc:  # noqa: BLE001 - a long batch must report, not traceback
-        return f"/{name} failed: {type(exc).__name__}: {exc}"
+        # The message may carry a provider reply or a key: the chat gets the type only.
+        _log.warning("/%s failed", name, exc_info=True)
+        return f"/{name} failed ({type(exc).__name__}); the details are in the log."

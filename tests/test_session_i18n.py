@@ -7,7 +7,15 @@ from talent_angels.assistant.planning import build_plan_for_capability
 from talent_angels.assistant.turn import TurnOutcome
 from talent_angels.contracts import AgentResult, NodeRef
 from talent_angels.runlog import RunLogRecord
-from talent_angels.session.i18n import _EN, _ES, _SV, language, set_language, t
+from talent_angels.session.i18n import (
+    _EN,
+    _ES,
+    _SV,
+    frame_language,
+    language,
+    set_language,
+    t,
+)
 from talent_angels.session.kernel import handle_line
 from talent_angels.session.store import load_session, new_session, save_session
 from talent_angels.tui.render import parse_list_reply
@@ -113,3 +121,28 @@ def test_the_tui_reads_a_spanish_skill_list_as_a_table() -> None:
     parsed = parse_list_reply(text)
     assert len(parsed.rows) == 3
     assert "habilidades" in parsed.intro
+
+
+def test_quoted_titles_do_not_decide_the_language() -> None:
+    assert frame_language("path from Backend-utvecklare to Mjukvaruutvecklare in JobTech") == "en"
+    assert frame_language("what skills does a Sjuksköterska, grundutbildad need?") == "en"
+    assert frame_language("path from enfermero to medico in ESCO") == "en"
+    assert frame_language("¿qué hace un Backend-utvecklare?") == "es"
+    assert frame_language("Vilka kompetenser behöver en web developer?") == "sv"
+    assert frame_language("Hur går jag från sjuksköterska till barnmorska?") == "sv"
+
+
+def test_too_few_or_mixed_frame_words_leave_it_to_the_planner() -> None:
+    assert frame_language("enfermero") is None
+    assert frame_language("1") is None
+    assert frame_language("nurse") is None
+    assert frame_language("Vilka kompetenser behöver en Head of Development?") is None
+
+
+def test_an_english_sentence_with_swedish_titles_gets_english_sentences() -> None:
+    state = new_session()
+    reply = handle_line(
+        state, "where is Sjuksköterska, grundutbildad in JobTech", runner=_runner("sv")
+    )
+    assert "Pick the one you mean" in reply.text
+    assert state.language == "en"

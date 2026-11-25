@@ -40,7 +40,11 @@ Keys:
 - suites: array of attached suite names (runtime fills this; do not drop
   a suite unless the user named one taxonomy)
 - candidates: array of 3 to 5 specific English job titles, or []
-- language: the two-letter code of the language the user wrote in ("en", "es", …)
+- language: the two-letter code of the language of the user's own sentence
+  ("en", "es", …). Judge it from the words around the job or skill titles,
+  never from the titles: titles are often quoted in another language
+  ("path from Backend-utvecklare to Mjukvaruutvecklare" is "en";
+  "¿qué hace un software developer?" is "es")
 
 Vague requests:
 - When the user describes work or names a broad field instead of one title

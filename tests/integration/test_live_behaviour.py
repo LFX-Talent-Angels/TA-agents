@@ -99,6 +99,18 @@ def chat(live_env: tuple[SuiteRegistry, LLMClient]) -> Chat:
     return Chat(*live_env)
 
 
+def test_an_english_question_about_a_swedish_title_is_answered_in_english(chat: Chat) -> None:
+    reply = chat.say("where is Backend-utvecklare in JobTech")
+    assert "Map record" in reply.text
+    assert chat.state.language == "en"
+
+
+def test_a_swedish_question_is_still_answered_in_swedish(chat: Chat) -> None:
+    reply = chat.say("var finns Backend-utvecklare i JobTech")
+    assert "Post i kartan" in reply.text
+    assert chat.state.language == "sv"
+
+
 # --- Baseline: behaviour that works today and must keep working ------------
 
 

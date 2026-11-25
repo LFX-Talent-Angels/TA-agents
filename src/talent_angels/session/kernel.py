@@ -61,7 +61,7 @@ from talent_angels.session.followup import (
     skill_from_connect,
     skill_index_by_label,
 )
-from talent_angels.session.i18n import normalize_language, set_language, t
+from talent_angels.session.i18n import frame_language, normalize_language, set_language, t
 from talent_angels.session.lead import (
     compare_side_subject,
     lead,
@@ -1575,7 +1575,11 @@ def _handle_map(
         if suite
         else runner(question, bound_node=bound, bound_nodes=bound_nodes)
     )
-    spoken = normalize_language(getattr(getattr(outcome, "plan_draft", None), "language", None))
+    # The sentence around the titles decides; the planner can mistake a quoted
+    # Swedish or Spanish title for the user's language.
+    spoken = frame_language(text) or normalize_language(
+        getattr(getattr(outcome, "plan_draft", None), "language", None)
+    )
     if spoken:
         # The planner read this message's language: every code-written
         # sentence of this reply, and the next lines, follow it.

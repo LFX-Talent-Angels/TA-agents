@@ -18,6 +18,7 @@ from pathlib import Path
 from typing import Any, NoReturn
 
 from talent_angels.llm.protocol import check_cancelled
+from talent_angels.engine import CAPABILITIES, run
 from talent_angels.memory.paths import outputs_dir
 from talent_angels.report.pages import map_page, plain, roadmap_page, successors_page
 from talent_angels.session.commands import UnknownCommand, parse_command
@@ -28,17 +29,17 @@ from talent_angels.skills.connect.discover import (
 )
 from talent_angels.skills.connect.discover_io import read_items
 from talent_angels.skills.connect.discover_report import discover_summary, write_outputs
-from talent_angels.skills.connect.federated import map_all, map_all_route
 from talent_angels.skills.connect.neighbourhood import (
     DEFAULT_MAX_NODES,
     MAX_BREADTH,
     MAX_DEPTH,
 )
 from talent_angels.skills.roadmap import DEFAULT_MAX_NODES as SUCCESSORS_MAX_NODES
-from talent_angels.skills.roadmap import MAX_PER_STEP, roadmap, successors
+from talent_angels.skills.roadmap import MAX_PER_STEP
 from talent_angels.suites import SuiteRegistry, UnknownSuiteError
 
-SLASH_COMMANDS = ("map", "discover", "roadmap", "successors", "tag")
+# From the engine registry: a capability with a "slash" alias is a command.
+SLASH_COMMANDS = tuple(c.aliases["slash"] for c in CAPABILITIES.values() if "slash" in c.aliases)
 TOP = 5  # items named in a chat summary; the rest is in the files
 
 _log = logging.getLogger(__name__)
@@ -46,6 +47,10 @@ _log = logging.getLogger(__name__)
 
 class _Bad(Exception):
     """Bad input: shown as one line."""
+
+
+class _Failed(Exception):
+    """An unexpected engine error: the chat gets the type only (the details are in the log)."""
 
 
 class _Parser(argparse.ArgumentParser):
@@ -113,6 +118,16 @@ def _save(folder: Path, stem: str, data: dict[str, Any], page: str) -> tuple[Pat
     return path, html
 
 
+def _engine_output(name: str, payload: dict[str, Any], registry: SuiteRegistry) -> dict[str, Any]:
+    """The capability's own dict via `engine.run` (the same bytes the CLI and HTTP give)."""
+    result = run(name, payload, registry=registry)
+    if result.status == "error":
+        raise _Failed(result.error)
+    if result.output is None:  # invalid_input, unknown_suite: one line, never a traceback
+        raise _Bad(result.error or result.status)
+    return result.output
+
+
 def _names(words: list[str], what: str, *, pair: bool) -> list[str]:
     parts = [p.strip() for p in " ".join(words).split("|")]
     if len(parts) != (2 if pair else 1) or not all(parts):
@@ -144,14 +159,12 @@ def _map(argument: str | None, registry: SuiteRegistry) -> list[str]:
     walk = {
         "suites": a.suites,
         "depth": a.depth,
-        "breadth": a.breadth or (3 if a.route else 4),
+        "breadth": a.breadth or None,  # the engine's default: 4, or 3 on a route
         "kinds": a.kinds,
         "max_nodes": a.max_nodes,
     }
-    found = (
-        map_all_route(registry, *names, **walk) if a.route else map_all(registry, *names, **walk)
-    )
-    data = found.to_dict()
+    ends = {"route_from": names[0], "route_to": names[1]} if a.route else {"start": names[0]}
+    data = _engine_output("map", {**ends, **walk}, registry)
     path, html = _save(_out("map", argument), "map", data, map_page(data))
     s = data["summary"]
     lines = [
@@ -197,7 +210,11 @@ def _roadmap(argument: str | None, registry: SuiteRegistry) -> list[str]:
                    metavar=f"1..{MAX_PER_STEP}")  # fmt: skip
     a = p.parse_intermixed_args(_tokens(argument))
     start, target = _names(a.words, "two names", pair=True)
-    data = roadmap(registry, start, target, suites=a.suites, per_step=a.per_step)
+    data = _engine_output(
+        "roadmap",
+        {"from": start, "to": target, "suites": a.suites, "per_step": a.per_step},
+        registry,
+    )
     path, html = _save(_out("roadmap", argument), "roadmap", data, roadmap_page(data))
     lines = [
         f'Learning order from "{start}" to "{target}" ({data["policy"]}): '
@@ -214,9 +231,8 @@ def _successors(argument: str | None, registry: SuiteRegistry) -> list[str]:
     _walk_flags(p, depth=2, breadth=4, max_nodes=SUCCESSORS_MAX_NODES, cap=DEFAULT_MAX_NODES)
     a = p.parse_intermixed_args(_tokens(argument))
     (start,) = _names(a.words, "a skill name or id", pair=False)
-    data = successors(
-        registry, start, suites=a.suites, depth=a.depth, breadth=a.breadth, max_nodes=a.max_nodes
-    )
+    walk = {"suites": a.suites, "depth": a.depth, "breadth": a.breadth, "max_nodes": a.max_nodes}
+    data = _engine_output("successors", {"skill": start, **walk}, registry)
     path, html = _save(_out("successors", argument), "successors", data, successors_page(data))
     lines = [f'What comes after "{start}" ({data["policy"]}):']
     for name, part in data["suites"].items():
@@ -272,6 +288,8 @@ def run_slash(name: str, argument: str | None, registry: SuiteRegistry) -> str:
         )
     except _Bad as exc:
         return f"/{name}: {exc}"
+    except _Failed as exc:
+        return f"/{name} failed ({exc}); the details are in the log."
     except (OSError, ValueError, UnknownSuiteError) as exc:
         return f"/{name}: {exc}"
     except Exception as exc:  # noqa: BLE001 - a long batch must report, not traceback

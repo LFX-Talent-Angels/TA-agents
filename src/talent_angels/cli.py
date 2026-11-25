@@ -6,6 +6,8 @@ python -m talent_angels.cli map "Python" --suite esco --depth 2 --breadth 4 [--h
 python -m talent_angels.cli discover items.csv --depth 2 --breadth 4
 python -m talent_angels.cli roadmap "data analyst" "data scientist"
 python -m talent_angels.cli successors "Python (computer programming)" --depth 2
+python -m talent_angels.cli capabilities [--json]
+python -m talent_angels.cli run roadmap '{"from": "data analyst", "to": "data scientist"}'
 python -m talent_angels.cli bench
 python -m talent_angels.cli report --last 20
 python -m talent_angels.cli quality
@@ -258,6 +260,21 @@ def _build_parser() -> argparse.ArgumentParser:
         help="Also write this result as a self-contained HTML page (the JSON still prints).",
     )
 
+    capabilities_parser = sub.add_parser(
+        "capabilities", help="List what the engine can do (the manifest)."
+    )
+    capabilities_parser.add_argument(
+        "--json", action="store_true", help="The full manifest with the JSON Schemas."
+    )
+
+    run_parser = sub.add_parser(
+        "run", help="Run one capability with a JSON input (see `capabilities`); no model call."
+    )
+    run_parser.add_argument("capability", help="A name from `capabilities`.")
+    run_parser.add_argument(
+        "input", nargs="?", default="{}", help="A JSON object, or @file.json (default {})."
+    )
+
     bench_parser = sub.add_parser(
         "bench",
         help="Run the golden Locate set (baseline vs. result-cache); report cost/latency/accuracy.",
@@ -326,6 +343,8 @@ def main(argv: Sequence[str] | None = None, *, registry: SuiteRegistry | None = 
 
     load_local_dotenv()
     args = _build_parser().parse_args(argv)
+    if args.command == "capabilities":  # no suite needed: it only reads the registry
+        return _run_capabilities(args)
     if registry is not None:
         selected_registry = registry
     elif args.command in {"bench", "quality"}:
@@ -345,6 +364,8 @@ def main(argv: Sequence[str] | None = None, *, registry: SuiteRegistry | None = 
         return _run_discover(args, selected_registry)
     if args.command in {"roadmap", "successors"}:
         return _run_order(args, selected_registry)
+    if args.command == "run":
+        return _run_engine(args, selected_registry)
     if args.command == "bench":
         return _run_bench(selected_registry, suite=getattr(args, "suite", None))
     if args.command == "report":
@@ -443,6 +464,42 @@ def _write_html(
         path.parent.mkdir(parents=True, exist_ok=True)
         path.write_text(render(dict(data)), encoding="utf-8")
         print(f"html: {path}", file=sys.stderr)
+
+
+def _run_capabilities(args: argparse.Namespace) -> int:
+    from talent_angels.engine import manifest
+
+    full = manifest()
+    if args.json:
+        print(json.dumps(full, ensure_ascii=False, indent=2))
+        return 0
+    for cap in full["capabilities"]:
+        where = ", ".join(f"{k}: {v}" for k, v in cap["aliases"].items())
+        print(f"{cap['name']:<11} {cap['question']}  [{where}]")
+    return 0
+
+
+_EXIT = {"ok": 0, "error": 1, "cancelled": 1}  # every other status is 2 (like `_run_order`)
+
+
+def _run_engine(args: argparse.Namespace, registry: SuiteRegistry) -> int:
+    from talent_angels.engine import RunContext, run
+
+    raw = args.input
+    try:
+        text = Path(raw[1:]).read_text(encoding="utf-8") if raw.startswith("@") else raw
+        payload = json.loads(text)
+    except (OSError, ValueError) as exc:  # the type only: a file name or a body may be private
+        print(f"run: input is not readable JSON ({type(exc).__name__})", file=sys.stderr)
+        return 2
+    if not isinstance(payload, dict):
+        print("run: input must be a JSON object", file=sys.stderr)
+        return 2
+    # A foreground process: `tag` may run here (no root restriction, like `ta-agent tag`).
+    ctx = RunContext(progress=lambda line: print(line, file=sys.stderr))
+    result = run(args.capability, payload, registry=registry, ctx=ctx, allow_long=True)
+    print(json.dumps(result.model_dump(mode="json"), ensure_ascii=False, indent=2))
+    return _EXIT.get(result.status, 2)
 
 
 def _run_map(args: argparse.Namespace, registry: SuiteRegistry) -> int:

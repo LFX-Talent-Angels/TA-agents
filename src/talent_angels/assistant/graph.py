@@ -277,6 +277,27 @@ def dispatch_plan(
     capability from context. Falls back to _dispatch_heuristic() when running
     offline (LLM_PROVIDER=none) so tests remain deterministic.
     """
+    if bound_node is not None and bound_node.suite == suite_name:
+        tools = followup_connect_request(
+            state["question"], bound_node, skill_rel_types=suite.suite_schema.skill_rel_types
+        )
+        if tools is not None and tools.rel_types == ("USES_SOFTWARE",):
+            # "what software tools does it use?" is decided in code: the tools, not the skills.
+            measured = MeasuredSuite(suite)
+            result = connect(
+                measured,
+                suite_name,
+                bound_node,
+                request=tools,
+                confidence=None,
+                locate_evidence=[],
+                optional_rel_values=suite.suite_schema.optional_rel_values,
+            )
+            return {
+                "capability": CAPABILITY_CONNECT,
+                "result": result,
+                "tool_calls": measured.tool_calls,
+            }
     if uses_chat_phrasing(llm_client):
         assert llm_client is not None
         plan = state.get("plan")

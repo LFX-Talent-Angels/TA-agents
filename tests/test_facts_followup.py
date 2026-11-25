@@ -38,6 +38,7 @@ BAKER_ESCO = NodeRef(
         "how much do they earn?",
         "what's the salary?",
         "what is the job outlook?",
+        "what is the pay and outlook?",
         "what education do they need?",
         "how much do bakers earn?",
     ],

@@ -1328,7 +1328,14 @@ def _from_outcome(
         state.pending = []
         state.list_topic = ""
 
-    if all_miss and not any_hit:
+    unknown_profile = next(
+        (m for r in results if (m := _pathfind_unknown_profile_message(r.warnings)) is not None),
+        None,
+    )
+    if all_miss and not any_hit and unknown_profile is not None:
+        # "my job"/"my goal" with nothing saved: say so, not "search missed" (#94).
+        text = unknown_profile
+    elif all_miss and not any_hit:
         text = phrase_chat(
             llm_client,
             user_text=question,

@@ -164,7 +164,10 @@ _FACTS_RE = re.compile(
     r"education|degree|diploma|qualifications?|training|experience)\b",
     re.IGNORECASE,
 )
-_FILLER = frozenset("a an the job its their this that what whats s is are for of".split())
+_TOOLS_RE = re.compile(
+    r"\btools?\b|\btechnolog(?:y|ies)\b|\bwhat\s+software\b|\bsoftware\s+(?:is|are|do|does)\b"
+)
+_FILLER = frozenset("a an the and or job its their this that what whats s is are for of".split())
 _PRONOUNS = (" they ", " them ", " this ", " that ", " it ", " the job ", " these ", " those ")
 
 
@@ -204,6 +207,9 @@ def followup_connect_request(
     so the existing locate-then-connect path can run.
     """
     normalized = _normalized_followup(question)
+    if "USES_SOFTWARE" in skill_rel_types and _TOOLS_RE.search(normalized):
+        # "what software tools does it use?": the tools only, not skills + tools.
+        return ConnectRequest(subject=bound.pref_label, rel_types=("USES_SOFTWARE",))
     if normalized in _FOLLOWUP_ESSENTIAL:
         return ConnectRequest(
             subject=bound.pref_label,

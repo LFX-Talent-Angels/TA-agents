@@ -1113,6 +1113,7 @@ def _widen_pending(
 
 
 def _append_gaps(ledger: Ledger, rows: list[dict[str, object]]) -> None:
+    check_cancelled()
     ledger.root.mkdir(parents=True, exist_ok=True)
     with ledger.gaps_path.open("a", encoding="utf-8") as handle:
         for row in rows:

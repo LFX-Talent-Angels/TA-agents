@@ -169,3 +169,8 @@ def test_an_unexpected_error_never_echoes_its_message_into_the_chat(monkeypatch,
     assert reply == "/tag failed (RuntimeError); the details are in the log."
     assert "sk-secret" not in reply
     assert "/tag failed" in caplog.text
+
+
+def test_chat_summaries_use_plain_words_for_status_codes() -> None:
+    text = _say("/map zzzz-no-such-thing --suites fake --depth 1", fake_registry())
+    assert "fake no clear match" in text and "not_found" not in text

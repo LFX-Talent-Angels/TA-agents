@@ -49,7 +49,24 @@ _REASON = {
 }
 
 
+_SUITE_NAME = {"sfia": "SFIA", "esco": "ESCO", "onet": "O*NET", "bls": "BLS", "jobtech": "JobTech"}
+_CODE = {
+    "not_found": "no clear match",
+    "ambiguous": "several matches, pick an id",
+    "no_order_data": "this taxonomy has no order data",
+}
+_SIDE = {"start": "for the start", "target": "for the goal"}
 _QUIET = ("ranked:", "learning_order:", "route_scores:")  # route data, not something to act on
+
+
+def plain(code: str, suite: str | None = None) -> str:
+    """A warning or status code in plain words; a code it does not know stays as it is."""
+    head, _, rest = code.partition(":")
+    if head == "unknown_kind" and rest:
+        return f"{_SUITE_NAME.get(suite or '', suite or 'this taxonomy')} has no {rest}s"
+    if head == "pathfind_side" and rest in _SIDE:
+        return _SIDE[rest]
+    return _CODE.get(code, code)
 
 
 def _word(relation: str) -> str:
@@ -67,10 +84,10 @@ def _status_note(name: str, part: Json, *, side: dict[str, str] | None = None) -
         which = f" ({side[part['side']]})" if side and part.get("side") in side else ""
         return f"{name}: the name{which} is ambiguous. Rerun with one of these ids: {_ids(cands)}"
     if status == "no_order_data":
-        why = "; ".join(part.get("warnings") or [])
+        why = "; ".join(plain(w, name) for w in part.get("warnings") or [])
         return f"{name}: no order data for this question" + (f" ({why})" if why else "")
     return f"{name}: {status.replace('_', ' ')}" + (
-        f" ({'; '.join(part['warnings'])})" if part.get("warnings") else ""
+        f" ({'; '.join(plain(w, name) for w in part['warnings'])})" if part.get("warnings") else ""
     )
 
 
@@ -154,7 +171,9 @@ def map_page(data: Json) -> str:
         here = [e for e in edges if e.get("suite") == name]
         route = list((part.get("route") or {}).get("node_ids") or [])
         found = f"{len(mine)} nodes" + (f", reached {part['via']}" if part.get("via") else "")
-        extra = "".join(note(w) for w in part.get("warnings") or [] if not w.startswith(_QUIET))
+        extra = "".join(
+            note(plain(w, name)) for w in part.get("warnings") or [] if not w.startswith(_QUIET)
+        )
         parts.append(
             section(
                 f"{name}: {found}", extra + _map_figure(name, mine, here, query, route), tag=name
@@ -187,7 +206,7 @@ def map_page(data: Json) -> str:
     warns = [w for w in data.get("warnings") or [] if isinstance(w, str)]
     lead = note(
         f"{len(nodes)} nodes and {len(edges)} links in {len(by_suite)} taxonomies. "
-        + ("Warnings: " + "; ".join(warns) if warns else "")
+        + ("Warnings: " + "; ".join(plain(w) for w in warns) if warns else "")
     )
     return page(f"Graph map: {trim(query, 80)}", "".join(parts), lead=lead)
 
@@ -232,7 +251,7 @@ def successors_page(data: Json) -> str:
             tnodes, tedges, [*_KINDS, ("e-stated", "stated"), ("e-policy", "policy")],
             aria=aria, column_titles=titles,
         )  # fmt: skip
-        extra = "".join(note(w) for w in part.get("warnings") or [])
+        extra = "".join(note(plain(w, name)) for w in part.get("warnings") or [])
         rows = [
             [n["depth"], n["label"], n["kind"], n.get("reuse_level") or "", cite(n.get("cite"))]
             for n in nodes

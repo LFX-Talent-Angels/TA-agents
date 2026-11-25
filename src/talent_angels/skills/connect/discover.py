@@ -306,22 +306,28 @@ def discover(
         links.sort(key=lambda x: (x["_a"], x["_b"], x["graph_edge"], x["a_id"], x["b_id"]))
         linked = {(x["_a"], x["_b"]) for x in links}
 
-        touching: dict[str, list[Json]] = defaultdict(list)
-        for e in edges.values():
-            touching[e["from_id"]].append(e)
-            touching[e["to_id"]].append(e)
-
-        def tool_only(suite: str, keys: Iterable[str]) -> bool:
-            """Every item reaches this node through a tool: the item's own node in this suite
-            has only O*NET USES_SOFTWARE links (a job that uses it), so whatever the two
-            items share is "jobs use both tools", not a relation between the items."""
-            starts = [nodes_of[k].get(suite) for k in keys]
-            return all(
-                st is not None
-                and touching[st]
-                and all(e["graph_edge"] in TOOL_EDGES for e in touching[st])
-                for st in starts
-            )
+        def tool_only(suite: str, node_id: str, keys: Iterable[str]) -> bool:
+            """Every item reaches this node only by a tool edge (O*NET USES_SOFTWARE: a job uses
+            it), so what the items share is "jobs use both tools", not a relation between them.
+            An item's other edges elsewhere in its walk do not count: only the edges into it."""
+            for k in keys:
+                walk = walks.get((suite, k))
+                if walk is None:
+                    return False
+                level = {n.ref.id: n.level for n in walk.nodes}
+                into = [
+                    e
+                    for e in walk.edges
+                    for other in [
+                        e.ref.target_node_id if e.ref.source_node_id == node_id
+                        else e.ref.source_node_id if e.ref.target_node_id == node_id
+                        else None
+                    ]
+                    if other is not None and level.get(other, 99) < level.get(node_id, 0)
+                ]  # fmt: skip
+                if not into or any(e.ref.type not in TOOL_EDGES for e in into):
+                    return False
+            return True
 
         connectors: list[Json] = []
         shared: dict[tuple[str, str], list[str]] = defaultdict(list)
@@ -337,7 +343,7 @@ def discover(
                     "suite": n["suite"],
                     "cite": n["cite"],
                     "broad": n["kind"] in HUB_KINDS,
-                    "tool_only": tool_only(n["suite"], who),
+                    "tool_only": tool_only(n["suite"], node_id, who),
                     "item_count": len(who),
                     "items": [{"item": text[k], "level": who[k]} for k in sorted(who)],
                     "_keys": sorted(who),

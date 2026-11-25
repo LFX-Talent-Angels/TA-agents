@@ -8,11 +8,13 @@ dark) with no script or CDN.
 from __future__ import annotations
 
 import json
+from io import BytesIO
 from math import cos, pi, sin
 from pathlib import Path
 from typing import Any
 
-from talent_angels.report.html import esc, legend, note, page, table, trim
+from talent_angels.llm.protocol import check_cancelled
+from talent_angels.report.html import cite, esc, legend, note, page, table, trim
 from talent_angels.report.html import section as section_html
 
 Json = dict[str, Any]
@@ -139,7 +141,7 @@ def _tables(data: Json) -> dict[str, tuple[list[str], list[list[Any]]]]:
     }
 
 
-def write_xlsx(data: Json, path: Path) -> None:
+def write_xlsx(data: Json, path: Path | BytesIO) -> None:
     from openpyxl import Workbook
     from openpyxl.styles import Alignment, Font
 
@@ -280,7 +282,9 @@ def render_html(data: Json) -> str:
             )
             + f'<div class="scroll">{picture}</div>'
         )
-    connectors = table(header, rows[:40], dim=[i for i, c in enumerate(shown) if c["tool_only"]])
+    source = header.index("Source")
+    linked = [[*r[:source], cite(r[source]), *r[source + 1 :]] for r in rows[:40]]
+    connectors = table(header, linked, dim=[i for i, c in enumerate(shown) if c["tool_only"]])
     if tool:
         connectors = (
             note(
@@ -308,13 +312,16 @@ def render_html(data: Json) -> str:
 
 def write_outputs(data: Json, out_dir: str | Path) -> dict[str, Path]:
     out = Path(out_dir)
-    out.mkdir(parents=True, exist_ok=True)
     paths = {k: out / f"discovery.{k}" for k in ("json", "xlsx", "html")}
-    paths["json"].write_text(
-        json.dumps(data, ensure_ascii=False, indent=2) + "\n", encoding="utf-8"
-    )
-    write_xlsx(data, paths["xlsx"])
-    paths["html"].write_text(render_html(data), encoding="utf-8")
+    text = json.dumps(data, ensure_ascii=False, indent=2) + "\n"
+    html = render_html(data)
+    book = BytesIO()
+    write_xlsx(data, book)  # everything is built first: a stop writes none of the three
+    check_cancelled()
+    out.mkdir(parents=True, exist_ok=True)
+    paths["json"].write_text(text, encoding="utf-8")
+    paths["xlsx"].write_bytes(book.getvalue())
+    paths["html"].write_text(html, encoding="utf-8")
     return paths
 
 

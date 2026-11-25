@@ -21,7 +21,7 @@ from talent_angels.llm.factory import get_llm_client
 from talent_angels.llm.protocol import bind_cancel
 from talent_angels.query_details import write_query_details
 from talent_angels.session.catalog import render_catalogue
-from talent_angels.session.copy import STOPPED, WELCOME
+from talent_angels.session.copy import WELCOME
 from talent_angels.session.credentials import (
     CredentialError,
     looks_like_openrouter_key,
@@ -248,13 +248,13 @@ def main(argv: Sequence[str] | None = None, *, registry: SuiteRegistry | None = 
             if batch:
                 # /map /discover /roadmap /successors /tag change nothing but the copy of the
                 # state and their own files, so they run behind the same Esc watcher; they stop
-                # at the next item and write nothing. /tag redirects stdout while it runs, so
-                # the spinner draws on the real terminal stream, not into the captured one.
+                # at the next item and write nothing. Esc waits for them to stop (they are not
+                # abandoned), so "Stopped" is never printed while a file can still be written.
                 label = "Running"
                 console.print("[dim]Running… this can take a while; esc stops it.[/]")
             try:
                 reply = run_with_status(
-                    Console(file=sys.__stdout__) if batch else console,
+                    console,
                     label,
                     partial(
                         line_context.run,
@@ -266,13 +266,12 @@ def main(argv: Sequence[str] | None = None, *, registry: SuiteRegistry | None = 
                         registry=selected if batch else None,
                     ),
                     cancel=cancel,
+                    wait_on_cancel=batch,
                 )
             except Cancelled:
                 stage_scope.__exit__(None, None, None)
                 console.print(
-                    f"[dim]{STOPPED}[/]"
-                    if batch
-                    else "[dim]Stopped waiting. The in-flight request may still finish and count "
+                    "[dim]Stopped waiting. The in-flight request may still finish and count "
                     "toward usage.[/]"
                 )
                 continue

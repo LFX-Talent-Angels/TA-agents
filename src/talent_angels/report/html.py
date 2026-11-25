@@ -89,12 +89,13 @@ def trim(text: str, limit: int) -> str:
     return text if len(text) <= limit else text[: limit - 1].rstrip() + "…"
 
 
-def cite(value: object) -> Raw | str:
-    """A link when the citation is a web address, the plain text otherwise."""
+def cite(value: object) -> Raw:
+    """Safe markup: a link when the citation is an http(s) address, else its escaped text."""
     text = str(value or "")
     if text.startswith(("http://", "https://")):
-        return Raw(f'<a href="{esc(text)}" rel="noopener noreferrer">{esc(trim(text, 48))}</a>')
-    return text
+        href = esc(text, quote=True)
+        return Raw(f'<a href="{href}" rel="noopener noreferrer">{esc(trim(text, 48))}</a>')
+    return Raw(esc(text))
 
 
 def _cell(value: Any) -> str:

@@ -15,6 +15,10 @@ interrupted from outside, so the provider call runs to its own conclusion and
 its result is discarded. The thread is a daemon, so it can never hold the
 process open, and the user gets the prompt back immediately — which is the
 part they actually wanted.
+
+Work that writes files (``wait_on_cancel``) is not abandoned: Esc asks it to stop, and the
+terminal waits ("Stopping…") until it has, so "nothing was written" is only said once the worker
+can no longer write.
 """
 
 from __future__ import annotations
@@ -63,8 +67,12 @@ def run_with_status(
     work: Callable[[], T],
     *,
     cancel: threading.Event | None = None,
+    wait_on_cancel: bool = False,
 ) -> T:
     """Run `work` behind a spinner. Raises `Cancelled` if the reader escapes.
+
+    With `wait_on_cancel`, Esc only sets `cancel` and waits for `work` to finish (it stops at its
+    next cooperative check); its result, stopped or not, is returned, never `Cancelled`.
 
     `work` runs on a background thread so this one stays free to watch the
     keyboard; without that the terminal cannot notice a keypress at all while
@@ -90,8 +98,12 @@ def run_with_status(
     try:
         if watching:
             tty.setcbreak(sys.stdin.fileno())
+        stopping = False
         with console.status(_status_text(label, 0.0), spinner="dots") as status:
             while worker.is_alive():
+                if stopping:
+                    worker.join(_POLL_SECONDS)
+                    continue
                 elapsed = time.monotonic() - started
                 status.update(_status_text(label, elapsed))
                 if not watching:
@@ -101,7 +113,10 @@ def run_with_status(
                 if ready and sys.stdin.read(1) in _CANCEL_KEYS:
                     if cancel is not None:
                         cancel.set()
-                    raise Cancelled
+                    if not wait_on_cancel:
+                        raise Cancelled
+                    stopping = True
+                    status.update("[cyan]Stopping…[/]")
     finally:
         if settings is not None:
             termios.tcsetattr(sys.stdin, termios.TCSADRAIN, settings)

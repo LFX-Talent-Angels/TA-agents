@@ -5,20 +5,23 @@ from __future__ import annotations
 import copy
 import json
 import re
+from html import escape as html_escape
+from html.parser import HTMLParser
 from pathlib import Path
 from typing import Any
 
 import pytest
 
 from talent_angels.cli import main
-from talent_angels.report.pages import map_page, roadmap_page, successors_page
+from talent_angels.report.html import cite
+from talent_angels.report.pages import map_page, plain, roadmap_page, successors_page
 from talent_angels.skills.connect.discover import discover
 from talent_angels.skills.connect.discover_report import render_html
 from talent_angels.skills.connect.federated import map_all, map_all_route
 from talent_angels.skills.roadmap import roadmap, successors
 from tests.fakes.order_suite import registry
 from tests.fakes.suite import fake_registry
-from tests.test_discover import _graph, _items, _node, _registry
+from tests.test_discover import BASE, _graph, _items, _node, _registry
 from tests.test_graph_mapper import _edge
 from tests.test_roadmap import A, B, _esco
 from tests.test_successors import X
@@ -325,3 +328,141 @@ def test_the_discovery_page_greys_tool_only_rows_and_labels_the_connector_dots()
     assert "@media (prefers-color-scheme:dark)" in html and "<script" not in html
     assert 'aria-label="Legend"' in html and re.search(r'role="img" aria-label="Items and', html)
     assert html == render_html(_tool_run())
+
+
+# ---- adversarial text: nothing a taxonomy, a query or a citation says becomes markup --------
+
+EVIL = "<script>alert(1)</script><img src=x onerror=alert(1)> & \" '"
+EVIL_CITES = ["javascript:alert(1)", EVIL, 'http://x.test/"><img src=x onerror=alert(1)>']
+
+
+class _Tags(HTMLParser):
+    def __init__(self) -> None:
+        super().__init__()
+        self.tags: set[str] = set()
+        self.attrs: list[tuple[str, str]] = []
+
+    def handle_starttag(self, tag: str, attrs: list[tuple[str, str | None]]) -> None:
+        self.tags.add(tag)
+        self.attrs += [(k, v or "") for k, v in attrs]
+
+
+def _assert_inert(html: str) -> None:
+    seen = _Tags()
+    seen.feed(html)
+    assert not seen.tags & {"script", "img", "iframe", "object", "embed"}, seen.tags
+    assert not [k for k, _ in seen.attrs if k.startswith("on")]
+    for k, v in seen.attrs:
+        if k in ("href", "src"):
+            assert k == "href" and re.match(r"https?://", v), (k, v)
+
+
+def test_cite_is_always_safe_markup() -> None:
+    assert cite("javascript:alert(1)") == "javascript:alert(1)"
+    assert cite(EVIL) == html_escape(EVIL)
+    link = cite('http://x.test/"><b>')
+    assert link == '<a href="http://x.test/&quot;&gt;&lt;b&gt;" rel="noopener noreferrer">' \
+        "http://x.test/&quot;&gt;&lt;b&gt;</a>"  # fmt: skip
+    assert cite(None) == ""
+
+
+def _hostile_map(route: bool) -> dict:
+    data = _map(route)
+    data["query"] = EVIL
+    data["meaning"] = EVIL
+    data["warnings"] = [EVIL]
+    for i, n in enumerate(data["nodes"]):
+        n["label"] = EVIL + str(i)
+        n["cite"] = EVIL_CITES[i % 3]
+    for e in data["edges"]:
+        e["relation"] = EVIL
+        e["graph_edge"] = EVIL
+        e["strength"] = EVIL
+        if "source" in e:
+            e["source"] = EVIL
+    data["suites"]["sfia"]["candidates"] = [{"id": EVIL, "label": EVIL, "kind": EVIL}]
+    data["suites"]["esco"]["warnings"] = [EVIL]
+    return data
+
+
+@pytest.mark.parametrize("route", [False, True])
+def test_the_map_page_shows_hostile_text_as_text(route: bool) -> None:
+    html = map_page(_hostile_map(route))
+    _assert_inert(html)
+    assert "&lt;script&gt;alert(1)&lt;/script&gt;" in html
+
+
+def test_the_successors_page_shows_hostile_text_as_text() -> None:
+    data = _succ()
+    data["x"] = data["meaning"] = EVIL
+    for part in data["suites"].values():
+        part["warnings"] = [EVIL]
+        for i, n in enumerate(part.get("nodes") or []):
+            n["label"], n["kind"], n["cite"] = EVIL, EVIL, EVIL_CITES[i % 3]
+            n["reuse_level"] = EVIL
+        for e in part.get("edges") or []:
+            e["reason"] = EVIL
+    html = successors_page(data)
+    _assert_inert(html)
+    assert "&lt;script&gt;" in html
+
+
+def test_the_roadmap_page_shows_hostile_text_as_text() -> None:
+    data = _road()
+    data["from"] = data["to"] = data["meaning"] = EVIL
+    for step in data["steps"]:
+        for i, item in enumerate(step["items"]):
+            item["label"], item["kind"], item["suite"] = EVIL, EVIL, EVIL
+            item["cite"] = EVIL_CITES[i % 3]
+    data["credentials"][0].update(label=EVIL, entry_education=EVIL, cite="javascript:alert(1)")
+    data["job_zone"] = {"from": {"label": EVIL}, "to": {"label": EVIL}}
+    data["suites"]["esco"]["candidates"][0].update(label=EVIL, id=EVIL)
+    html = roadmap_page(data)
+    _assert_inert(html)
+    assert "javascript:alert(1)" in html and 'href="javascript' not in html
+
+
+def test_the_discovery_page_shows_hostile_text_as_text() -> None:
+    data = discover(_registry(), _items(*BASE, EVIL), depth=1, breadth=4)
+    for i, c in enumerate(data["connectors"]):
+        c["label"], c["cite"] = EVIL, EVIL_CITES[i % 3]
+    data["clusters"] = [{"name": EVIL, "size": 2, "items": [EVIL], "connectors": [EVIL]}]
+    data["guesses"] = [{"item": EVIL, "related_to": EVIL, "verdict": "confirmed", "detail": EVIL}]
+    data["meaning"] = EVIL
+    html = render_html(data)
+    _assert_inert(html)
+    assert "&lt;script&gt;" in html
+
+
+def test_the_discovery_connector_sources_are_links_in_the_page_only() -> None:
+    data = _tool_run()
+    html = render_html(data)
+    assert 'href="https://example.test/' in html
+    assert data["connectors"][0]["cite"].startswith("https://")  # the data keeps plain text
+
+
+# ---- plain words for internal codes ----------------------------------------------------------
+
+
+def test_plain_words_for_known_codes_and_unknown_ones_stay() -> None:
+    assert plain("unknown_kind:occupation", "sfia") == "SFIA has no occupations"
+    assert plain("pathfind_side:start") == "for the start"
+    assert plain("pathfind_side:target") == "for the goal"
+    assert plain("not_found") == "no clear match"
+    assert plain("ambiguous") == "several matches, pick an id"
+    assert plain("no_order_data") == "this taxonomy has no order data"
+    assert plain("something_new:x") == "something_new:x"
+
+
+def test_pages_show_codes_as_words() -> None:
+    data = _map(route=True)
+    data["suites"]["sfia"] = {
+        "status": "not_found", "start": None, "candidates": [], "nodes": 0,
+        "warnings": ["unknown_kind:occupation", "pathfind_side:start"],
+    }  # fmt: skip
+    html = map_page(data)
+    assert "sfia: not found (SFIA has no occupations; for the start)" in html
+    assert "unknown_kind" not in html and "pathfind_side" not in html
+    road = _road()
+    road["suites"]["esco"] = {"status": "not_found", "items": 0, "warnings": ["not_found"]}
+    assert "esco: not found (no clear match)" in roadmap_page(road)

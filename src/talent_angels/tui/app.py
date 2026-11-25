@@ -21,7 +21,7 @@ from talent_angels.llm.factory import get_llm_client
 from talent_angels.llm.protocol import bind_cancel
 from talent_angels.query_details import write_query_details
 from talent_angels.session.catalog import render_catalogue
-from talent_angels.session.copy import WELCOME
+from talent_angels.session.copy import STOPPED, WELCOME
 from talent_angels.session.credentials import (
     CredentialError,
     looks_like_openrouter_key,
@@ -231,12 +231,11 @@ def main(argv: Sequence[str] | None = None, *, registry: SuiteRegistry | None = 
         # Esc sets this; the abandoned turn sees it at its next model call.
         cancel = threading.Event()
         line_context.run(bind_cancel, cancel)
-        if kind == "command":
+        batch = capability_command(line) is not None
+        if kind == "command" and not batch:
             # Commands can change session state, the active client, or the
             # process environment. Keep those effects on this thread so an
             # Esc cancellation cannot leave the UI and active client apart.
-            if capability_command(line) is not None:
-                console.print("[dim]Running… this can take a while; the files are listed below.[/]")
             reply = handle_line(
                 turn_state,
                 line,
@@ -246,9 +245,16 @@ def main(argv: Sequence[str] | None = None, *, registry: SuiteRegistry | None = 
             )
         else:
             label = "Looking that up…" if kind == "map" else "Thinking…"
+            if batch:
+                # /map /discover /roadmap /successors /tag change nothing but the copy of the
+                # state and their own files, so they run behind the same Esc watcher; they stop
+                # at the next item and write nothing. /tag redirects stdout while it runs, so
+                # the spinner draws on the real terminal stream, not into the captured one.
+                label = "Running"
+                console.print("[dim]Running… this can take a while; esc stops it.[/]")
             try:
                 reply = run_with_status(
-                    console,
+                    Console(file=sys.__stdout__) if batch else console,
                     label,
                     partial(
                         line_context.run,
@@ -257,13 +263,16 @@ def main(argv: Sequence[str] | None = None, *, registry: SuiteRegistry | None = 
                         line,
                         runner=make_runner(turn_outcomes),
                         llm_client=llm_client,
+                        registry=selected if batch else None,
                     ),
                     cancel=cancel,
                 )
             except Cancelled:
                 stage_scope.__exit__(None, None, None)
                 console.print(
-                    "[dim]Stopped waiting. The in-flight request may still finish and count "
+                    f"[dim]{STOPPED}[/]"
+                    if batch
+                    else "[dim]Stopped waiting. The in-flight request may still finish and count "
                     "toward usage.[/]"
                 )
                 continue

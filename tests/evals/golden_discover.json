@@ -1,5 +1,5 @@
 {
-  "note": "Expectations for `ta-agent discover` on tests/fixtures/discover_uca_sample.csv (a synthetic, messy university list), captured from a live run on 2026-11-25 against the local Neo4j holding ESCO, O*NET, SFIA, BLS and JobTech (policy discover-v1, depth 2, breadth 4). Structure and determinism are asserted, not exact counts, so a taxonomy reload that adds nodes does not fail them. expect_resolved_in lists suites an item must resolve in at least (clear label matches only). expect_never_resolved are items no taxonomy has a label for: auto-picking any of them is a regression (Locate's meaning-only hits must stay unclear). expect_guess lists the allowed verdicts per guess.",
+  "note": "Expectations for `ta-agent discover` on tests/fixtures/discover_uca_sample.csv (a synthetic, messy university list), captured from a live run on 2026-11-25 against the local Neo4j holding ESCO, O*NET, SFIA, BLS and JobTech (policy discover-v1, depth 2, breadth 4). Structure and determinism are asserted, not exact counts, so a taxonomy reload that adds nodes does not fail them. Connectors that reach the items only through a tool (O*NET USES_SOFTWARE) are `tool_only` and rank last (ADR-0012). expect_resolved_in lists suites an item must resolve in at least (clear label matches only). expect_never_resolved are items no taxonomy has a label for: auto-picking any of them is a regression (Locate's meaning-only hits must stay unclear). expect_guess lists the allowed verdicts per guess.",
   "input": "tests/fixtures/discover_uca_sample.csv",
   "expect_resolved_in": {
     "web developer": ["esco"],
@@ -27,5 +27,7 @@
     "UX design -> web developer": ["unresolved"],
     "project management -> agile": ["unresolved"]
   },
+  "expect_tool_only": ["Aerospace Engineers", "Avionics Technicians"],
+  "expect_not_tool_only": ["mobile application developer", "computer programming"],
   "expect_min": {"resolved_items": 10, "links": 1, "connectors": 1, "clusters": 1}
 }

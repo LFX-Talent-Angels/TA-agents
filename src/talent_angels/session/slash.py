@@ -19,7 +19,9 @@ from collections.abc import Callable
 from pathlib import Path
 from typing import Any, NoReturn
 
+from talent_angels.llm.protocol import check_cancelled
 from talent_angels.memory.paths import outputs_dir
+from talent_angels.report.pages import map_page, roadmap_page, successors_page
 from talent_angels.session.commands import UnknownCommand, parse_command
 from talent_angels.skills.connect.discover import (
     DEFAULT_DISCOVER_MAX_NODES,
@@ -96,9 +98,16 @@ def _out(command: str, argument: str | None, label: str | None = None) -> Path:
 
 
 def _write_json(folder: Path, name: str, data: dict[str, Any]) -> Path:
+    check_cancelled()  # Esc while the result was being computed: write nothing
     folder.mkdir(parents=True, exist_ok=True)
     path = folder / name
     path.write_text(json.dumps(data, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
+    return path
+
+
+def _write_html(folder: Path, name: str, page: str) -> Path:
+    path = folder / name
+    path.write_text(page, encoding="utf-8")  # the folder exists: the JSON was written first
     return path
 
 
@@ -142,6 +151,7 @@ def _map(argument: str | None, registry: SuiteRegistry) -> list[str]:
     )
     data = found.to_dict()
     path = _write_json(_out("map", argument), "map.json", data)
+    html = _write_html(path.parent, "map.html", map_page(data))
     s = data["summary"]
     lines = [
         f'Map for "{data["query"]}": {s["nodes"]} nodes, {s["edges"]} edges in '  # type: ignore[index]
@@ -151,7 +161,7 @@ def _map(argument: str | None, registry: SuiteRegistry) -> list[str]:
     nodes = [str(n["label"]) for n in data["nodes"]]  # type: ignore[attr-defined]
     if nodes:
         lines.append("Top: " + _shown(nodes))
-    return [*lines, *_pick_hints(data["suites"])] + [f"json: {path}"]  # type: ignore[arg-type]
+    return [*lines, *_pick_hints(data["suites"])] + [f"json: {path}", f"html: {html}"]  # type: ignore[arg-type]
 
 
 def _discover(argument: str | None, registry: SuiteRegistry) -> list[str]:
@@ -172,6 +182,7 @@ def _discover(argument: str | None, registry: SuiteRegistry) -> list[str]:
         registry, items, suites=a.suites, depth=a.depth, breadth=a.breadth, kinds=a.kinds,
         max_nodes=a.max_nodes, recorded=recorded, notes=notes,
     )  # fmt: skip
+    check_cancelled()  # Esc during the last step still writes nothing
     paths = write_outputs(data, _out("discover", argument, Path(a.file).stem))
     down = [f"{n}: {st['status']}" for n, st in data["suites"].items() if st["status"] != "ok"]
     return [*discover_summary(data).split("\n"), *down, *(f"{k}: {v}" for k, v in paths.items())]
@@ -186,6 +197,7 @@ def _roadmap(argument: str | None, registry: SuiteRegistry) -> list[str]:
     start, target = _names(a.words, "two names", pair=True)
     data = roadmap(registry, start, target, suites=a.suites, per_step=a.per_step)
     path = _write_json(_out("roadmap", argument), "roadmap.json", data)
+    html = _write_html(path.parent, "roadmap.html", roadmap_page(data))
     lines = [
         f'Learning order from "{start}" to "{target}" ({data["policy"]}): '
         + ", ".join(f"{n} {s['status']}" for n, s in data["suites"].items())
@@ -193,7 +205,7 @@ def _roadmap(argument: str | None, registry: SuiteRegistry) -> list[str]:
     for step in data["steps"]:
         labels = [i["label"] for i in step["items"]]
         lines.append(f"{step['step']}. {step['name']}: {_shown(labels)}")
-    return [*lines, *_pick_hints(data["suites"]), f"json: {path}"]
+    return [*lines, *_pick_hints(data["suites"]), f"json: {path}", f"html: {html}"]
 
 
 def _successors(argument: str | None, registry: SuiteRegistry) -> list[str]:
@@ -205,13 +217,14 @@ def _successors(argument: str | None, registry: SuiteRegistry) -> list[str]:
         registry, start, suites=a.suites, depth=a.depth, breadth=a.breadth, max_nodes=a.max_nodes
     )
     path = _write_json(_out("successors", argument), "successors.json", data)
+    html = _write_html(path.parent, "successors.html", successors_page(data))
     lines = [f'What comes after "{start}" ({data["policy"]}):']
     for name, part in data["suites"].items():
         if part.get("status") == "ambiguous" and part.get("candidates"):
             continue  # listed once below, with the ids to rerun with
         labels = [n["label"] for n in part.get("nodes", [])[1:]]
         lines.append(f"{name}: {part['status']}" + (f", {_shown(labels)}" if labels else ""))
-    return [*lines, *_pick_hints(data["suites"]), f"json: {path}"]
+    return [*lines, *_pick_hints(data["suites"]), f"json: {path}", f"html: {html}"]
 
 
 def _tag(argument: str | None, registry: SuiteRegistry) -> list[str]:

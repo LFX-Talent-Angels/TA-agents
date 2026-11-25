@@ -19,6 +19,7 @@ from itertools import combinations
 from typing import Any
 
 from talent_angels.contracts import AgentResult, Route
+from talent_angels.llm.protocol import check_cancelled
 from talent_angels.skills.connect.crosswalk import crosswalk_links, suite_of
 from talent_angels.skills.connect.discover_io import MAX_ITEMS, Item
 from talent_angels.skills.connect.federated import _select
@@ -43,6 +44,7 @@ MAX_DISCOVER_NODES = 5000
 MAX_ROUTE_PAIRS = 30  # item pairs routed beyond the user's own guesses (those always are)
 INDIRECT_MAX_EDGES = 3  # a guess counts as indirect through a route of at most this many edges
 MAX_CANDIDATES = 3
+TOOL_EDGES = frozenset({"USES_SOFTWARE"})  # a job "uses" a tool: weak evidence two items relate
 MEANING_ONLY = "hybrid_rrf"  # the suite's match method when no label tier matched: a guess
 
 Json = dict[str, Any]
@@ -171,6 +173,7 @@ def discover(
                 if version := getattr(runtime.suite, "data_version", None):
                     versions[name] = str(version)
                 for item in items:
+                    check_cancelled()
                     res[(name, item.key)] = (
                         _recorded(by_record.get((name, item.key)))
                         if recorded is not None
@@ -186,6 +189,7 @@ def discover(
         for name, suite in list(live.items()):
             try:
                 for item in items:
+                    check_cancelled()
                     r = res[(name, item.key)]
                     if r["status"] != "resolved":
                         continue
@@ -302,6 +306,23 @@ def discover(
         links.sort(key=lambda x: (x["_a"], x["_b"], x["graph_edge"], x["a_id"], x["b_id"]))
         linked = {(x["_a"], x["_b"]) for x in links}
 
+        touching: dict[str, list[Json]] = defaultdict(list)
+        for e in edges.values():
+            touching[e["from_id"]].append(e)
+            touching[e["to_id"]].append(e)
+
+        def tool_only(suite: str, keys: Iterable[str]) -> bool:
+            """Every item reaches this node through a tool: the item's own node in this suite
+            has only O*NET USES_SOFTWARE links (a job that uses it), so whatever the two
+            items share is "jobs use both tools", not a relation between the items."""
+            starts = [nodes_of[k].get(suite) for k in keys]
+            return all(
+                st is not None
+                and touching[st]
+                and all(e["graph_edge"] in TOOL_EDGES for e in touching[st])
+                for st in starts
+            )
+
         connectors: list[Json] = []
         shared: dict[tuple[str, str], list[str]] = defaultdict(list)
         for node_id, who in reach.items():
@@ -316,15 +337,19 @@ def discover(
                     "suite": n["suite"],
                     "cite": n["cite"],
                     "broad": n["kind"] in HUB_KINDS,
+                    "tool_only": tool_only(n["suite"], who),
                     "item_count": len(who),
                     "items": [{"item": text[k], "level": who[k]} for k in sorted(who)],
                     "_keys": sorted(who),
                 }
             )
-        # Specific connectors first; broad hubs (skill groups, ISCO groups) after them.
+        # Specific connectors first; broad hubs (skill groups, ISCO groups) after them; those
+        # linked only through a tool (O*NET USES_SOFTWARE) last of all.
         connectors.sort(
-            key=lambda c: (c["broad"], -c["item_count"], c["label"].casefold(), c["id"])
-        )
+            key=lambda c: (
+                c["tool_only"], c["broad"], -c["item_count"], c["label"].casefold(), c["id"],
+            )
+        )  # fmt: skip
         for c in connectors:
             for pair in combinations(c["_keys"], 2):
                 shared[pair].append(c["id"])
@@ -348,6 +373,7 @@ def discover(
         route_of: dict[tuple[str, str], Json] = {}
         failed: set[str] = set()  # items in a pair whose route search errored: not fully checked
         for a, b in [*first, *rest[:MAX_ROUTE_PAIRS]]:
+            check_cancelled()
             try:
                 route = _best_route(live, nodes_of, a, b)
             except Exception as exc:
@@ -395,6 +421,7 @@ def discover(
         shown = sorted(
             (c for c in connectors if len(inside & set(c["_keys"])) >= 2),
             key=lambda c: (
+                c["tool_only"],
                 -len(inside & set(c["_keys"])),
                 c["broad"],
                 c["label"].casefold(),

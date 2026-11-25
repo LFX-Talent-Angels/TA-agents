@@ -46,8 +46,12 @@ model call, no inferred link.
      `same_as`, and `same_node` when two items resolve to one node). Checked
      against each item's full neighbour list, not the breadth-cut walk.
    - `connectors`: non-item nodes reached by two or more items. Specific ones
-     first, hub kinds (flagged `broad`) after them; then most items first,
-     then label, then ID.
+     first, hub kinds (flagged `broad`) after them, and **tool-only** ones last
+     of all (`tool_only: true`: every item reaches the node through a tool, i.e.
+     the item's own node in that taxonomy has only O*NET `USES_SOFTWARE` links.
+     Aerospace Engineers "linking" JavaScript and Linux only means the job uses
+     both tools, which says nothing about the two items relating); within each group most items first, then label, then ID. The
+     HTML greys tool-only connectors and leaves them off the picture.
    - `routes`: for pairs with no link and no shared connector, Pathfind's
      `find_routes` between the two resolved nodes ranked by route-rank-v1
      (ADR-0011), in any suite that resolves both. The user's own guess pairs are

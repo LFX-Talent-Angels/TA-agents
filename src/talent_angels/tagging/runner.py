@@ -30,7 +30,7 @@ from datetime import UTC, datetime
 from pathlib import Path
 
 from talent_angels.assistant.crosswalk import BRIDGED_SUITES, ESCO, with_esco_bridge
-from talent_angels.llm.protocol import LLMClient
+from talent_angels.llm.protocol import LLMClient, check_cancelled
 from talent_angels.runlog import (
     GenAIUsage,
     RunLogRecord,
@@ -325,6 +325,7 @@ def _rewrite_phase(
     ]
 
     def _one(chunk: list[TagUnit]) -> tuple[dict[str, Rewrite], list[StageUsage]]:
+        check_cancelled()
         return rewrite_group(
             client, chunk, doc_context, system=system, document_label=document_label
         )
@@ -583,6 +584,7 @@ def run(
             pending: dict[tuple[str, str], _Pending] = {}
 
             for index, unit in enumerate(units, start=1):
+                check_cancelled()
                 rw = rewrites.get(unit.unit_key, Rewrite())
                 base_queries = queries_for(unit, rw.labels, rw.description)
                 routing_kinds = profile.routing.get(unit.kind, [])
@@ -817,6 +819,7 @@ def run(
                 previous_decisions[key] = {"note": note}
         stats = review_stats(ledger, units, suite_names)
 
+        check_cancelled()  # the ledger keeps what finished; the workbook is all or nothing
         out_dir.mkdir(parents=True, exist_ok=True)
         if review_outcome.applied:
             # Only a workbook whose decisions were consumed is worth keeping:
@@ -951,6 +954,7 @@ def _decide_pending(
             verdicts[key] = decide(p.outcome, None, llm_on=llm_on, labels=p.rewrite.labels)
 
     def _choose_one(key: tuple[str, str]) -> tuple[Choice | None, list[StageUsage]]:
+        check_cancelled()
         p = pending[key]
         assert llm_client is not None
         return choose(
@@ -1032,6 +1036,7 @@ def _widen_pending(
     widened_done = 0
 
     for key, p in pending.items():
+        check_cancelled()
         verdict_result = verdicts.get(key)
         widen = (
             llm_on

@@ -2,7 +2,7 @@
 
 python -m talent_angels.cli query "software developer"
 python -m talent_angels.cli locate "software developer" --kind occupation
-python -m talent_angels.cli map "Python" --suite esco --depth 2 --breadth 4
+python -m talent_angels.cli map "Python" --suite esco --depth 2 --breadth 4 [--html map.html]
 python -m talent_angels.cli discover items.csv --depth 2 --breadth 4
 python -m talent_angels.cli roadmap "data analyst" "data scientist"
 python -m talent_angels.cli successors "Python (computer programming)" --depth 2
@@ -18,7 +18,7 @@ import argparse
 import json
 import sys
 import time
-from collections.abc import Sequence
+from collections.abc import Callable, Sequence
 from pathlib import Path
 from typing import Any
 
@@ -37,6 +37,7 @@ from talent_angels.evals.quality import (
 )
 from talent_angels.llm.factory import get_answer_mode, get_llm_client
 from talent_angels.query_details import write_query_details
+from talent_angels.report.pages import map_page, roadmap_page, successors_page
 from talent_angels.runlog.report import render_recent_report
 from talent_angels.session.copy import (
     ADVICE_REFUSE,
@@ -168,6 +169,13 @@ def _build_parser() -> argparse.ArgumentParser:
         "taxonomies).",
     )
 
+    map_parser.add_argument(
+        "--html",
+        default=None,
+        metavar="PATH",
+        help="Also write this result as a self-contained HTML page (the JSON still prints).",
+    )
+
     discover_parser = sub.add_parser(
         "discover",
         help="Discovery map: how a list of roles, tasks and skills connects (no model call).",
@@ -217,6 +225,13 @@ def _build_parser() -> argparse.ArgumentParser:
         help="Items shown per step and taxonomy; the rest is counted as `more`.",
     )
 
+    roadmap_parser.add_argument(
+        "--html",
+        default=None,
+        metavar="PATH",
+        help="Also write this result as a self-contained HTML page (the JSON still prints).",
+    )
+
     successors_parser = sub.add_parser(
         "successors",
         help="What comes after a skill, as a tree under learn-order-v1 (no model call).",
@@ -234,6 +249,13 @@ def _build_parser() -> argparse.ArgumentParser:
         type=_max_nodes,
         default=SUCCESSORS_MAX_NODES,
         help=f"Hard cap on nodes per taxonomy, 1..{DEFAULT_MAX_NODES}.",
+    )
+
+    successors_parser.add_argument(
+        "--html",
+        default=None,
+        metavar="PATH",
+        help="Also write this result as a self-contained HTML page (the JSON still prints).",
     )
 
     bench_parser = sub.add_parser(
@@ -412,6 +434,17 @@ def main(argv: Sequence[str] | None = None, *, registry: SuiteRegistry | None = 
     return 0
 
 
+def _write_html(
+    args: argparse.Namespace, render: Callable[[dict[str, Any]], str], data: Any
+) -> None:
+    """``--html PATH``: the same result as a page; the path goes to stderr, JSON stays clean."""
+    if args.html:
+        path = Path(args.html)
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(render(dict(data)), encoding="utf-8")
+        print(f"html: {path}", file=sys.stderr)
+
+
 def _run_map(args: argparse.Namespace, registry: SuiteRegistry) -> int:
     if (args.start is None) == (args.route is None):
         print("map: give either START or --route FROM TO", file=sys.stderr)
@@ -441,6 +474,7 @@ def _run_map(args: argparse.Namespace, registry: SuiteRegistry) -> int:
         print(str(exc), file=sys.stderr)
         return 2
     print(json.dumps(result.to_dict(), ensure_ascii=False, indent=2))
+    _write_html(args, map_page, result.to_dict())
     return (
         2
         if any(w.startswith(("ambiguous_start", "start_not_found")) for w in result.warnings)
@@ -467,6 +501,7 @@ def _run_order(args: argparse.Namespace, registry: SuiteRegistry) -> int:
         print(f"{args.command}: {exc}", file=sys.stderr)
         return 2
     print(json.dumps(data, ensure_ascii=False, indent=2))
+    _write_html(args, roadmap_page if args.command == "roadmap" else successors_page, data)
     for name, part in data["suites"].items():
         if part["status"] == "ambiguous":
             options = "; ".join(f"{c['label']} = {c['id']}" for c in part["candidates"])
@@ -489,6 +524,7 @@ def _run_map_all(
         print(str(exc), file=sys.stderr)
         return 2
     print(json.dumps(result.to_dict(), ensure_ascii=False, indent=2))
+    _write_html(args, map_page, result.to_dict())
     for name, part in result.suites.items():
         if part.status != "ambiguous" or not part.candidates:
             continue
@@ -546,6 +582,7 @@ def _run_map_route(
     if not found.routes:
         empty = RouteMap(name, [], args.depth, breadth, warnings=["no_route", *found.warnings])
         print(json.dumps(empty.to_dict(), ensure_ascii=False, indent=2))
+        _write_html(args, map_page, empty.to_dict())
         return 2
     route = map_route(
         suite,
@@ -558,6 +595,7 @@ def _run_map_route(
     )
     route.warnings += [w for w in found.warnings if w not in route.warnings]
     print(json.dumps(route.to_dict(), ensure_ascii=False, indent=2))
+    _write_html(args, map_page, route.to_dict())
     return 0
 
 

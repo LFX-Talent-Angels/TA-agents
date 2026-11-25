@@ -11,10 +11,13 @@ gap's own edges and never mixes a route's edges into it (#93).
 
 from __future__ import annotations
 
+import json
+
 from talent_angels.assistant.merge import suite_heading
 from talent_angels.contracts import AgentResult, NodeRef, Route
 from talent_angels.session.i18n import t
 from talent_angels.skills.locate.rank import published_facts
+from talent_angels.skills.roadmap.card import PREFIX
 
 #: Names shown per gap bucket before "+N more".
 GAP_PREVIEW = 5
@@ -107,6 +110,22 @@ def _render_bls_facts(result: AgentResult, start: NodeRef, target: NodeRef) -> s
     return "\n".join(lines).strip()
 
 
+def _learning_order(result: AgentResult) -> str | None:
+    """The compact learn-order-v1 section; None when the result carries none (dispatch.py)."""
+    raw = next((w for w in result.warnings if w.startswith(PREFIX)), None)
+    if raw is None:
+        return None
+    lines = []
+    for number, items, more in json.loads(raw[len(PREFIX) :]):
+        names = ", ".join(
+            f"{label} {t('learn_stated')}" if stated else label for label, stated in items
+        )
+        extra = f" {t('pathfind_more', count=more)}" if more else ""
+        lines.append(f"- {number}. {t(f'learn_step_{number}')}: {names}{extra}")
+    head = t("learn_head", suite=suite_heading(result.suite))
+    return "\n\n".join([head, "\n".join(lines), t("learn_foot")])
+
+
 def render_pathfind(result: AgentResult) -> str:
     start, target = result.nodes[0], result.nodes[1]
     if result.suite == "bls":
@@ -140,4 +159,6 @@ def render_pathfind(result: AgentResult) -> str:
     elif "no_path" in result.warnings:
         blocks.append(t("pathfind_no_route", steps=DEFAULT_MAX_DEPTH))
 
+    if (order := _learning_order(result)) is not None:
+        blocks.append(order)
     return "\n\n".join(blocks).strip()

@@ -70,6 +70,13 @@ async def _drive() -> dict[str, Any]:
                 },
             )
             await call("discover_big", "discover_map", {"items": [f"i{n}" for n in range(101)]})
+            await call("roadmap", "roadmap", {"start": "software developer", "target": "x"})
+            bogus = {"suites": ["bogus"]}
+            await call("roadmap_suite", "roadmap", {"start": "a", "target": "b", **bogus})
+            await call("roadmap_limit", "roadmap", {"start": "a", "target": "b", "per_step": 0})
+            await call("successors", "successors", {"start": "Python"})
+            await call("successors_suite", "successors", {"start": "a", **bogus})
+            await call("successors_limit", "successors", {"start": "a", "depth": 9})
             await call("miss", "search_nodes", {"text": "stonemason"})
             await call("neighbors", "get_neighbors", {"node_id": DEV.id})
             await call("neighbors_missing", "get_neighbors", {"node_id": "fake:occupation:nope"})
@@ -113,7 +120,29 @@ def test_the_server_exposes_the_contract_tools_and_map_neighbors(served: dict[st
         "score_paths",
         "map_neighbors",
         "discover_map",
+        "roadmap",
+        "successors",
     }
+
+
+def test_roadmap_and_successors_return_the_learn_order_json_as_structured_results(
+    served: dict[str, Any],
+) -> None:
+    for key, tool in (("roadmap", "roadmap"), ("successors", "successors")):
+        payload = served[key]
+        assert payload["policy"] == "learn-order-v1"
+        assert "only items marked stated_prerequisite" in payload["meaning"]
+        # none of the fake suites carries order data, and none is guessed
+        assert {s["status"] for s in payload["suites"].values()} <= {
+            "no_order_data",
+            "error:ConnectionRefusedError",
+            "error:RuntimeError",
+        }, tool
+    assert served["roadmap"]["steps"] == []
+    # a bad suite name is a structured warning; a limit past its bound is refused up front
+    for key in ("roadmap_suite", "successors_suite"):
+        assert served[key]["warnings"][0].startswith("invalid_input:unknown suite")
+    assert served["roadmap_limit"] is None and served["successors_limit"] is None
 
 
 def test_discover_map_returns_the_cited_discovery_json(served: dict[str, Any]) -> None:
@@ -161,6 +190,8 @@ def test_every_tool_declares_its_inputs_and_a_structured_output(
         "get_neighbors": {"node_id", "rel_types", "suite", "limit"},
         "enumerate_paths": {"from_id", "to_id", "max_depth", "max_paths", "suite"},
         "score_paths": {"paths", "policy_name", "policy_version", "suite"},
+        "roadmap": {"start", "target", "suites", "per_step"},
+        "successors": {"start", "suites", "depth", "breadth", "max_nodes"},
         "map_neighbors": {
             "start",
             "depth",

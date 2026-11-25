@@ -262,6 +262,11 @@ python -m talent_angels.cli map --route "web developer" "software developer"
 # Writes discovery.json, discovery.xlsx and discovery.html next to the file (or --out DIR).
 ta-agent discover items.csv --depth 2 --breadth 4            # every taxonomy; --suites esco,onet
 ta-agent discover items.csv --nodes discovery.json           # rerun from the recorded matches
+
+# Learning order (policy learn-order-v1), no model call; JSON out, same bytes on every rerun.
+ta-agent roadmap "data analyst" "data scientist"             # what to learn, in which order
+ta-agent roadmap onet:occupation:15-2051.01 onet:occupation:15-2051.00 --suites onet
+ta-agent successors "Python (computer programming)" --depth 2 --breadth 4   # what comes after
 ```
 
 `ta-agent discover` takes `.txt` (one item per line), `.csv`/`.xlsx` (column `item`, else
@@ -272,6 +277,24 @@ report shows what links the items directly, the shared connectors, routes betwee
 items that connect to nothing, clusters, and whether each of your guesses holds in the graph.
 Same matches, same graph: byte-identical output. See
 [`docs/decisions/0012-discovery-map.md`](./docs/decisions/0012-discovery-map.md).
+
+`ta-agent roadmap FROM TO [--suites a,b] [--per-step N]` lists what the second occupation needs
+that the first does not, in four steps (1 Foundations: knowledge; 2 Core; 3 Field; 4
+Job-specific, from ESCO's reuse level; O\*NET skills are Core). The gap per taxonomy: ESCO the
+target's essential skills minus the start's; JobTech its skills minus the start's; O\*NET skills
+and knowledge with importance >= 3.0 whose level for the target is >= 0.5 above the start's (both
+levels shown, plus both Job Zones); BLS the target's entry education, experience and training as
+`credentials`. A stated ESCO essential-for link puts the needed skill first; inside a step the
+largest level jump comes first, then importance, label and node ID. Every item carries its
+`suite`, `cite`, `reasons` and `stated_prerequisite`: only `true` means a taxonomy states it as
+a prerequisite, every other place comes from the policy. `ta-agent successors X [--suites]
+[--depth 1..4] [--breadth 1..10] [--max-nodes N]` prints the tree of what comes after a skill
+(ESCO: skills that need it, narrower and related later-level skills; SFIA: the next level), each
+edge `kind: stated|policy`. Names resolve as in `map` (a clear match only, else `ambiguous` with
+candidates; node IDs are always accepted); a taxonomy with no order data says `no_order_data`.
+The chat path card ("path from my job to my goal") adds a short "Learning order" section. It is
+evidence, not a syllabus. See
+[`docs/decisions/0013-learning-order-policy.md`](./docs/decisions/0013-learning-order-policy.md).
 
 Expect JSON with `plan`, `answer`, `tools`, `tokens`, `cost_usd`.
 

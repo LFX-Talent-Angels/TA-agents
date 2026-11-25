@@ -132,6 +132,16 @@ _EN: dict[str, str] = {
         'and "my goal is ...", then ask again.'
     ),
     "pathfind_no_facts": "No published pay, outlook or education figures for this occupation.",
+    "learn_head": "**Learning order (learn-order-v1, {suite}):**",
+    "learn_step_1": "Foundations",
+    "learn_step_2": "Core",
+    "learn_step_3": "Field",
+    "learn_step_4": "Job-specific",
+    "learn_stated": "(stated prerequisite)",
+    "learn_foot": (
+        "Only items marked as stated prerequisites are prerequisites a taxonomy states; "
+        "the rest of the order follows the learn-order-v1 policy."
+    ),
     # profile
     "profile_empty": (
         'I don\'t have much about you yet. Tell me your current job ("I am a …") '
@@ -267,6 +277,16 @@ _ES: dict[str, str] = {
     ),
     "pathfind_no_facts": (
         "No hay datos publicados de salario, perspectivas o educación para este puesto."
+    ),
+    "learn_head": "**Orden de aprendizaje (learn-order-v1, {suite}):**",
+    "learn_step_1": "Fundamentos",
+    "learn_step_2": "Básico",
+    "learn_step_3": "Del sector",
+    "learn_step_4": "Del puesto",
+    "learn_stated": "(requisito indicado)",
+    "learn_foot": (
+        "Solo los elementos marcados como requisito indicado son requisitos que una taxonomía "
+        "declara; el resto del orden sigue la política learn-order-v1."
     ),
     "profile_empty": (
         'Aún no sé mucho de ti. Dime tu trabajo actual ("soy …") o el trabajo al '
@@ -408,6 +428,16 @@ _SV: dict[str, str] = {
         '"jag är ..." och "mitt mål är ...", och fråga igen.'
     ),
     "pathfind_no_facts": "Ingen publicerad lön-, utsikts- eller utbildningsdata för detta yrke.",
+    "learn_head": "**Inlärningsordning (learn-order-v1, {suite}):**",
+    "learn_step_1": "Grunder",
+    "learn_step_2": "Kärna",
+    "learn_step_3": "Bransch",
+    "learn_step_4": "Yrkesspecifikt",
+    "learn_stated": "(angivet förkunskapskrav)",
+    "learn_foot": (
+        "Bara punkter markerade som angivna förkunskapskrav anges av en taxonomi; "
+        "resten av ordningen följer policyn learn-order-v1."
+    ),
     "profile_empty": (
         "Jag vet inte mycket om dig än. Berätta ditt nuvarande yrke (”jag är …”) "
         "eller ett yrke du siktar på (”mitt mål är …”) så noterar jag det."

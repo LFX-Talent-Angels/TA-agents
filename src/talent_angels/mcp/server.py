@@ -40,6 +40,7 @@ from talent_angels.mcp.models import (
     DiscoverPayload,
     MapPayload,
     NeighborsPayload,
+    OrderPayload,
     PathRef,
     PathsPayload,
     PolicyRef,
@@ -62,6 +63,8 @@ from talent_angels.skills.connect.neighbourhood import (
     map_from_text,
     map_route,
 )
+from talent_angels.skills.roadmap import DEFAULT_MAX_NODES as SUCCESSORS_MAX_NODES
+from talent_angels.skills.roadmap import MAX_PER_STEP, roadmap, successors
 from talent_angels.suites import (
     SuiteRegistry,
     SuiteRuntime,
@@ -81,8 +84,9 @@ SERVER_INSTRUCTIONS = """\
 Read-only access to the Talent Angels taxonomy graphs (ESCO, O*NET, SFIA, BLS
 and JobTech, as far as they are registered and loaded) through the suite
 contract: search_nodes, get_neighbors, enumerate_paths, score_paths, plus
-map_neighbors (a multi-hop get_neighbors) and discover_map (how a list of items
-connects). Pass the
+map_neighbors (a multi-hop get_neighbors), discover_map (how a list of items
+connects), roadmap (what to learn from A to B, in order) and successors (what comes
+after a skill). Pass the
 suite by name, e.g. suite=`esco`, `onet`, `sfia`, `bls` or `jobtech`.
 Do not treat IDs from one suite as belonging to another.
 
@@ -636,6 +640,98 @@ link comes from a taxonomy edge or an official crosswalk. {_ID_DOC}""",
         except (ValueError, UnknownSuiteError) as exc:
             return DiscoverPayload(warnings=[f"invalid_input:{exc}"])
         return DiscoverPayload.model_validate({**found, "warnings": [*found["warnings"], *stray]})
+
+    @server.tool(
+        name="roadmap",
+        title="Learning order from one occupation to another",
+        description=f"""\
+What `target` needs that `start` does not, in a learning order. Deterministic, no model call:
+the same input and graph data give the same JSON. Policy `learn-order-v1`.
+
+`start` and `target` are node IDs (full determinism) or names; each taxonomy resolves them with
+the rule of `map_neighbors` (a clear label match only). An unclear name is `ambiguous` with a
+`candidates` pick list for that taxonomy, never guessed; ask the user, then call again with IDs.
+Per taxonomy: ESCO the target's essential skills minus the start's; JobTech the target's skills
+minus the start's; O*NET skills and knowledge with importance >= 3.0 whose level for the target
+exceeds the start's by >= 0.5 (both levels kept); BLS a `credentials` block (entry education,
+experience, training); O*NET also gives the `job_zone` of both ends. SFIA has no order data for
+occupations (`no_order_data`). `suites` reports each taxonomy: `ok`, `ambiguous`, `not_found`,
+`no_order_data` or `error:<Type>`.
+
+`steps` merge the taxonomies: 1 Foundations (knowledge), 2 Core, 3 Field, 4 Job-specific (by
+ESCO reuse level; O*NET skills are Core). A stated ESCO essential-for link puts the needed skill
+first; inside a step the largest level jump comes first, then importance, label and ID. Each item
+has its `suite`, `id`, `cite`, `reasons` and `stated_prerequisite`: only `true` means a taxonomy
+states it as a prerequisite; every other place comes from the policy. At most `per_step` items
+per step and taxonomy are listed, the rest is `more`.
+
+The result is ordered by learn-order-v1 over official taxonomy data. It is evidence, not a
+syllabus or advice. {_ID_DOC}""",
+    )
+    def roadmap_tool(
+        ctx: ToolContext,
+        start: Annotated[str, Field(description="Node ID or name of the current occupation.")],
+        target: Annotated[str, Field(description="Node ID or name of the goal occupation.")],
+        suites: Annotated[
+            list[str] | None, Field(description="Subset of taxonomies; omit for all.")
+        ] = None,
+        per_step: Annotated[
+            int, Field(ge=1, le=MAX_PER_STEP, description="Items listed per step and taxonomy.")
+        ] = 10,
+    ) -> OrderPayload:
+        session = ctx.request_context.lifespan_context
+        try:
+            found = roadmap(session.registry, start, target, suites=suites, per_step=per_step)
+        except (ValueError, UnknownSuiteError) as exc:
+            return OrderPayload(warnings=[f"invalid_input:{exc}"])
+        return OrderPayload.model_validate(found)
+
+    @server.tool(
+        name="successors",
+        title="What comes after a skill",
+        description=f"""\
+A tree of what comes after `start`, to `depth` levels and `breadth` children per node, at most
+`max_nodes` nodes per taxonomy. Deterministic, no model call. Policy `learn-order-v1`.
+
+`start` is a node ID or a name, resolved as in `map_neighbors` (a clear label match only, else
+`ambiguous` with `candidates`). Children, ESCO: `stated` are the skills ESCO says need `start`
+(essential-for); `policy` are its narrower skills and the related skills of a later reuse level.
+SFIA: the next level of the skill (`stated`). Stated children come first, then reuse level, label
+and ID. A node appears once; groups and categories are never expanded, and SFIA levels are
+followed only to the next level of the same skill. Each edge has
+`kind` (`stated` | `policy`) and `reason`. O*NET, BLS and JobTech have no order data for a skill
+(`no_order_data`).
+
+The result is ordered by learn-order-v1 over official taxonomy data: only `stated` edges are
+prerequisites stated by a taxonomy. It is evidence, not a syllabus. {_ID_DOC}""",
+    )
+    def successors_tool(
+        ctx: ToolContext,
+        start: Annotated[str, Field(description="Node ID or name of the skill.")],
+        suites: Annotated[
+            list[str] | None, Field(description="Subset of taxonomies; omit for all.")
+        ] = None,
+        depth: Annotated[int, Field(ge=1, le=MAX_DEPTH, description="Levels of the tree.")] = 2,
+        breadth: Annotated[
+            int, Field(ge=1, le=MAX_BREADTH, description="Children kept per node.")
+        ] = 4,
+        max_nodes: Annotated[
+            int, Field(ge=1, le=DEFAULT_MAX_NODES, description="Hard cap on nodes per taxonomy.")
+        ] = SUCCESSORS_MAX_NODES,
+    ) -> OrderPayload:
+        session = ctx.request_context.lifespan_context
+        try:
+            found = successors(
+                session.registry,
+                start,
+                suites=suites,
+                depth=depth,
+                breadth=breadth,
+                max_nodes=max_nodes,
+            )
+        except (ValueError, UnknownSuiteError) as exc:
+            return OrderPayload(warnings=[f"invalid_input:{exc}"])
+        return OrderPayload.model_validate(found)
 
     return server
 

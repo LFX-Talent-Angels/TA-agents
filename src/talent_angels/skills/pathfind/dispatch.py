@@ -181,4 +181,8 @@ def pathfind_one(
                 ],
             }
         )
+    from talent_angels.skills.roadmap.card import card_warning  # roadmap imports pathfind.gap
+
+    if order := card_warning(measured, suite_name, start_node.id, target_node.id):
+        result = result.model_copy(update={"warnings": [*result.warnings, order]})
     return result, measured.tool_calls

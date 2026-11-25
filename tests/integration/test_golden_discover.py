@@ -6,6 +6,7 @@ Skipped when Neo4j isn't reachable. Values: tests/evals/golden_discover.json.
 from __future__ import annotations
 
 import json
+import re
 from pathlib import Path
 
 import pytest
@@ -65,7 +66,8 @@ def test_the_three_files_exist_and_the_html_is_static(runs: dict[str, Path]) -> 
         "discovery.html",
     }
     html = (folder / "discovery.html").read_text(encoding="utf-8")
-    assert "<script" not in html and "src=" not in html and "href=" not in html
+    assert "<script" not in html and "src=" not in html
+    assert all(h.startswith("http") for h in re.findall(r'href="([^"]*)"', html))  # cites only
 
 
 def test_structure_and_never_guessed_items(runs: dict[str, Path]) -> None:

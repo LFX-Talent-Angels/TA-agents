@@ -306,28 +306,33 @@ def discover(
         links.sort(key=lambda x: (x["_a"], x["_b"], x["graph_edge"], x["a_id"], x["b_id"]))
         linked = {(x["_a"], x["_b"]) for x in links}
 
-        def tool_only(suite: str, node_id: str, keys: Iterable[str]) -> bool:
-            """Every item reaches this node only by a tool edge (O*NET USES_SOFTWARE: a job uses
-            it), so what the items share is "jobs use both tools", not a relation between them.
-            An item's other edges elsewhere in its walk do not count: only the edges into it."""
-            for k in keys:
-                walk = walks.get((suite, k))
-                if walk is None:
-                    return False
+        by_tool: dict[tuple[str, str], set[str]] = {}
+
+        def tool_reached(suite: str, key: str) -> set[str]:
+            """Nodes this item's walk reaches only through a tool edge (O*NET USES_SOFTWARE: a
+            job uses it), directly or by going on from such a node. One mixed way in, say a plain
+            RELATED_TO, and the node is not here. Edges elsewhere in the walk do not matter."""
+            if (suite, key) not in by_tool:
+                done: set[str] = set()
+                by_tool[(suite, key)] = done
+                walk = walks[(suite, key)]
                 level = {n.ref.id: n.level for n in walk.nodes}
-                into = [
-                    e
-                    for e in walk.edges
-                    for other in [
-                        e.ref.target_node_id if e.ref.source_node_id == node_id
-                        else e.ref.source_node_id if e.ref.target_node_id == node_id
-                        else None
-                    ]
-                    if other is not None and level.get(other, 99) < level.get(node_id, 0)
-                ]  # fmt: skip
-                if not into or any(e.ref.type not in TOOL_EDGES for e in into):
-                    return False
-            return True
+                into: dict[str, list[tuple[str, str]]] = defaultdict(list)  # node -> (from, edge)
+                for e in walk.edges:
+                    a, b = e.ref.source_node_id, e.ref.target_node_id
+                    if level.get(b, -9) == level.get(a, -9) + 1:
+                        into[b].append((a, e.ref.type))
+                    elif level.get(a, -9) == level.get(b, -9) + 1:
+                        into[a].append((b, e.ref.type))
+                for node in sorted(into, key=lambda i: (level[i], i)):
+                    if all(t in TOOL_EDGES or src in done for src, t in into[node]):
+                        done.add(node)
+            return by_tool[(suite, key)]
+
+        def tool_only(suite: str, node_id: str, keys: Iterable[str]) -> bool:
+            """Every item reaches the node only through a tool: what the items share is "jobs use
+            both tools", not a relation between the items."""
+            return all((suite, k) in walks and node_id in tool_reached(suite, k) for k in keys)
 
         connectors: list[Json] = []
         shared: dict[tuple[str, str], list[str]] = defaultdict(list)

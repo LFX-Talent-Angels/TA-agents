@@ -156,7 +156,14 @@ def main(argv: Sequence[str] | None = None, *, registry: SuiteRegistry | None = 
 
         return tag_main(args[1:], registry=registry)
 
-    if args[:1] in (["map"], ["discover"], ["roadmap"], ["successors"]):
+    if args[:1] in (
+        ["map"],
+        ["discover"],
+        ["roadmap"],
+        ["successors"],
+        ["capabilities"],
+        ["run"],
+    ):
         from talent_angels.cli import main as cli_main
 
         return cli_main(args, registry=registry)

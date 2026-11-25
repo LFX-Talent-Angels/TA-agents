@@ -51,8 +51,18 @@ input is an `invalid_input:` warning. No model call, same bytes for the same dat
 (`essential`, `optional`, `software`), up to several ranked bridge `routes` (`route-rank-v1`
 `score`) and the compact `learning_order`: the data of the chat path card, without phrasing. An
 unclear end is `ambiguous` with a `side` and `candidates`, never guessed. No model call, same bytes
-for the same data. `tag` (batch document tagging) is deliberately not an MCP tool: it runs for
-minutes and uses a model. See `docs/interfaces.md`.
+for the same data. See `docs/interfaces.md`.
+
+The engine front door adds five tools (built from the capability registry, `talent_angels.engine`):
+`capabilities` (the manifest: name, question, input and output JSON Schema, cost, determinism,
+`uses_model`, examples; pass `name` for one entry), `run` (`capability`, `input`: any capability by
+name or by its tool name, e.g. `map_neighbors`; returns a `Result` with `status`, `output`,
+`warnings`, `candidates`, the resolved `call`; only registered names run, unknown fields are
+refused, no model call), and `start_job` / `job_status` / `cancel_job` for `tag` (batch document
+tagging), which runs for minutes. A job reads `path` under the server's tag root (`TA_TAG_ROOT`,
+default `<TA home>/tag`; set it in the client's MCP config to the projects folder), searches without a
+model unless the server sets `TA_JOBS_ALLOW_MODEL=1`, and keeps its state in
+`<TA home>/jobs/<id>.json`. MCP needs no `TA_JOBS_ENABLED` (that gates HTTP only). One job runs at a time per server process.
 
 `warnings` is machine-readable and load-bearing: `not_found`, `ambiguous`,
 `no_neighbors`, `node_not_found`, `no_path`, `endpoint_not_found`,
@@ -103,6 +113,7 @@ Check it with `/mcp` inside Claude Code.
 | File | Holds |
 | ---- | ----- |
 | `server.py` | The four contract tools plus `map_neighbors`, `discover_map`, `roadmap`, `successors` and `pathfind`, their descriptions, suite lifespan |
+| `engine_tools.py` | `capabilities`, `run`, `start_job`, `job_status`, `cancel_job` (the engine front door) |
 | `models.py` | Typed payloads returned to the client |
 | `mapping.py` | Suite `ToolResult` → those payloads; nothing interprets |
 | `protocol.py` | The contract surface, structurally — no concrete import |

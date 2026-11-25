@@ -307,7 +307,9 @@ Expect JSON with `plan`, `answer`, `tools`, `tokens`, `cost_usd`.
 
 Every capability (map, discover, roadmap, successors, pathfind, tag) is reachable from the CLI,
 the chat (`/map`, `/discover`, `/roadmap`, `/successors`, `/tag`), MCP and HTTP: see
-[`docs/interfaces.md`](./docs/interfaces.md) for the matrix and example calls.
+[`docs/interfaces.md`](./docs/interfaces.md) for the matrix and example calls. The engine lists
+what it can do (`GET /v1/capabilities`, MCP `capabilities`, `ta-agent capabilities`) and runs any
+of it by name (`POST /v1/run`, MCP `run`, `ta-agent run`): that manifest is the one declaration.
 
 Batch-tag a whole client document instead of chatting row by row: see [`docs/tagging.md`](./docs/tagging.md) (`ta-agent tag <project>`).
 
@@ -322,9 +324,11 @@ Endpoints: `GET /v1/health` (per suite + LLM), `POST /v1/query`,
 like "what skills does it need?"), `GET /v1/sessions/{id}/history`,
 `DELETE /v1/sessions/{id}` (forget one conversation); the deterministic
 capabilities `POST /v1/capabilities/{pathfind,map,discover,roadmap,successors}`
-(no model call; `curl` examples in [`docs/interfaces.md`](./docs/interfaces.md); `tag` is not
-exposed over HTTP, it is a minutes-long batch that uses the model). Set `TA_CORS_ORIGINS` for
-a browser UI.
+(no model call; `curl` examples in [`docs/interfaces.md`](./docs/interfaces.md)), the engine front
+door `GET /v1/capabilities` and `POST /v1/run`, and `POST /v1/jobs` (+ `GET /v1/jobs/{id}`,
+`POST /v1/jobs/{id}/cancel`) for `tag`, the minutes-long batch (starting one needs
+`TA_JOBS_ENABLED=1` on the server; the API has no auth). Set `TA_CORS_ORIGINS` for a browser
+UI.
 
 Open http://127.0.0.1:8000/docs and `POST /v1/query` with
 `{"question": "What essential skills does a software developer need?"}`

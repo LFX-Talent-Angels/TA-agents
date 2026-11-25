@@ -84,6 +84,22 @@ async def _drive() -> dict[str, Any]:
             )
             await call("pathfind_suite", "pathfind", {"start": "a", "target": "b", "suites": ["x"]})
             await call("pathfind_blank", "pathfind", {"start": "", "target": "b"})
+            await call("capabilities", "capabilities", {})
+            await call("capabilities_one", "capabilities", {"name": "map_neighbors"})
+            await call(
+                "run_ok", "run", {"capability": "map_neighbors", "input": {"start": "Python"}}
+            )
+            await call("run_unknown", "run", {"capability": "rm_rf", "input": {}})
+            await call(
+                "run_extra",
+                "run",
+                {"capability": "roadmap", "input": {"x": 1, "from": "a", "to": "b"}},
+            )
+            await call("run_tag", "run", {"capability": "tag", "input": {"path": "x"}})
+            await call("job_bad", "start_job", {"capability": "roadmap", "input": {"nope": 1}})
+            # MCP is a local stdio process: no TA_JOBS_ENABLED needed; the root check answers
+            await call("job_tag", "start_job", {"capability": "tag", "input": {"path": "../x"}})
+            await call("job_unknown", "job_status", {"job_id": "../../etc/passwd"})
             await call("miss", "search_nodes", {"text": "stonemason"})
             await call("neighbors", "get_neighbors", {"node_id": DEV.id})
             await call("neighbors_missing", "get_neighbors", {"node_id": "fake:occupation:nope"})
@@ -130,7 +146,46 @@ def test_the_server_exposes_the_contract_tools_and_map_neighbors(served: dict[st
         "roadmap",
         "successors",
         "pathfind",
+        "capabilities",
+        "run",
+        "start_job",
+        "job_status",
+        "cancel_job",
     }
+
+
+def test_every_registry_mcp_alias_is_a_tool_and_every_capability_tool_is_an_alias(
+    served: dict[str, Any],
+) -> None:
+    from talent_angels.engine import CAPABILITIES
+
+    aliases = {c.aliases["mcp"] for c in CAPABILITIES.values() if "mcp" in c.aliases}
+    assert aliases <= set(served["tools"])
+    # the tools that run a capability are exactly the aliases (the contract tools are not
+    # capabilities, and the five engine tools are the front door)
+    engine_tools = {"capabilities", "run", "start_job", "job_status", "cancel_job"}
+    contract_only = {"enumerate_paths", "score_paths"}
+    assert set(served["tools"]) - engine_tools - contract_only == aliases
+
+
+def test_the_engine_tools_return_the_manifest_and_the_run_result(served: dict[str, Any]) -> None:
+    manifest = served["capabilities"]
+    assert [c["name"] for c in manifest["capabilities"]][0] == "locate"
+    assert len(manifest["capabilities"]) == 8
+    assert [c["name"] for c in served["capabilities_one"]["capabilities"]] == ["map"]
+    ok = served["run_ok"]  # the tool parameter is called `input`, and the SDK accepts it
+    assert ok["call"]["capability"] == "map"  # called by its MCP alias
+    assert ok["status"] in {"ok", "no_result", "unavailable", "ambiguous"}
+    assert ok["output"]["policy"] == "map-rank-v1"
+    assert served["run_unknown"]["status"] == "unknown_capability"
+    assert served["run_extra"]["status"] == "invalid_input"
+    assert served["run_tag"]["status"] == "use_job"
+    assert served["job_bad"]["status"] == "failed"
+    assert served["job_bad"]["result"]["status"] == "invalid_input"
+    assert served["job_tag"]["status"] == "failed"  # refused by the root check, not by a gate
+    assert served["job_tag"]["result"]["status"] == "invalid_input"
+    assert "TA_JOBS_ENABLED" not in str(served["job_tag"])
+    assert served["job_unknown"]["status"] == "not_found"
 
 
 def test_pathfind_returns_the_path_card_data_per_taxonomy(served: dict[str, Any]) -> None:
@@ -209,6 +264,11 @@ def test_every_tool_declares_its_inputs_and_a_structured_output(
         "roadmap": {"start", "target", "suites", "per_step"},
         "successors": {"start", "suites", "depth", "breadth", "max_nodes"},
         "pathfind": {"start", "target", "suites"},
+        "capabilities": {"name"},
+        "run": {"capability", "input"},
+        "start_job": {"capability", "input"},
+        "job_status": {"job_id"},
+        "cancel_job": {"job_id"},
         "map_neighbors": {
             "start",
             "depth",

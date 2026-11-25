@@ -39,7 +39,7 @@ from talent_angels.tagging.runner import WorkbookOpenError, run
 _DEFAULT_TAG_LLM_TIMEOUT_SECONDS = "60"
 
 
-def _parse_rows(spec: str) -> set[str]:
+def parse_rows(spec: str) -> set[str]:
     """`"66-91,100"` -> `{"66", "67", ..., "91", "100"}`; "D-PR.1" is one id, not a range."""
     rows: set[str] = set()
     for part in spec.split(","):
@@ -53,6 +53,9 @@ def _parse_rows(spec: str) -> set[str]:
         else:
             rows.add(part)
     return rows
+
+
+_parse_rows = parse_rows  # the old private name
 
 
 def _build_parser(

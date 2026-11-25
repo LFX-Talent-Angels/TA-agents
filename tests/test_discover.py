@@ -132,8 +132,9 @@ def test_a_link_is_found_even_when_breadth_cut_it_from_the_walk() -> None:
 def test_connectors_are_ranked_flagged_and_exclude_items() -> None:
     data = _run(_items(*BASE))
     labels = [(c["label"], c["item_count"], c["broad"]) for c in data["connectors"]]
-    assert labels == [("programming", 3, True), ("scripting", 2, False)]
-    scripting = data["connectors"][1]
+    # Specific connectors come before broad hubs, whatever their item count.
+    assert labels == [("scripting", 2, False), ("programming", 3, True)]
+    scripting = data["connectors"][0]
     assert [i["item"] for i in scripting["items"]] == ["JavaScript", "Python"]
     assert scripting["cite"].startswith("https://") and scripting["suite"] == "test"
     assert not any(c["id"] in {"occ:web", "s:js"} for c in data["connectors"])
@@ -359,6 +360,31 @@ def test_two_items_that_resolve_to_one_node_are_linked_as_the_same_node() -> Non
     assert [(x["a"], x["b"], x["relation"]) for x in same["links"]] == [
         ("database", "SQL", "same_node")
     ]
+
+
+def test_a_route_search_error_marks_the_orphan_check_unfinished() -> None:
+    class BrokenRoutes(PathSuite):
+        def enumerate_paths(self, *args: object, **kwargs: object) -> FakeToolResult:
+            raise RuntimeError("down")
+
+    g = _graph()
+    data = discover(
+        _registry(BrokenRoutes(list(g.nodes.values()), g.edges)),
+        _items(*BASE),
+        depth=1,
+        breadth=4,
+    )
+    # Items only a route could join are orphans now, and none claims a finished check.
+    assert "teamwork" in [o["item"] for o in data["orphans"]]
+    assert all(o["routes_fully_checked"] is False for o in data["orphans"])
+    assert any(
+        w.startswith("route:") and w.endswith(":error:RuntimeError") for w in data["warnings"]
+    )
+
+
+def test_discover_itself_refuses_more_than_a_hundred_items() -> None:
+    with pytest.raises(ValueError, match="at most 100"):
+        _run(_items(*(f"item {n}" for n in range(MAX_ITEMS + 1))))
 
 
 def test_hundred_and_one_items_is_an_error() -> None:

@@ -20,7 +20,7 @@ from typing import Any
 
 from talent_angels.contracts import AgentResult, Route
 from talent_angels.skills.connect.crosswalk import crosswalk_links, suite_of
-from talent_angels.skills.connect.discover_io import Item
+from talent_angels.skills.connect.discover_io import MAX_ITEMS, Item
 from talent_angels.skills.connect.federated import _select
 from talent_angels.skills.connect.neighbourhood import (
     HUB_KINDS,
@@ -148,6 +148,8 @@ def discover(
     names = _select(registry, suites)
     kind_list = sorted(kinds) if kinds is not None else None
     items = sorted(items, key=lambda i: i.key)
+    if len(items) > MAX_ITEMS:
+        raise ValueError(f"at most {MAX_ITEMS} items, got {len(items)}")
     text = {i.key: i.text for i in items}
     by_record = {
         (str(e.get("suite")), str(e.get("item", "")).casefold()): e for e in recorded or []
@@ -319,7 +321,10 @@ def discover(
                     "_keys": sorted(who),
                 }
             )
-        connectors.sort(key=lambda c: (-c["item_count"], c["label"].casefold(), c["id"]))
+        # Specific connectors first; broad hubs (skill groups, ISCO groups) after them.
+        connectors.sort(
+            key=lambda c: (c["broad"], -c["item_count"], c["label"].casefold(), c["id"])
+        )
         for c in connectors:
             for pair in combinations(c["_keys"], 2):
                 shared[pair].append(c["id"])
@@ -341,11 +346,13 @@ def discover(
             key=lambda p: (p[0] in touched and p[1] in touched, p),
         )
         route_of: dict[tuple[str, str], Json] = {}
+        failed: set[str] = set()  # items in a pair whose route search errored: not fully checked
         for a, b in [*first, *rest[:MAX_ROUTE_PAIRS]]:
             try:
                 route = _best_route(live, nodes_of, a, b)
             except Exception as exc:
                 warnings.add(f"route:{text[a]}:{text[b]}:error:{type(exc).__name__}")
+                failed.update((a, b))
                 continue
             if route:
                 route_of[(a, b)] = {
@@ -361,7 +368,7 @@ def discover(
     for a, b in [*linked, *shared, *route_of]:
         near[a].add(b)
         near[b].add(a)
-    unrouted = {k for p in rest[MAX_ROUTE_PAIRS:] for k in p}  # pairs the cap left unchecked
+    unrouted = {k for p in rest[MAX_ROUTE_PAIRS:] for k in p} | failed  # not fully checked
     orphans = [
         {"item": text[k], "routes_fully_checked": k not in unrouted}
         for k in resolved_keys

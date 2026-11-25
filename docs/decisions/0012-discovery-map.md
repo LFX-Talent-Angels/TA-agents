@@ -45,8 +45,9 @@ model call, no inferred link.
    - `links`: a graph edge directly between two different items' nodes (also
      `same_as`, and `same_node` when two items resolve to one node). Checked
      against each item's full neighbour list, not the breadth-cut walk.
-   - `connectors`: non-item nodes reached by two or more items, most items
-     first, then label, then ID; hub kinds are flagged `broad`.
+   - `connectors`: non-item nodes reached by two or more items. Specific ones
+     first, hub kinds (flagged `broad`) after them; then most items first,
+     then label, then ID.
    - `routes`: for pairs with no link and no shared connector, Pathfind's
      `find_routes` between the two resolved nodes ranked by route-rank-v1
      (ADR-0011), in any suite that resolves both. The user's own guess pairs are

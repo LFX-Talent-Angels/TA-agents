@@ -13,6 +13,7 @@ from pathlib import Path
 import pytest
 from rich.console import Console
 
+from talent_angels.engine.registry import Result
 from talent_angels.llm import protocol
 from talent_angels.llm.protocol import TurnCancelled, bind_cancel, check_cancelled
 from talent_angels.memory.paths import outputs_dir
@@ -241,7 +242,8 @@ def test_roadmap_and_successors_write_neither_file_when_esc_comes_before_the_wri
         return "<html></html>"
 
     monkeypatch.setattr(slash, f"{name}_page", page)
-    monkeypatch.setattr(slash, name, lambda *_a, **_k: {"suites": {}, "policy": "p", "steps": []})
+    fake = Result(status="ok", output={"suites": {}, "policy": "p", "steps": []})
+    monkeypatch.setattr(slash, "run", lambda *_a, **_k: fake)  # the engine's answer, not a walk
     text, _ = _run(f"/{name} a | b" if name == "roadmap" else f"/{name} a", None)
     assert text == STOPPED and _written() == []
 

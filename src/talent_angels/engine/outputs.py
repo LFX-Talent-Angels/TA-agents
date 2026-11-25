@@ -195,7 +195,7 @@ class Connector(_Out):
     broad: bool
     item_count: int
     items: list[ConnectorItem]
-    tool_only: bool | None = None  # written by the show-it branch's discover; absent here
+    tool_only: bool  # reached only through tool edges (ADR-0012); ranked after the rest
 
 
 class Stop(_Out):

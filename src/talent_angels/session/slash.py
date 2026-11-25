@@ -17,8 +17,8 @@ from collections.abc import Callable
 from pathlib import Path
 from typing import Any, NoReturn
 
-from talent_angels.llm.protocol import check_cancelled
 from talent_angels.engine import CAPABILITIES, run
+from talent_angels.llm.protocol import check_cancelled
 from talent_angels.memory.paths import outputs_dir
 from talent_angels.report.pages import map_page, plain, roadmap_page, successors_page
 from talent_angels.session.commands import UnknownCommand, parse_command

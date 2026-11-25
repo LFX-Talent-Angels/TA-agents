@@ -96,3 +96,15 @@ def test_every_manifest_entry_has_both_schemas_and_names_its_defs() -> None:
     for entry in manifest()["capabilities"]:
         schema = entry["output_schema"]
         assert schema["type"] == "object" and schema["properties"], entry["name"]
+
+
+def test_discover_connectors_carry_tool_only_and_validate() -> None:
+    from tests.test_discover import _registry as discover_registry
+    from tests.test_discover import _tool_pair_graph
+
+    data = _check(
+        "discover",
+        {"items": [{"item": "alphaitem"}, {"item": "betaitem"}], "depth": 1, "breadth": 4},
+        discover_registry(_tool_pair_graph()),
+    )
+    assert {c["label"]: c["tool_only"] for c in data["connectors"]} == {"oven": True, "kiln": False}

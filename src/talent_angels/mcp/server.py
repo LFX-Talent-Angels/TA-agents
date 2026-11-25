@@ -47,6 +47,7 @@ from talent_angels.mcp.models import (
 )
 from talent_angels.mcp.protocol import supports_enumerate_paths, supports_score_paths
 from talent_angels.mcp.session import SuiteSession, SuiteUnavailableError
+from talent_angels.skills.connect.federated import map_all, map_all_route
 from talent_angels.skills.connect.neighbourhood import (
     DEFAULT_MAX_NODES,
     MAX_BREADTH,
@@ -429,26 +430,33 @@ the answer — do not substitute a ranking of your own and present it as ESCO's.
         name="map_neighbors",
         title="Map the neighbourhood of a node",
         description=f"""\
-Map what surrounds one node: repeat `get_neighbors` for `depth` levels, keeping
+Map what surrounds a node: repeat `get_neighbors` for `depth` levels, keeping
 the best `breadth` new neighbours of each node. Deterministic, no model call;
 the same input gives the same result.
 
-`start` is a node ID (full determinism) or a name. An ambiguous name is never
-guessed: you get `ambiguous_start` and a `candidates` pick list; an unknown one
-gets `start_not_found:<text>`. Ask the user, then call again with an ID.
+With no `suite`, the name is mapped in every taxonomy and merged into one cited
+map: each node carries `suite` and `cite` (its source id), `suites` reports each
+taxonomy's status (`mapped`, `ambiguous` with a pick list, `not_found`,
+`via_crosswalk`, `error`), and `CROSSWALK` edges plus `confirmed_by` appear only
+where an official code links two nodes (BLS and O*NET by SOC code, JobTech and
+ESCO by their ESCO URIs). Pass `suite` for one taxonomy, or `suites` for a subset.
 
-Per node, neighbours are ranked: relation (related skill, narrower, level,
-parent, then jobs/skills needed), then essential before optional, then O*NET
-importance and hot technology, then label. Groups, categories and levels are
-shown but never expanded, so the map does not drift through a skill group. A
-node reached twice appears once, with both links kept as edges.
+`start` is a node ID (full determinism) or a name. An ambiguous name is never
+guessed: you get `ambiguous_start` (or that suite's `ambiguous` status) and a
+`candidates` pick list; ask the user, then call again with an ID.
+
+Per node, neighbours are ranked (map-rank-v1): relation (related skill,
+narrower, level, parent, then jobs/skills needed), then essential before
+optional, then O*NET importance and hot technology, then specificity (fewer
+links beats a hub), then label. Groups, categories and levels are shown but
+never expanded. A node reached twice appears once, with both links kept as edges.
 
 `pruned` counts what each node cut (considered / kept). `warnings` may add
 `max_nodes:N` (the cap was hit; the map is partial).
 
-With `route_node_ids` (a route from `enumerate_paths`), every stop is mapped and
-the results merge into one graph: stops carry `on_route` and `stop`, a shared
-neighbour appears once, and `start` is ignored.
+Route mode: `route_from` and `route_to` (names) map around the top-ranked
+Pathfind route in each taxonomy. `route_node_ids` (one suite, a route from
+`enumerate_paths`) maps every stop; stops carry `on_route` and `stop`.
 
 The result means "linked in the graph", not a learning order: no taxonomy says
 what to learn first. {_ID_DOC}""",
@@ -462,16 +470,39 @@ what to learn first. {_ID_DOC}""",
             int, Field(ge=1, le=MAX_DEPTH, description="Levels to repeat the hop.")
         ] = 1,
         breadth: Annotated[
-            int, Field(ge=1, le=MAX_BREADTH, description="New neighbours kept per node.")
-        ] = 4,
+            int | None,
+            Field(
+                ge=1,
+                le=MAX_BREADTH,
+                description="New neighbours kept per node. Default 4, or 3 in route mode.",
+            ),
+        ] = None,
         kinds: Annotated[
             list[str] | None,
             Field(description="Keep only these node kinds, e.g. ['Skill']. Omit for all."),
         ] = None,
-        suite: SuiteArg = None,
+        suite: Annotated[
+            str | None,
+            Field(
+                description=(
+                    "One taxonomy only. Omit it (and `suites`) to map every taxonomy "
+                    "into one cited graph."
+                )
+            ),
+        ] = None,
+        suites: Annotated[
+            list[str] | None,
+            Field(description="Subset of taxonomies to merge, e.g. ['esco','onet']."),
+        ] = None,
         max_nodes: Annotated[
             int, Field(ge=1, le=DEFAULT_MAX_NODES, description="Hard cap on nodes in the map.")
         ] = DEFAULT_MAX_NODES,
+        route_from: Annotated[
+            str | None, Field(description="Route mode across taxonomies: start name.")
+        ] = None,
+        route_to: Annotated[
+            str | None, Field(description="Route mode across taxonomies: target name.")
+        ] = None,
         route_node_ids: Annotated[
             list[str] | None,
             Field(
@@ -483,11 +514,35 @@ what to learn first. {_ID_DOC}""",
         ] = None,
     ) -> MapPayload:
         session = ctx.request_context.lifespan_context
+        if breadth is None:  # same defaults as `ta-agent map`
+            breadth = 3 if (route_from or route_node_ids) else 4
+        walk = {"depth": depth, "breadth": breadth, "kinds": kinds, "max_nodes": max_nodes}
+        if bool(route_from) != bool(route_to):
+            return MapPayload(
+                suite=suite or "all",
+                depth=depth,
+                breadth=breadth,
+                warnings=["route_needs_route_from_and_route_to"],
+            )
+        by_name_route = bool(route_from and route_to)
+        if not route_node_ids and (not suite or by_name_route):
+            try:
+                # A named route with `suite` runs in that one taxonomy only.
+                every = {"suites": [suite] if suite else suites, **walk}
+                found = (
+                    map_all_route(session.registry, route_from, route_to, **every)  # type: ignore[arg-type]
+                    if route_from and route_to
+                    else map_all(session.registry, start, **every)  # type: ignore[arg-type]
+                )
+            except UnknownSuiteError as exc:
+                return MapPayload(
+                    suite="all", depth=depth, breadth=breadth, warnings=[f"unknown_suite:{exc}"]
+                )
+            return MapPayload.model_validate({**found.to_dict(), "suite": "all"})
         runtime, name, warnings = _open_runtime(session, suite)
         if runtime is None:
             return MapPayload(suite=name, depth=depth, breadth=breadth, warnings=warnings)
         try:
-            walk = {"depth": depth, "breadth": breadth, "kinds": kinds, "max_nodes": max_nodes}
             result = (
                 map_route(runtime.suite, runtime.name, route_node_ids, **walk)  # type: ignore[arg-type]
                 if route_node_ids
@@ -497,12 +552,7 @@ what to learn first. {_ID_DOC}""",
             return MapPayload(
                 suite=runtime.name, depth=depth, breadth=breadth, warnings=_operation_warning(exc)
             )
-        data = result.to_dict()
-        data["edges"] = [
-            {"from_id": e.pop("from"), "to_id": e.pop("to"), **e}
-            for e in data["edges"]  # type: ignore[attr-defined]
-        ]
-        return MapPayload.model_validate(data)
+        return MapPayload.model_validate(result.to_dict())
 
     return server
 

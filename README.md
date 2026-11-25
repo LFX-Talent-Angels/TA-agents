@@ -252,6 +252,11 @@ python -m talent_angels.cli connect --suite onet "What skills does a software de
 # SFIA 9 is a third suite (skills + levels, no occupations). Codes resolve exactly.
 python -m talent_angels.cli locate --suite sfia "PROG"
 python -m talent_angels.cli locate --suite sfia "PROG-4"
+
+# Graph-Mapper: one name in, one cited JSON map out, no model call. No --suite = every
+# taxonomy merged (official BLS-O*NET and JobTech-ESCO links only); --suites esco,onet = a subset.
+python -m talent_angels.cli map "Software Developers" --depth 2 --breadth 4
+python -m talent_angels.cli map --route "web developer" "software developer"
 ```
 
 Expect JSON with `plan`, `answer`, `tools`, `tokens`, `cost_usd`.

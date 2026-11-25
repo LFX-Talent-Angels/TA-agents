@@ -52,8 +52,14 @@ async def _drive() -> dict[str, Any]:
                 collected[key] = result.structured_content
 
             await call("search", "search_nodes", {"text": "software developer"})
-            await call("map", "map_neighbors", {"start": "software developer"})
-            await call("map_route", "map_neighbors", {"route_node_ids": [DEV.id]})
+            await call("map", "map_neighbors", {"start": "software developer", "suite": "fake"})
+            await call("map_all", "map_neighbors", {"start": "software developer"})
+            await call(
+                "map_subset",
+                "map_neighbors",
+                {"start": "software developer", "suites": ["fake", "bogus"]},
+            )
+            await call("map_route", "map_neighbors", {"route_node_ids": [DEV.id], "suite": "fake"})
             await call("map_bad", "map_neighbors", {"start": "x", "suite": "down"})
             await call("miss", "search_nodes", {"text": "stonemason"})
             await call("neighbors", "get_neighbors", {"node_id": DEV.id})
@@ -131,8 +137,11 @@ def test_every_tool_declares_its_inputs_and_a_structured_output(
             "breadth",
             "kinds",
             "suite",
+            "suites",
             "max_nodes",
             "route_node_ids",
+            "route_from",
+            "route_to",
         },
     }
     for name, arguments in expected.items():
@@ -171,9 +180,26 @@ def test_map_neighbors_returns_a_typed_map(served: dict[str, Any]) -> None:
     assert [n["level"] for n in payload["nodes"]][:2] == [0, 1]
     assert payload["edges"][0]["relation"] == "needs"
     assert payload["warnings"] == []
+    assert "on_route" not in payload["nodes"][0] and "suite" not in payload["nodes"][0]
     assert served["map_route"]["route"] == [DEV.id]
     assert served["map_route"]["nodes"][0]["on_route"] is True
     assert served["map_bad"]["warnings"] == ["suite_unavailable:ConnectionRefusedError"]
+
+
+def test_map_neighbors_without_a_suite_maps_every_taxonomy(served: dict[str, Any]) -> None:
+    payload = served["map_all"]
+
+    assert payload["suite"] == "all"
+    assert {k: v["status"] for k, v in payload["suites"].items()} == {
+        "fake": "mapped",
+        "locate_only": "not_found",
+        "broken": "error",
+        "down": "error",
+    }
+    assert {n["suite"] for n in payload["nodes"]} == {"fake"}
+    assert payload["nodes"][0]["cite"] == DEV.source_id
+    assert payload["summary"]["suites_mapped"] == 1
+    assert served["map_subset"]["warnings"][0].startswith("unknown_suite:")
 
 
 def test_paths_carry_routes_and_pruning_counts(served: dict[str, Any]) -> None:

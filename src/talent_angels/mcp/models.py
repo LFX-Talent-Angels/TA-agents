@@ -13,7 +13,9 @@ addition: it keeps the suite's ``method`` next to the confidence, which
 
 from __future__ import annotations
 
-from pydantic import BaseModel, Field
+from typing import Any
+
+from pydantic import BaseModel, Field, model_serializer
 
 from talent_angels.contracts import EdgeRef, EvidencePointer, NodeRef
 
@@ -99,21 +101,37 @@ class _Payload(BaseModel):
     )
 
 
-class MapNodeRef(BaseModel):
+class _Sparse(BaseModel):
+    """Optional fields that do not apply to this answer are left out, not sent as null."""
+
+    @model_serializer(mode="wrap")
+    def _drop_none(self, handler: Any) -> dict[str, Any]:
+        data: dict[str, Any] = handler(self)
+        return {k: v for k, v in data.items() if v is not None or k == "strength"}
+
+
+class MapNodeRef(_Sparse):
     id: str
     label: str
     kind: str
     level: int = Field(..., description="Hops from the start; 0 is the start itself.")
     on_route: bool | None = Field(default=None, description="Route mode only.")
     stop: int | None = Field(default=None, description="Route mode: index along the route.")
+    suite: str | None = Field(default=None, description="All-taxonomy maps: the node's suite.")
+    cite: str | None = Field(default=None, description="All-taxonomy maps: its source id.")
+    confirmed_by: list[str] | None = Field(
+        default=None, description="Suites an official crosswalk links this node to."
+    )
 
 
-class MapEdgeRef(BaseModel):
+class MapEdgeRef(_Sparse):
     from_id: str
     to_id: str
     relation: str = Field(..., description="parent | narrower | related | level | needs | ...")
     graph_edge: str
     strength: str | None = None
+    suite: str | None = Field(default=None, description="All-taxonomy maps: owning suite.")
+    source: str | None = Field(default=None, description="Crosswalk links: the code source.")
 
 
 class MapPrunedRef(BaseModel):
@@ -137,6 +155,12 @@ class MapPayload(_Payload):
     """map_neighbors: a deterministic multi-hop neighbourhood of one node."""
 
     start: MapStartRef | None = Field(default=None, description="Resolved start: id, label.")
+    policy: str | None = Field(default=None, description="Ranking policy, e.g. map-rank-v1.")
+    query: str | None = Field(default=None, description="All-taxonomy maps: the question asked.")
+    suites: dict[str, Any] | None = Field(
+        default=None, description="All-taxonomy maps: per-suite status, start, candidates, via."
+    )
+    summary: dict[str, int] | None = Field(default=None, description="All-taxonomy map totals.")
     route: list[str] = Field(default_factory=list, description="Route mode: stop IDs in order.")
     depth: int
     breadth: int

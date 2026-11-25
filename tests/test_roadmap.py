@@ -389,3 +389,20 @@ def test_each_taxonomy_fills_only_its_own_items_and_unclear_names_stay_unguessed
     assert {i["suite"] for s in onet["steps"] for i in s["items"]} == {"onet"}
     both = roadmap(reg, "a", "b")  # both names are ambiguous in both fakes: no items, no guess
     assert [s["status"] for s in both["suites"].values()] == ["ambiguous", "ambiguous"]
+
+
+def test_a_failing_learning_order_is_logged_and_reported_not_hidden(caplog) -> None:
+    from talent_angels.skills.roadmap import card
+
+    class Broken:
+        def get_neighbors(self, *args: object, **kwargs: object) -> object:
+            raise RuntimeError("graph down")
+
+        def search_nodes(self, *args: object, **kwargs: object) -> object:
+            raise RuntimeError("graph down")
+
+    with caplog.at_level("WARNING"):
+        warning = card.card_warning(Broken(), "esco", "esco:a", "esco:b")
+    assert warning == "learning_order_failed:RuntimeError"
+    assert not warning.startswith(card.PREFIX)  # never read as a learning order
+    assert "learning order for esco:a -> esco:b failed" in caplog.text

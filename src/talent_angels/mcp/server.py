@@ -697,7 +697,8 @@ A tree of what comes after `start`, to `depth` levels and `breadth` children per
 `ambiguous` with `candidates`). Children, ESCO: `stated` are the skills ESCO says need `start`
 (essential-for); `policy` are its narrower skills and the related skills of a later reuse level.
 SFIA: the next level of the skill (`stated`). Stated children come first, then reuse level, label
-and ID. A node appears once and groups, categories and levels are never expanded. Each edge has
+and ID. A node appears once; groups and categories are never expanded, and SFIA levels are
+followed only to the next level of the same skill. Each edge has
 `kind` (`stated` | `policy`) and `reason`. O*NET, BLS and JobTech have no order data for a skill
 (`no_order_data`).
 

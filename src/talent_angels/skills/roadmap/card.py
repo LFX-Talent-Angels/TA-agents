@@ -7,21 +7,26 @@ route scores do (``route_scores:``): a few labels per step, small enough to read
 from __future__ import annotations
 
 import json
+import logging
 from typing import Any
 
 from talent_angels.skills.evaluate.policy import LEARN_ORDER_V1 as P
 from talent_angels.skills.roadmap.roadmap import roadmap_suite
 
 PREFIX = "learning_order:"
+FAILED = "learning_order_failed:"
+_log = logging.getLogger(__name__)
 CARD_PER_STEP = 3
 
 
 def card_warning(suite: Any, name: str, start_id: str, target_id: str) -> str | None:
-    """``learning_order:[[step, [[label, stated], ...], more], ...]``, or None when empty."""
+    """``learning_order:[[step, [[label, stated], ...], more], ...]``, None when empty, or
+    ``learning_order_failed:<error type>`` when the roadmap could not be built."""
     try:
         plan = roadmap_suite(suite, name, start_id, target_id)
-    except Exception:  # the card is an extra: never let it break the Pathfind answer
-        return None
+    except Exception as exc:  # the card is an extra: it must not break the Pathfind answer
+        _log.warning("learning order for %s -> %s failed", start_id, target_id, exc_info=True)
+        return FAILED + type(exc).__name__
     steps = []
     for number in range(1, len(P.step_names) + 1):
         here = [i for i in plan.items if i.step == number]

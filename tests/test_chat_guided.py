@@ -340,3 +340,31 @@ def test_i_am_a_with_nothing_after_it_searches_nothing() -> None:
     )
     assert "no_subject" in outcome.result.warnings
     assert outcome.result.nodes == []
+
+
+def test_my_job_to_my_goal_in_every_suite_with_nothing_saved_says_so() -> None:
+    """All suites, nothing saved: "I don't know your job yet", not a search miss (#94)."""
+
+    def runner(question: str, **_: object) -> TurnOutcome:
+        results = tuple(
+            AgentResult(
+                capability="pathfind",
+                suite=suite,
+                nodes=[],
+                warnings=["pathfind_profile_unknown:both"],
+            )
+            for suite in ("esco", "onet")
+        )
+        return TurnOutcome(
+            capability="pathfind",
+            plan=build_plan_for_capability("pathfind", suites=("esco", "onet")),
+            result=results[0],
+            results=results,
+            answer="ignored",
+            record=RunLogRecord(suite="esco,onet", plan=["pathfind"], question=question),
+        )
+
+    from talent_angels.session.i18n import t
+
+    reply = handle_line(new_session(), "path from my job to my goal", runner=runner)
+    assert reply.text.strip() == t("pathfind_unknown_both").strip()

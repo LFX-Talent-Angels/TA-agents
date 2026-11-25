@@ -353,6 +353,9 @@ def _run_suite(name: str, state: TurnState, rt: TurnRuntime, seed: dict[str, Any
     area = state.get("area")
     draft = state.get("plan_draft")
     bound = _bound_for_suite(name, state.get("bound_node"), state.get("bound_nodes"))
+    if draft is not None and draft.subject and draft.profile_intent is not None:
+        # "my goal is X" names a new title: the bound job is not "it" (else GOAL = the job).
+        bound = None
     run = _SuiteRun()
     try:
         with rt.registry.open(name) as runtime:

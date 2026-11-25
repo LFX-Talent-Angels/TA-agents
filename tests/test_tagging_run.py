@@ -296,3 +296,30 @@ def test_a_reference_document_in_inputs_gets_a_plain_note(project: Path) -> None
     notes = [w for w in summary.warnings if "Standard original.docx" in w]
     assert notes and "reference document, not tagged" in notes[0]
     assert not any("notes.pdf" in w for w in summary.warnings)  # context/ is never scanned
+
+
+@pytest.mark.parametrize(
+    "flags",
+    [["--limit", "0"], ["--limit", "-3"], ["--limit", "abc"], ["--workers", "0"], ["--suites", ""]],
+)
+def test_cli_rejects_bad_flags(project: Path, flags: list[str]) -> None:
+    from talent_angels.tagging.cli import main as tag_main
+
+    with pytest.raises(SystemExit) as exc:
+        tag_main([str(project), "--no-llm", *flags], registry=_registry())
+    assert exc.value.code == 2
+    assert not list((project / "out").glob("*-tagged.xlsx"))
+
+
+def test_cli_rows_matching_nothing_fails_and_keeps_the_workbook(
+    project: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    from talent_angels.tagging.cli import main as tag_main
+
+    assert tag_main([str(project), "--no-llm"], registry=_registry()) == 0
+    workbook = next((project / "out").glob("*-tagged.xlsx"))
+    before = workbook.read_bytes()
+
+    assert tag_main([str(project), "--no-llm", "--rows", "9999"], registry=_registry()) == 2
+    assert "no row matches --rows" in capsys.readouterr().err
+    assert workbook.read_bytes() == before

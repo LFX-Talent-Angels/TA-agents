@@ -490,6 +490,12 @@ def run(
 
         say(f"tagging {doc.key}…")
         units, skipped = select_units(doc, profile, rows=opts.rows, limit=opts.limit)
+        if opts.rows is not None and not units:
+            # A --rows filter matching nothing must not overwrite the workbook with an empty one.
+            run_warnings.append(
+                f"{input_path.name}: no row matches --rows; workbook left as it was"
+            )
+            continue
         total_units += len(units)
         doc_unit_keys = (
             {unit.unit_key for unit in select_units(doc, profile)[0]}

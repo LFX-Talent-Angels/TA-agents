@@ -55,13 +55,23 @@ def _parse_rows(spec: str) -> set[str]:
     return rows
 
 
+def _positive_int(text: str) -> int:
+    try:
+        value = int(text)
+    except ValueError:
+        raise argparse.ArgumentTypeError(f"expected a whole number, got {text!r}") from None
+    if value < 1:
+        raise argparse.ArgumentTypeError(f"must be 1 or more, got {value}")
+    return value
+
+
 def _build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(prog="ta-agent tag")
     parser.add_argument("path", help="A project folder (with inputs/) or a single input file.")
     parser.add_argument(
         "--no-llm", action="store_true", help="Search only; no model calls (review the top hit)."
     )
-    parser.add_argument("--limit", type=int, default=None, help="Tag at most N units.")
+    parser.add_argument("--limit", type=_positive_int, default=None, help="Tag at most N units.")
     parser.add_argument("--rows", default=None, help='Row ids to tag, e.g. "66-91,100".')
     parser.add_argument(
         "--suites", default=None, help='Comma-separated suite names, e.g. "esco,onet".'
@@ -82,7 +92,7 @@ def _build_parser() -> argparse.ArgumentParser:
     refresh_group.add_argument("--fresh", action="store_true", help="Ignore the ledger entirely.")
     parser.add_argument(
         "--workers",
-        type=int,
+        type=_positive_int,
         default=1,
         help="Concurrent `choose` model calls (search stays sequential).",
     )
@@ -169,7 +179,12 @@ def main(
     llm_client: LLMClient | None = None,
 ) -> int:
     load_local_dotenv()
-    args = _build_parser().parse_args(argv)
+    parser = _build_parser()
+    args = parser.parse_args(argv)
+    if args.suites is not None and not args.suites.strip(" ,"):
+        parser.error("--suites is empty; name at least one suite, e.g. esco")
+    if args.rows is not None and not _parse_rows(args.rows):
+        parser.error("--rows is empty; give row ids, e.g. 66-91,100")
 
     path = Path(args.path)
     if not path.exists():
@@ -228,6 +243,9 @@ def main(
         return 1
 
     _print_summary(summary)
+    if opts.rows is not None and summary.units == 0:
+        print(f"no row matches --rows {args.rows!r}; nothing was tagged", file=sys.stderr)
+        return 2
     return 0
 
 

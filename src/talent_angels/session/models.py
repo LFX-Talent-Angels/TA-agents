@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from typing import Literal
+from typing import Any, Literal
 
 from pydantic import BaseModel, ConfigDict, Field
 
@@ -70,5 +70,7 @@ class SessionState(BaseModel):
     pending_pathfind: dict[str, list[str]] = Field(default_factory=dict)
     #: The language the user last wrote in; code-written sentences follow it.
     language: str = "en"
+    #: A routed tag-with-model call waiting for "yes" confirmation.
+    pending_call: dict[str, Any] | None = None
     last_result: AgentResult | None = None
     last_results: list[AgentResult] = Field(default_factory=list)

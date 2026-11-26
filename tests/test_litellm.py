@@ -166,6 +166,32 @@ def test_litellm_maps_request_text_and_exclusive_usage_buckets() -> None:
     assert cost.llm == 47.0
 
 
+def test_litellm_passes_ta_llm_key_and_base_only_when_set(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    captured: list[dict[str, object]] = []
+
+    def complete(**kwargs: object) -> dict[str, object]:
+        captured.append(dict(kwargs))
+        return {
+            "model": "custom/model",
+            "choices": [{"finish_reason": "stop", "message": {"content": "ok"}}],
+            "usage": {"prompt_tokens": 1, "completion_tokens": 1},
+        }
+
+    client = LiteLLMClient(model="custom/model", completion_fn=complete)
+    monkeypatch.delenv("TA_LLM_API_KEY", raising=False)
+    monkeypatch.delenv("TA_LLM_API_BASE", raising=False)
+    client.complete([Message(role="user", content="hi")])
+    assert "api_key" not in captured[0] and "api_base" not in captured[0]
+
+    monkeypatch.setenv("TA_LLM_API_KEY", "ta-key")
+    monkeypatch.setenv("TA_LLM_API_BASE", "http://localhost:9000/v1")
+    client.complete([Message(role="user", content="hi")])
+    assert captured[1]["api_key"] == "ta-key"
+    assert captured[1]["api_base"] == "http://localhost:9000/v1"
+
+
 def test_litellm_accepts_model_response_objects() -> None:
     class Response:
         def model_dump(self) -> dict[str, object]:

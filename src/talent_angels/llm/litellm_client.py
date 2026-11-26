@@ -216,6 +216,12 @@ class LiteLLMClient:
             "temperature": 0,
             "drop_params": True,
         }
+        api_key = os.environ.get("TA_LLM_API_KEY", "").strip()
+        api_base = os.environ.get("TA_LLM_API_BASE", "").strip()
+        if api_key:
+            kwargs["api_key"] = api_key
+        if api_base:
+            kwargs["api_base"] = api_base
         if tools:
             # OpenAI-shaped tools only. Do not send tool_choice="auto": some
             # OpenRouter upstreams (Nvidia) parse that as a named function call

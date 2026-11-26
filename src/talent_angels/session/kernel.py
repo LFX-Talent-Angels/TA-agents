@@ -4,12 +4,13 @@ from __future__ import annotations
 
 import copy
 import json
+import logging
 import re
-from collections.abc import Sequence
+from collections.abc import Callable, Sequence
 from dataclasses import dataclass, replace
 from datetime import UTC, datetime
 from pathlib import Path
-from typing import Literal, Protocol
+from typing import Any, Literal, Protocol
 
 from talent_angels.assistant.answer import CONNECT_PREVIEW_CAP, summarize_result
 from talent_angels.assistant.connect_request import (
@@ -22,8 +23,9 @@ from talent_angels.assistant.llm_plan import PlanDraft, denied_subject, is_state
 from talent_angels.assistant.merge import suite_heading
 from talent_angels.assistant.suite_select import SUITE_ALIASES, named_suites, resolve_show_token
 from talent_angels.assistant.synthesize import synthesize
-from talent_angels.assistant.turn import MAX_QUESTION_CHARS, TurnOutcome
+from talent_angels.assistant.turn import MAX_QUESTION_CHARS, TurnOutcome, with_extra_stages
 from talent_angels.contracts import AgentResult, NodeRef
+from talent_angels.engine import Call
 from talent_angels.llm import LLMClient
 from talent_angels.llm.protocol import TurnCancelled, turn_cancelled, turn_deadline
 from talent_angels.memory.episodes import recent_episodes
@@ -36,6 +38,7 @@ from talent_angels.memory.profile import (
     write_rejected,
     write_standing,
 )
+from talent_angels.runlog import GenAIUsage, RunLogRecord, append_record
 from talent_angels.session.advice import advice_plan
 from talent_angels.session.budget import model_view
 from talent_angels.session.catalog import FreeModel
@@ -49,7 +52,13 @@ from talent_angels.session.copy import (
     GREETING,
     HELP_INTRO,
     HELP_TEXT,
+    SALARY_NOTE,
+    SALARY_REFUSE,
+    SECRET_REFUSE,
     STOPPED,
+    TAG_CANCELLED,
+    TAG_CONFIRM,
+    TAG_NO_MODEL,
     UNKNOWN_COMMAND,
 )
 from talent_angels.session.followup import (
@@ -88,8 +97,10 @@ from talent_angels.session.phrase import (
 )
 from talent_angels.session.picker import PICKER_LIMIT, bind_pick, choices_from_result, render_picker
 from talent_angels.session.recall import recall_reply
+from talent_angels.session.route import Clarify, Routed, route
 from talent_angels.session.router import route_line
-from talent_angels.session.slash import capability_command, run_slash
+from talent_angels.session.scope import out_of_scope, salary_subject
+from talent_angels.session.slash import capability_command, run_call, run_slash
 from talent_angels.session.store import (
     clear_conversation,
     load_last,
@@ -98,13 +109,23 @@ from talent_angels.session.store import (
     save_session,
     sessions_dir,
 )
-from talent_angels.session.switch import SwitchError, apply, load_catalogue, resolve
+from talent_angels.session.switch import SwitchError, apply, current_choice, load_catalogue, resolve
 from talent_angels.session.working_set import pair_followup, refers_to_one, remember
 from talent_angels.skills.connect.compare import CAPABILITY_COMPARE
 from talent_angels.skills.locate.areas import AreaRequest
 from talent_angels.skills.locate.rank import published_facts
 from talent_angels.skills.pathfind.dispatch import CAPABILITY_PATHFIND
 from talent_angels.suites import SuiteRegistry, default_suite_registry
+from talent_angels.tagging.runner import default_tag_suites
+from talent_angels.tagging.runner import discover as discover_tag_files
+
+_log = logging.getLogger(__name__)
+# OpenAI/Anthropic/OpenRouter, Google, Groq, Hugging Face, and Azure's bare 32-hex key.
+_SECRET = re.compile(
+    r"\b(?:sk-[A-Za-z0-9_-]{16,}|AIza[0-9A-Za-z_-]{30,}|(?:gsk|hf)_[A-Za-z0-9]{20,})"
+    r"|(?<![\w-])[0-9a-f]{32}(?![\w-])"
+)
+_BARE_NO = re.compile(r"^\s*(?:no|nope|cancel|stop)\s*[.!]?\s*$", re.I)
 
 _NO_PENDING = "There's no numbered list to pick from. Type a job title first."
 _BAD_PICK = "That number isn't in the list. Reply with a number from the options."
@@ -162,12 +183,18 @@ def handle_line(
     runner: TurnRunner,
     llm_client: LLMClient | None = None,
     registry: SuiteRegistry | None = None,
+    on_capability: Callable[[], None] | None = None,
 ) -> ChatReply:
     """Mutate state (transcript, binding, pending). Never search for a bare number.
 
     One line is one turn with one clock (``turn_deadline``): every model call it
-    makes, from narrowing to phrasing, shares it.
+    makes, from narrowing to phrasing, shares it. ``on_capability`` is called when a
+    plain-language line starts a capability, so Esc can wait for it as for a slash command.
     """
+    if _SECRET.search(text) and not text.lstrip().startswith(("/connect", "/login")):
+        # Never recorded, sent or logged: a pasted API key cannot reach history or a model.
+        # (/connect and /login with an arg record only the command word in their own branch.)
+        return _reply(state, SECRET_REFUSE)
     capability = capability_command(text)
     if capability is not None:
         # /map /discover /roadmap /successors /tag: batch work that can run for minutes.
@@ -180,9 +207,110 @@ def handle_line(
         except TurnCancelled:
             return _reply(state, STOPPED)
         return _finish(state, text, reply)
+
+    def start(call: Call, *, prefix: str = "", **how: Any) -> ChatReply:
+        if on_capability is not None:
+            on_capability()
+        try:
+            reply = run_call(call, registry or default_suite_registry(), **how)
+        except TurnCancelled:
+            return _reply(state, STOPPED)
+        return _finish(state, text, prefix + reply)
+
+    held = state.pending_call
+    if held is not None:
+        state.pending_call = None
+        if is_bare_yes(text):
+            return start(Call.model_validate(held))
+        if _BARE_NO.match(text):
+            return _finish(state, text, TAG_CANCELLED)
     with turn_deadline():
         set_language(state.language)
-        return _handle_line(state, text, runner=runner, llm_client=llm_client)
+        decided = _decide(state, text, runner=runner, llm_client=llm_client, registry=registry)
+        if not isinstance(decided, Routed):
+            return decided or _handle_line(state, text, runner=runner, llm_client=llm_client)
+    # Outside the turn clock: a capability can run for minutes (the slash-command rule).
+    call = decided.call
+    if call.capability == "tag" and call.input.get("no_llm") is False:
+        if not uses_chat_phrasing(llm_client):
+            call = call.model_copy(update={"input": {**call.input, "no_llm": True}})
+            return start(call, prefix=TAG_NO_MODEL + "\n", by=decided.by)
+        state.pending_call = call.model_dump(mode="json")
+        return _finish(state, text, _tag_confirm(call, registry or default_suite_registry()))
+    return start(call, by=decided.by, file=decided.file)
+
+
+def _log_route(text: str, routed: Routed | Clarify) -> None:
+    try:
+        s = routed.stage
+        plan = ["route", routed.call.capability if isinstance(routed, Routed) else "clarify"]
+        record = RunLogRecord(
+            suite="engine",
+            plan=plan,
+            question=text,
+            gen_ai=(
+                GenAIUsage(provider_name=s.provider_name, request_model=s.request_model)
+                if s
+                else GenAIUsage()
+            ),
+        )
+        if s is not None:
+            record = with_extra_stages(record, [s])
+        append_record(record)
+    except Exception:  # noqa: BLE001 - never fail a turn over run-log I/O
+        _log.warning("failed to write route run-log record", exc_info=True)
+
+
+def _tag_confirm(call: Call, registry: SuiteRegistry) -> str:
+    path = str(call.input["path"])
+    _, files = discover_tag_files(Path(path))
+    suites = call.input.get("suites") or default_tag_suites(registry.available)
+    return TAG_CONFIRM.format(
+        model=current_choice().label(),
+        count=len(suites),
+        suites=", ".join(suites),
+        files=len(files),
+        path=path,
+    )
+
+
+def _decide(
+    state: SessionState,
+    text: str,
+    *,
+    runner: TurnRunner,
+    llm_client: LLMClient | None,
+    registry: SuiteRegistry | None,
+) -> Routed | ChatReply | None:
+    kind = route_line(text).kind
+    if kind not in ("map", "advice"):
+        return None
+    refusal = out_of_scope(text)
+    if refusal:
+        return _finish(state, text, refusal)
+    if kind == "advice":
+        return None
+    if state.bindings and is_facts_followup(text, state.bindings) and not salary_subject(text):
+        return None
+    subject = salary_subject(text)
+    available = registry.available if registry else ()
+    if subject == "" or (subject and "bls" not in available):
+        return _finish(state, text, SALARY_REFUSE)
+    if subject:
+        return _handle_map(
+            state,
+            text,
+            runner=runner,
+            llm_client=llm_client,
+            question=subject,
+            suite="bls",
+            preface=SALARY_NOTE,
+        )
+    routed = route(text, llm_client=llm_client, available=available)
+    if routed is None:
+        return None
+    _log_route(text, routed)
+    return routed if isinstance(routed, Routed) else _finish(state, text, routed.text)
 
 
 def _handle_line(
@@ -435,15 +563,16 @@ def _handle_command(state: SessionState, text: str) -> ChatReply:
             _record(state, "user", text)
             return _reply(state, "", request_model_pick=True)
         return _handle_model(state, text, command.argument)
-    if command.name == "login":
+    if command.name == "connect":
+        used = text.split()[0]
         if command.argument is not None:
             return _finish(
                 state,
-                "/login",
-                "For security, do not paste a key after /login. Run /login, then paste it at the "
+                used,
+                f"For security, do not paste a key after {used}. Run {used}, then paste it at the "
                 "hidden prompt.",
             )
-        _record(state, "user", "/login")
+        _record(state, "user", used)
         return _reply(state, "", request_key=True)
     return _finish(state, text, UNKNOWN_COMMAND.format(token=text.split()[0]))
 

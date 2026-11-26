@@ -1,7 +1,8 @@
-"""Storing an OpenRouter key: verify first, write once, never echo it back."""
+"""Storing provider credentials: verify first, write once, never echo keys back."""
 
 from __future__ import annotations
 
+import os
 import stat
 from pathlib import Path
 
@@ -11,9 +12,8 @@ import talent_angels.session.credentials as credentials
 from talent_angels.session.credentials import (
     ENV_NAME,
     CredentialError,
-    have_key,
     looks_like_openrouter_key,
-    store,
+    save_settings,
 )
 
 KEY = "sk-or-v1-" + "a" * 40
@@ -26,38 +26,38 @@ def test_obvious_mispastes_are_caught_without_a_network_call() -> None:
     assert looks_like_openrouter_key("") is False
 
 
-def test_store_replaces_a_previous_value_rather_than_appending(
+def test_save_settings_replaces_entire_file_rather_than_appending(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """A second /login must not leave two keys in the file, where the loser
-    silently wins or loses depending on the reader."""
-    env = tmp_path / ".env"
-    env.write_text(f"NEO4J_URI=bolt://localhost:7687\n{ENV_NAME}=sk-or-v1-old\n", encoding="utf-8")
+    """A second /connect must not leave stale keys from an earlier provider."""
+    env = tmp_path / "llm.env"
+    env.write_text(f'OPENAI_API_KEY="sk-old"\n{ENV_NAME}="sk-or-v1-old"\n', encoding="utf-8")
 
     monkeypatch.delenv(ENV_NAME, raising=False)
-    store(KEY, root=tmp_path)
+    monkeypatch.setenv("OPENAI_API_KEY", "sk-old")
+    save_settings({ENV_NAME: KEY, "LLM_PROVIDER": "litellm"}, path=env)
 
     lines = env.read_text(encoding="utf-8").splitlines()
-    assert [line for line in lines if line.startswith(f"{ENV_NAME}=")] == [f"{ENV_NAME}={KEY}"]
-    assert "NEO4J_URI=bolt://localhost:7687" in lines
+    assert lines == [f'{ENV_NAME}="{KEY}"', 'LLM_PROVIDER="litellm"']
+    assert "OPENAI_API_KEY" not in os.environ
 
 
-def test_store_creates_the_file_and_locks_it_to_the_owner(
+def test_save_settings_creates_the_file_and_locks_it_to_the_owner(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     monkeypatch.delenv(ENV_NAME, raising=False)
-    path = store(KEY, root=tmp_path)
+    path = save_settings({ENV_NAME: KEY}, path=tmp_path / "llm.env")
 
     assert path.exists()
     mode = stat.S_IMODE(path.stat().st_mode)
     assert mode == 0o600, f"credential file is group/world readable: {mode:o}"
 
 
-def test_store_keeps_the_previous_file_when_secure_replace_fails(
+def test_save_settings_keeps_the_previous_file_when_secure_replace_fails(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    env = tmp_path / ".env"
-    previous = f"{ENV_NAME}=sk-or-v1-old\n"
+    env = tmp_path / "llm.env"
+    previous = f'{ENV_NAME}="sk-or-v1-old"\n'
     env.write_text(previous, encoding="utf-8")
     env.chmod(0o600)
 
@@ -68,23 +68,18 @@ def test_store_keeps_the_previous_file_when_secure_replace_fails(
     monkeypatch.delenv(ENV_NAME, raising=False)
 
     with pytest.raises(CredentialError, match="could not write"):
-        store(KEY, root=tmp_path)
+        save_settings({ENV_NAME: KEY}, path=env)
 
     assert env.read_text(encoding="utf-8") == previous
-    assert have_key() is False
+    assert ENV_NAME not in os.environ
 
 
-def test_store_exports_to_the_running_process(
+def test_save_settings_exports_to_the_running_process(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """Without this the key only takes effect on the next launch, which reads
-    as the login having silently failed."""
     monkeypatch.delenv(ENV_NAME, raising=False)
-    assert have_key() is False
-
-    store(KEY, root=tmp_path)
-
-    assert have_key() is True
+    save_settings({ENV_NAME: KEY}, path=tmp_path / "llm.env")
+    assert os.environ.get(ENV_NAME) == KEY
 
 
 def test_unwritable_destination_reports_instead_of_raising_oserror(tmp_path: Path) -> None:
@@ -93,6 +88,6 @@ def test_unwritable_destination_reports_instead_of_raising_oserror(tmp_path: Pat
     unwritable.chmod(stat.S_IRUSR | stat.S_IXUSR)
     try:
         with pytest.raises(CredentialError, match="could not write"):
-            store(KEY, root=unwritable)
+            save_settings({ENV_NAME: KEY}, path=unwritable / "llm.env")
     finally:
         unwritable.chmod(stat.S_IRWXU)

@@ -23,13 +23,23 @@ _AFFIRM = re.compile(
     re.I,
 )
 _ORDER = re.compile(
-    r"\b(?:prerequisites?|depends?\s+on|builds?\s+on|leads?\s+to|before|after|equivalent"
-    r"|maps?\s+to|same\s+as)\b",
+    r"\b(?:prerequisites?|requires?|required|requiring|depends?\s+on|builds?\s+on|leads?\s+to"
+    r"|followed\s+by|first|firstly|before|after|equivalent|maps?\s+to|same\s+as"
+    r"|needed\s+(?:for|to))\b",
+    re.I,
+)
+# A spelled-out figure is a number too ("forty thousand dollars"). "one" is ordinary English.
+_SPELLED = re.compile(
+    r"\b(?:two|three|four|five|six|seven|eight|nine|ten|eleven|twelve|thirteen|fourteen|fifteen"
+    r"|sixteen|seventeen|eighteen|nineteen|twenty|thirty|forty|fifty|sixty|seventy|eighty|ninety"
+    r"|hundred|thousand|million|billion)s?\b",
     re.I,
 )
 # "like" counts only after a plural noun or a comma ("tools like X"), not in "I'd like to help".
+# "needs X and Y" lists claims about X and Y; "you need to pick one" does not.
 _EXAMPLES = re.compile(
-    r"(?:\b(?:such\s+as|including|includes?|e\.g\.|for\s+example)\b|(?:\b\w+s|,)\s+like\b)"
+    r"(?:\b(?:such\s+as|including|includes?|e\.g\.|for\s+example)\b|(?:\b\w+s|,)\s+like\b"
+    r"|\bneeds\b(?!\s+to\b)(?=[^.;!?\n]*(?:,|\band\b)))"
     r"\s*[:,]?\s*([^.;!?\n]+)",
     re.I,
 )
@@ -104,6 +114,9 @@ def _sentence_ok(sentence: str, facts: str, numbers: set[str], allowed: str) -> 
         return False
     if not _numbers(sentence) <= numbers:
         return False
+    plain = f" {_norm(allowed)} "
+    if any(f" {_norm(m.group(0))} " not in plain for m in _SPELLED.finditer(sentence)):
+        return False
     if any(not _holds(next(g for g in m.groups() if g), facts) for m in _SPANS.finditer(sentence)):
         return False
     if any(not _holds(run, facts) for run in _runs(sentence)):
@@ -112,8 +125,7 @@ def _sentence_ok(sentence: str, facts: str, numbers: set[str], allowed: str) -> 
         items = (_ARTICLE.sub("", i.strip()) for i in _ITEM_SPLIT.split(m.group(1)))
         if any(item and not _holds(item, facts) for item in items):
             return False
-    plain = _norm(allowed)
-    return all(f" {_norm(m.group(0))} " in f" {plain} " for m in _ORDER.finditer(sentence))
+    return all(f" {_norm(m.group(0))} " in plain for m in _ORDER.finditer(sentence))
 
 
 def grounded(text: str, allowed: str) -> str:

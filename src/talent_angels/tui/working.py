@@ -67,12 +67,13 @@ def run_with_status(
     work: Callable[[], T],
     *,
     cancel: threading.Event | None = None,
-    wait_on_cancel: bool = False,
+    wait_on_cancel: bool | Callable[[], bool] = False,
 ) -> T:
     """Run `work` behind a spinner. Raises `Cancelled` if the reader escapes.
 
     With `wait_on_cancel`, Esc only sets `cancel` and waits for `work` to finish (it stops at its
     next cooperative check); its result, stopped or not, is returned, never `Cancelled`.
+    A callable is asked at the moment of Esc (a chat line may only then be writing files).
 
     `work` runs on a background thread so this one stays free to watch the
     keyboard; without that the terminal cannot notice a keypress at all while
@@ -113,7 +114,8 @@ def run_with_status(
                 if ready and sys.stdin.read(1) in _CANCEL_KEYS:
                     if cancel is not None:
                         cancel.set()
-                    if not wait_on_cancel:
+                    waits = wait_on_cancel() if callable(wait_on_cancel) else wait_on_cancel
+                    if not waits:
                         raise Cancelled
                     stopping = True
                     status.update("[cyan]Stopping…[/]")

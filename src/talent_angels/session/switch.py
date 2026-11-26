@@ -61,9 +61,15 @@ def resolve(argument: str, catalogue: list[FreeModel]) -> Choice:
             raise SwitchError(f"pick a number between 1 and {len(catalogue)}")
         return Choice(provider="litellm", model=catalogue[index - 1].slug)
 
-    # An explicit slug. Accept it with or without the LiteLLM provider prefix,
-    # since the catalogue prints ids and the README writes prefixed slugs.
-    slug = text if text.startswith("openrouter/") else f"openrouter/{text}"
+    # An explicit slug. Keep the active provider prefix (defaulting to OpenRouter).
+    cur = current_choice()
+    prefix = (
+        cur.model.split("/", 1)[0] if cur.provider != "none" and "/" in cur.model else "openrouter"
+    )
+    if prefix == "openrouter":
+        slug = text if text.startswith("openrouter/") else f"openrouter/{text}"
+    else:
+        slug = text if "/" in text else f"{prefix}/{text}"
     return Choice(provider="litellm", model=slug)
 
 
@@ -73,7 +79,11 @@ def apply(choice: Choice) -> LLMClient:
     Order matters: a failed switch must leave the session on whatever was
     already answering rather than stranding it on something broken.
     """
-    if choice.provider == "litellm" and not (os.environ.get("OPENROUTER_API_KEY") or "").strip():
+    if (
+        choice.provider == "litellm"
+        and choice.model.startswith("openrouter/")
+        and not (os.environ.get("OPENROUTER_API_KEY") or "").strip()
+    ):
         raise SwitchError("OPENROUTER_API_KEY is not set; /model none still works")
 
     previous = current_choice()

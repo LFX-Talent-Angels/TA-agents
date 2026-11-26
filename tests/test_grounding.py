@@ -56,6 +56,29 @@ def test_an_order_word_must_be_on_the_card() -> None:
     assert grounded("Python comes after SQL.", "SQL then Python comes after SQL") != ""
 
 
+@pytest.mark.parametrize(
+    "claim",
+    [
+        "Python requires SQL.",
+        "SQL needs statistics first.",
+        "You should learn statistics first, then SQL.",
+        "SQL is required for Python.",
+        "Statistics, followed by SQL.",
+        "A data analyst also needs tableau and power query.",
+        "The pay is around forty thousand dollars.",
+    ],
+)
+def test_claims_the_card_does_not_hold_are_dropped(claim: str) -> None:
+    card = "data analyst (Occupation)\nessential skills: SQL, statistics, data mining\nPython"
+    assert grounded(claim, card) == ""
+
+
+def test_plain_sentences_about_the_card_are_kept() -> None:
+    card = "data analyst (Occupation)\nessential skills: SQL, statistics"
+    text = "Data analyst skills include SQL and statistics. You need to pick one."
+    assert grounded(text, card) == text
+
+
 class _Model:
     provider = "scripted"
     model = "scripted-1"

@@ -12,7 +12,7 @@ import os
 from pathlib import Path
 from typing import TYPE_CHECKING
 
-from dotenv import load_dotenv
+from dotenv import dotenv_values, load_dotenv
 
 if TYPE_CHECKING:
     from talent_angels.memory.retrieval import Retriever
@@ -59,11 +59,12 @@ _QUIET_MODEL_LOADING = {
 
 
 def load_local_dotenv() -> Path | None:
-    """Load the first existing candidate with ``override=False``.
+    """Load `.env` and `<TA home>/llm.env` with precedence: shell > llm.env > .env.
 
     Shell exports always win. Values are never printed. Also sets quiet
     defaults for local model loading (see ``_QUIET_MODEL_LOADING``).
     """
+    shell = set(os.environ)
     loaded: Path | None = None
     for path in local_dotenv_candidates():
         if not path.is_file():
@@ -71,6 +72,15 @@ def load_local_dotenv() -> Path | None:
         load_dotenv(path, override=False)
         if loaded is None:
             loaded = path
+    from talent_angels.memory.paths import home
+
+    llm_env = home() / "llm.env"
+    if llm_env.is_file():
+        for name, value in dotenv_values(llm_env).items():
+            if name not in shell and value is not None:
+                os.environ[name] = value
+        if loaded is None:
+            loaded = llm_env
     for key, value in _QUIET_MODEL_LOADING.items():
         os.environ.setdefault(key, value)
     return loaded

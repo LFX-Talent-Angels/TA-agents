@@ -246,3 +246,20 @@ def test_a_file_discover_saves_a_call_that_replays_the_same_map(
 def test_a_named_taxonomy_without_a_registry_argument_is_not_called_unattached() -> None:
     reply = kernel.handle_line(new_session(), "map in ESCO", runner=_no_runner)
     assert "isn't attached" not in reply.text
+
+
+@pytest.mark.parametrize(
+    ("line", "capability"),
+    [
+        (f"I want to go from {A.id} to {B.id}, what do I learn first?", "roadmap"),
+        ("what should I learn next after statistics", "successors"),
+    ],
+)
+def test_learning_questions_that_look_like_advice_still_run(
+    line: str, capability: str, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setenv("TA_AGENTS_HOME", str(tmp_path))
+    reply = kernel.handle_line(
+        new_session(), line, runner=_no_runner, registry=registry(esco=roadmap_esco())
+    )
+    assert reply.text.startswith(f"Running **{capability}** with ")

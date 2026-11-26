@@ -288,13 +288,19 @@ def _decide(
     refusal = out_of_scope(text)
     if refusal:
         return _finish(state, text, refusal)
+    # The same default a run would use: no registry passed must not read as "nothing attached".
+    available = (registry or default_suite_registry()).available
     if kind == "advice":
+        # "should I ..." / "what do I learn first" that names the jobs or the skill is a
+        # graph question; without names it stays the personal-advice refusal.
+        asked = route(text, llm_client=llm_client, available=available)
+        if isinstance(asked, Routed) and asked.call.capability in ("roadmap", "successors"):
+            _log_route(text, asked)
+            return asked
         return None
     if state.bindings and is_facts_followup(text, state.bindings) and not salary_subject(text):
         return None
     subject = salary_subject(text)
-    # The same default a run would use: no registry passed must not read as "nothing attached".
-    available = (registry or default_suite_registry()).available
     if subject == "" or (subject and "bls" not in available):
         return _finish(state, text, SALARY_REFUSE)
     if subject:

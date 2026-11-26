@@ -293,7 +293,8 @@ def _decide(
     if state.bindings and is_facts_followup(text, state.bindings) and not salary_subject(text):
         return None
     subject = salary_subject(text)
-    available = registry.available if registry else ()
+    # The same default a run would use: no registry passed must not read as "nothing attached".
+    available = (registry or default_suite_registry()).available
     if subject == "" or (subject and "bls" not in available):
         return _finish(state, text, SALARY_REFUSE)
     if subject:

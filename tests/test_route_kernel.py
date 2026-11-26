@@ -241,3 +241,8 @@ def test_a_file_discover_saves_a_call_that_replays_the_same_map(
     replayed = run(saved["capability"], saved["input"], registry=reg)
     written = json.loads((call_path.parent / "discovery.json").read_text("utf-8"))
     assert replayed.output == written
+
+
+def test_a_named_taxonomy_without_a_registry_argument_is_not_called_unattached() -> None:
+    reply = kernel.handle_line(new_session(), "map in ESCO", runner=_no_runner)
+    assert "isn't attached" not in reply.text

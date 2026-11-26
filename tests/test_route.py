@@ -244,3 +244,51 @@ def test_tag_routes_an_existing_folder_but_not_a_slash_phrase() -> None:
     assert isinstance(routed, Routed)
     assert (routed.call.capability, routed.call.input["path"]) == ("tag", "tests/fixtures")
     assert route("tag the skills and/or tasks", available=("esco",)) is None
+
+
+@pytest.mark.parametrize(
+    ("line", "capability", "expected"),
+    [
+        (
+            "I want to go from data analyst to data scientist, what do I learn first?",
+            "roadmap",
+            {"from": "data analyst", "to": "data scientist"},
+        ),
+        (
+            "from cashier to accountant. What should I study first?",
+            "roadmap",
+            {"from": "cashier", "to": "accountant"},
+        ),
+        (
+            "show me everything around object-oriented programming, two levels",
+            "map",
+            {"start": "object-oriented programming", "depth": 2},
+        ),
+        ("map the skills around welding", "map", {"start": "welding"}),
+    ],
+)
+def test_phrasings_a_user_typed_run_without_a_model(
+    line: str, capability: str, expected: dict[str, object]
+) -> None:
+    routed = route(line)
+    assert isinstance(routed, Routed)
+    assert routed.call.capability == capability
+    assert expected.items() <= routed.call.input.items()
+
+
+def test_learn_next_after_a_skill_stays_successors() -> None:
+    routed = route("what should I learn next after Python")
+    assert isinstance(routed, Routed)
+    assert routed.call.capability == "successors"
+
+
+@pytest.mark.parametrize(
+    "line",
+    [
+        "what should I learn first?",
+        "what skills does a nurse need?",
+        "path from nurse to midwife in ESCO",
+    ],
+)
+def test_ordinary_chat_lines_stay_with_the_chat(line: str) -> None:
+    assert route(line, available=("esco",)) is None

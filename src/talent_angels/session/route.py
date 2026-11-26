@@ -38,9 +38,14 @@ _A = r"(?:(?:an?|the)\s+)?"
 _END = r"\s*[?.!]*\s*$"
 _ANY_CUE = re.compile(
     r"\b(?:map|road\s?map|(?<!\bin\s)order(?!\s+to\b)|successors?|comes?\s+after|next\s+after|"
-    r"prerequisite|connect|relate|discover|tag|tagging)\b",
+    r"prerequisite|connect|relate|discover|tag|tagging|graph|linked|builds?\s+(?:up)?on|"
+    r"(?:learn|study)\s+(?:first|next)|everything\s+(?:around|related\s+to|connected\s+to)|"
+    r"(?:\d|one|two|three|four)\s+levels?)\b",
     re.I,
 )
+# Only means "roadmap" together with a from-to pair: "learn next after X" is successors.
+_LEARN_CUE = re.compile(r"\b(?:learn|study)\s+(?:first|next)\b|\bwhat\s+order\b", re.I)
+_TRAILING_ASK = re.compile(r"\s*[,;.?]\s*(?:(?:so|and)\s+)?(?:what|which|how|in\s+what)\b.*$", re.I)
 _PAIR = re.compile(rf"\bfrom\s+{_A}(.+?)\s+(?:to|→|->)\s+{_A}(.+?){_END}", re.I)
 _ROADMAP_CUE = re.compile(
     r"\b(?:road\s?map|learning\s+order|order\s+to\s+learn|in\s+what\s+order|"
@@ -71,8 +76,9 @@ _MAP_ROUTE = re.compile(
 )
 _MAP = re.compile(
     rf"^(?:please\s+)?(?:map(?:\s+out)?|(?:show|draw)\s+(?:me\s+)?(?:the\s+)?"
-    rf"(?:map|neighbou?rhood|graph)\s+(?:of|around|for))"
-    rf"(?:\s+(?:the\s+)?(?:(?:neighbou?rhood|graph)\s+(?:of|around)\s+)?(.*?))?{_END}",
+    rf"(?:map|neighbou?rhood|graph)\s+(?:of|around|for)|"
+    rf"show\s+(?:me\s+)?everything\s+(?:around|related\s+to|connected\s+to))"
+    rf"(?:\s+(?:the\s+)?(?:(?:neighbou?rhood|graph|skills)\s+(?:of|around)\s+)?(.*?))?{_END}",
     re.I,
 )
 _WORD_NUMBERS = {"one": 1, "two": 2, "three": 3, "four": 4}
@@ -364,8 +370,9 @@ def _keyword(text: str, available: Sequence[str]) -> Routed | Clarify | None:
         if discover_missing:
             return Clarify(NO_SUCH_PATH.format(path=discover_missing[0]), final=True)
 
-    if _ROADMAP_CUE.search(text):
-        pair = _PAIR.search(text)
+    asked = _TRAILING_ASK.sub("", text)  # "from A to B, what do I learn first?"
+    if _ROADMAP_CUE.search(text) or (_LEARN_CUE.search(text) and _PAIR.search(asked)):
+        pair = _PAIR.search(asked) or _PAIR.search(text)
         if pair is None:
             return Clarify(ROADMAP_CLARIFY)
         a, b = _named(pair.group(1)), _named(pair.group(2))

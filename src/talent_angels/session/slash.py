@@ -342,7 +342,7 @@ def echo(call: Call, *, by: str, file: str | None = None) -> str:
             val = inp.get(alias)
             if val is None and not info.is_required():
                 continue
-            if not info.is_required() and val == info.default:
+            if not info.is_required() and val == info.get_default(call_default_factory=True):
                 continue
             if call.capability == "tag" and alias == "no_llm":
                 continue

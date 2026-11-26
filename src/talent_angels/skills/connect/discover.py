@@ -82,7 +82,12 @@ def _recorded(entry: Mapping[str, Any] | None) -> Json:
     if entry is None:
         return {"status": "not_found"}
     if entry.get("id") and entry.get("status", "resolved") == "resolved":
-        return {"status": "resolved", "id": str(entry["id"]), "confidence": entry.get("confidence")}
+        picked = {"picked": True} if entry.get("picked") else {}
+        return picked | {
+            "status": "resolved",
+            "id": str(entry["id"]),
+            "confidence": entry.get("confidence"),
+        }
     if entry.get("status") == "unclear":
         return {"status": "unclear", "candidates": list(entry.get("candidates") or [])}
     return {"status": "not_found"}
@@ -141,6 +146,7 @@ def discover(
     kinds: Iterable[str] | None = None,
     max_nodes: int = DEFAULT_DISCOVER_MAX_NODES,
     recorded: Sequence[Mapping[str, Any]] | None = None,
+    picks: Sequence[str] = (),
     notes: Sequence[str] = (),
 ) -> Json:
     """Resolve, map, merge and classify ``items``; ``recorded`` replaces resolution."""
@@ -156,6 +162,18 @@ def discover(
     by_record = {
         (str(e.get("suite")), str(e.get("item", "")).casefold()): e for e in recorded or []
     }
+
+    chosen: dict[tuple[str, str], str] = {}  # (suite, item key) -> the user's node ID
+    for pick in picks:
+        item_text, sep, node_id = (part.strip() for part in pick.rpartition("="))
+        key, suite_name = item_text.casefold(), suite_of(node_id)
+        if not sep or key not in text or suite_name not in names:
+            raise ValueError(
+                f"bad pick {pick!r}: use ITEM=ID, with an item from the list and an ID from "
+                f"one of {', '.join(names)}"
+            )
+        if chosen.setdefault((suite_name, key), node_id) != node_id:
+            raise ValueError(f"two picks for {item_text!r} in {suite_name}")
 
     warnings: set[str] = set()
     state: dict[str, Json] = {}  # suite -> {"status": ok|error:<Type>}
@@ -179,6 +197,14 @@ def discover(
                         if recorded is not None
                         else _resolve(runtime.suite, name, item.text)
                     )
+                for (suite_name, key), node_id in chosen.items():
+                    if suite_name == name:
+                        res[(name, key)] = {
+                            "status": "resolved",
+                            "id": node_id,
+                            "confidence": None,
+                            "picked": True,
+                        }
             except Exception as exc:  # one broken suite must not hide the others
                 live.pop(name, None)
                 state[name] = {"status": f"error:{type(exc).__name__}"}
@@ -493,6 +519,7 @@ def discover(
                 resolved_block.append(
                     {"item": i.text, "suite": s, "status": "resolved"}
                     | {k: r[k] for k in ("id", "label", "kind", "confidence", "cite")}
+                    | ({"picked": True} if r.get("picked") else {})
                 )
             elif r["status"] == "unclear":
                 resolved_block.append(

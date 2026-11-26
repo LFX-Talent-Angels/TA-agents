@@ -8,11 +8,13 @@ from pathlib import Path
 import pytest
 
 from talent_angels.engine import run
+from talent_angels.engine.registry import Call
 from talent_angels.llm.protocol import LLMResult, Message
 from talent_angels.memory.paths import outputs_dir
 from talent_angels.runlog.writer import runlog_path
 from talent_angels.session import kernel
 from talent_angels.session.copy import SECRET_REFUSE, TAG_CANCELLED, TAG_NO_MODEL
+from talent_angels.session.slash import echo
 from talent_angels.session.store import new_session
 from tests.fakes.order_suite import registry
 from tests.test_roadmap import A, B
@@ -263,3 +265,8 @@ def test_learning_questions_that_look_like_advice_still_run(
         new_session(), line, runner=_no_runner, registry=registry(esco=roadmap_esco())
     )
     assert reply.text.startswith(f"Running **{capability}** with ")
+
+
+def test_the_echo_hides_an_empty_list_default() -> None:
+    call = Call(capability="discover", input={"items": [{"item": "SQL"}], "picks": []})
+    assert "picks" not in echo(call, by="keyword")

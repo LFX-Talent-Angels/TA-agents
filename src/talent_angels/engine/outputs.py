@@ -141,6 +141,7 @@ class ResolvedEntry(_Out):
     confidence: float | None = None
     cite: str | None = None
     candidates: list[DiscoverCandidate] | None = None
+    picked: bool | None = None  # the user chose this match; TA did not resolve it
 
 
 class GuessCounts(_Out):

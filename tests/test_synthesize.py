@@ -126,13 +126,13 @@ def test_synthesize_never_shows_past_turns_to_the_model(db_path: Path) -> None:
     "What did we talk about?" is answered in code (session.recall) instead.
     """
     _episode(db_path, "old-1", "what skills does a nurse need?", "nurse")
-    client = _Scripted("A nurse needs a licence and a training certificate.")
+    client = _Scripted("A nurse is on the map.")
     answer = synthesize(
         (_occ("esco", "esco:occupation:dev", "nurse"),),
         question="what training does a nurse need",
         llm_client=client,
     )
-    assert answer.startswith("A nurse needs")
+    assert answer.startswith("A nurse is")
     system = _system_prompt(client)
     assert "skills does a nurse need" not in system
     assert system.endswith(synth._SYNTH_SYSTEM)

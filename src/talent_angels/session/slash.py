@@ -17,7 +17,7 @@ from collections.abc import Callable
 from pathlib import Path
 from typing import Any, NoReturn
 
-from talent_angels.engine import CAPABILITIES, run
+from talent_angels.engine import CAPABILITIES, Call, run
 from talent_angels.llm.protocol import check_cancelled
 from talent_angels.memory.paths import outputs_dir
 from talent_angels.report.pages import map_page, plain, roadmap_page, successors_page
@@ -149,6 +149,21 @@ def _shown(labels: list[str]) -> str:
     return ", ".join(labels[:TOP]) + more
 
 
+def _show_map(data: dict[str, Any], folder: Path) -> list[str]:
+    path, html = _save(folder, "map", data, map_page(data))
+    s = data["summary"]
+    lines = [
+        f'Map for "{data["query"]}": {s["nodes"]} nodes, {s["edges"]} edges in '
+        f"{s['suites_mapped']} taxonomies, {s['crosswalk_links']} crosswalk links.",
+        "Per taxonomy: "
+        + ", ".join(f"{n} {plain(p['status'], n)}" for n, p in data["suites"].items()),
+    ]
+    nodes = [str(n["label"]) for n in data["nodes"]]
+    if nodes:
+        lines.append("Top: " + _shown(nodes))
+    return [*lines, *_pick_hints(data["suites"]), f"json: {path}", f"html: {html}"]
+
+
 def _map(argument: str | None, registry: SuiteRegistry) -> list[str]:
     p = _parser("map", words=True)
     p.add_argument("--route", action="store_true")
@@ -165,18 +180,14 @@ def _map(argument: str | None, registry: SuiteRegistry) -> list[str]:
     }
     ends = {"route_from": names[0], "route_to": names[1]} if a.route else {"start": names[0]}
     data = _engine_output("map", {**ends, **walk}, registry)
-    path, html = _save(_out("map", argument), "map", data, map_page(data))
-    s = data["summary"]
-    lines = [
-        f'Map for "{data["query"]}": {s["nodes"]} nodes, {s["edges"]} edges in '  # type: ignore[index]
-        f"{s['suites_mapped']} taxonomies, {s['crosswalk_links']} crosswalk links.",  # type: ignore[index]
-        "Per taxonomy: "
-        + ", ".join(f"{n} {plain(p['status'], n)}" for n, p in data["suites"].items()),  # type: ignore[attr-defined]
-    ]
-    nodes = [str(n["label"]) for n in data["nodes"]]  # type: ignore[attr-defined]
-    if nodes:
-        lines.append("Top: " + _shown(nodes))
-    return [*lines, *_pick_hints(data["suites"])] + [f"json: {path}", f"html: {html}"]  # type: ignore[arg-type]
+    return _show_map(data, _out("map", argument))
+
+
+def _show_discover(data: dict[str, Any], folder: Path) -> list[str]:
+    check_cancelled()  # Esc during the last step still writes nothing
+    paths = write_outputs(data, folder)
+    down = [f"{n}: {st['status']}" for n, st in data["suites"].items() if st["status"] != "ok"]
+    return [*discover_summary(data).split("\n"), *down, *(f"{k}: {v}" for k, v in paths.items())]
 
 
 def _discover(argument: str | None, registry: SuiteRegistry) -> list[str]:
@@ -197,10 +208,19 @@ def _discover(argument: str | None, registry: SuiteRegistry) -> list[str]:
         registry, items, suites=a.suites, depth=a.depth, breadth=a.breadth, kinds=a.kinds,
         max_nodes=a.max_nodes, recorded=recorded, notes=notes,
     )  # fmt: skip
-    check_cancelled()  # Esc during the last step still writes nothing
-    paths = write_outputs(data, _out("discover", argument, Path(a.file).stem))
-    down = [f"{n}: {st['status']}" for n, st in data["suites"].items() if st["status"] != "ok"]
-    return [*discover_summary(data).split("\n"), *down, *(f"{k}: {v}" for k, v in paths.items())]
+    return _show_discover(data, _out("discover", argument, Path(a.file).stem))
+
+
+def _show_roadmap(data: dict[str, Any], folder: Path, start: str, target: str) -> list[str]:
+    path, html = _save(folder, "roadmap", data, roadmap_page(data))
+    lines = [
+        f'Learning order from "{start}" to "{target}" ({data["policy"]}): '
+        + ", ".join(f"{n} {plain(s['status'], n)}" for n, s in data["suites"].items())
+    ]
+    for step in data["steps"]:
+        labels = [i["label"] for i in step["items"]]
+        lines.append(f"{step['step']}. {step['name']}: {_shown(labels)}")
+    return [*lines, *_pick_hints(data["suites"]), f"json: {path}", f"html: {html}"]
 
 
 def _roadmap(argument: str | None, registry: SuiteRegistry) -> list[str]:
@@ -215,14 +235,19 @@ def _roadmap(argument: str | None, registry: SuiteRegistry) -> list[str]:
         {"from": start, "to": target, "suites": a.suites, "per_step": a.per_step},
         registry,
     )
-    path, html = _save(_out("roadmap", argument), "roadmap", data, roadmap_page(data))
-    lines = [
-        f'Learning order from "{start}" to "{target}" ({data["policy"]}): '
-        + ", ".join(f"{n} {plain(s['status'], n)}" for n, s in data["suites"].items())
-    ]
-    for step in data["steps"]:
-        labels = [i["label"] for i in step["items"]]
-        lines.append(f"{step['step']}. {step['name']}: {_shown(labels)}")
+    return _show_roadmap(data, _out("roadmap", argument), start, target)
+
+
+def _show_successors(data: dict[str, Any], folder: Path, start: str) -> list[str]:
+    path, html = _save(folder, "successors", data, successors_page(data))
+    lines = [f'What comes after "{start}" ({data["policy"]}):']
+    for name, part in data["suites"].items():
+        if part.get("status") == "ambiguous" and part.get("candidates"):
+            continue  # listed once below, with the ids to rerun with
+        labels = [n["label"] for n in part.get("nodes", [])[1:]]
+        lines.append(
+            f"{name}: {plain(part['status'], name)}" + (f", {_shown(labels)}" if labels else "")
+        )
     return [*lines, *_pick_hints(data["suites"]), f"json: {path}", f"html: {html}"]
 
 
@@ -233,16 +258,7 @@ def _successors(argument: str | None, registry: SuiteRegistry) -> list[str]:
     (start,) = _names(a.words, "a skill name or id", pair=False)
     walk = {"suites": a.suites, "depth": a.depth, "breadth": a.breadth, "max_nodes": a.max_nodes}
     data = _engine_output("successors", {"skill": start, **walk}, registry)
-    path, html = _save(_out("successors", argument), "successors", data, successors_page(data))
-    lines = [f'What comes after "{start}" ({data["policy"]}):']
-    for name, part in data["suites"].items():
-        if part.get("status") == "ambiguous" and part.get("candidates"):
-            continue  # listed once below, with the ids to rerun with
-        labels = [n["label"] for n in part.get("nodes", [])[1:]]
-        lines.append(
-            f"{name}: {plain(part['status'], name)}" + (f", {_shown(labels)}" if labels else "")
-        )
-    return [*lines, *_pick_hints(data["suites"]), f"json: {path}", f"html: {html}"]
+    return _show_successors(data, _out("successors", argument), start)
 
 
 def _tag(argument: str | None, registry: SuiteRegistry) -> list[str]:
@@ -270,6 +286,148 @@ _RUNNERS: dict[str, Callable[[str | None, SuiteRegistry], list[str]]] = {
     "tag": _tag,
 }
 
+_PRESENT: dict[str, Callable[[dict[str, Any], Path, dict[str, Any]], list[str]]] = {
+    "map": lambda d, f, _i: _show_map(d, f),
+    "roadmap": lambda d, f, i: _show_roadmap(d, f, str(i["from"]), str(i["to"])),
+    "successors": lambda d, f, i: _show_successors(d, f, str(i["skill"])),
+    "discover": lambda d, f, _i: _show_discover(d, f),
+}
+
+
+def _write_json(folder: Path, filename: str, payload: dict[str, Any]) -> Path:
+    check_cancelled()
+    folder.mkdir(parents=True, exist_ok=True)
+    path = folder / filename
+    path.write_text(json.dumps(payload, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
+    return path
+
+
+def _argument(call: Call, file: str | None) -> str:
+    inp = call.input
+    suites = inp.get("suites")
+    if file is not None:
+        parts = [file, *(["--suites", ",".join(suites)] if suites else [])]
+        return shlex.join(parts)
+    parts = [str(inp["path"])]
+    if inp.get("no_llm"):
+        parts.append("--no-llm")
+    if inp.get("limit"):
+        parts.extend(["--limit", str(inp["limit"])])
+    if suites:
+        parts.extend(["--suites", ",".join(suites)])
+    return shlex.join(parts)
+
+
+def _label(inp: dict[str, Any]) -> str:
+    for key in ("start", "route_from", "from", "skill"):
+        if inp.get(key):
+            return str(inp[key])
+    items = inp.get("items") or []
+    if items and isinstance(items[0], dict) and items[0].get("item"):
+        return str(items[0]["item"])
+    return "x"
+
+
+def echo(call: Call, *, by: str, file: str | None = None) -> str:
+    """Code-written echo line telling the user exactly what capability runs and with what args."""
+    spec = CAPABILITIES[call.capability]
+    inp = call.input
+    if file is not None:
+        suites = inp.get("suites")
+        arg_text = f"on file={file}" + (f", suites={','.join(suites)}" if suites else "")
+    else:
+        shown: list[str] = []
+        for field_name, info in spec.input_model.model_fields.items():
+            alias = info.alias or field_name
+            val = inp.get(alias)
+            if val is None and not info.is_required():
+                continue
+            if not info.is_required() and val == info.default:
+                continue
+            if call.capability == "tag" and alias == "no_llm":
+                continue
+            if alias == "items" and isinstance(val, list):
+                labels = [
+                    str(it["item"]) for it in val[:3] if isinstance(it, dict) and "item" in it
+                ]
+                more = f" (+{len(val) - 3} more)" if len(val) > 3 else ""
+                shown.append(f"items={', '.join(labels)}{more}")
+            elif isinstance(val, list):
+                shown.append(f"{alias}={','.join(str(x) for x in val)}")
+            else:
+                shown.append(f"{alias}={val}")
+        arg_text = f"with {', '.join(shown)}" if shown else ""
+
+    if call.capability == "tag" and inp.get("no_llm") is False:
+        tail = "(uses your model; the cost is reported when it ends)."
+    elif spec.policy:
+        tail = f"({spec.policy}; deterministic, no model call)."
+    else:
+        tail = "(deterministic, no model call)."
+
+    line = f"Running **{call.capability}**" + (f" {arg_text}" if arg_text else "") + f" {tail}"
+    if by == "model":
+        line += " Your model picked the capability; it wrote none of the result."
+    return line
+
+
+def _guarded(name: str, fn: Callable[[], list[str]]) -> str:
+    try:
+        return "\n".join(f"- {ln}" if i else ln for i, ln in enumerate(fn()))
+    except _Bad as exc:
+        return f"/{name}: {exc}"
+    except _Failed as exc:
+        return f"/{name} failed ({exc}); the details are in the log."
+    except (OSError, ValueError, UnknownSuiteError) as exc:
+        return f"/{name}: {exc}"
+    except Exception as exc:  # noqa: BLE001 - a long batch must report, not traceback
+        # The message may carry a provider reply or a key: the chat gets the type only.
+        _log.warning("/%s failed", name, exc_info=True)
+        return f"/{name} failed ({type(exc).__name__}); the details are in the log."
+
+
+def run_call(
+    call: Call, registry: SuiteRegistry, *, by: str = "keyword", file: str | None = None
+) -> str:
+    """Say what runs, run it deterministically, summarise in code, save call.json."""
+    head = echo(call, by=by, file=file)
+    return head + "\n" + _guarded(call.capability, lambda: _run_call(call, registry, by, file))
+
+
+def _run_call(call: Call, registry: SuiteRegistry, by: str, file: str | None) -> list[str]:
+    name, inp = call.capability, call.input
+    if file is not None:
+        # Save the items that were read, so call.json alone replays the run.
+        try:
+            items, _ = read_items(Path(file).expanduser())
+        except (OSError, ValueError):
+            pass  # the runner below reports the bad file in one line
+        else:
+            replay = [
+                {"item": i.text, "kind": i.kind, "related_to": list(i.related_to)} for i in items
+            ]
+            call = call.model_copy(update={"input": {**inp, "items": replay}})
+    if file is not None or name == "tag":
+        argument = _argument(call, file)
+        lines = _RUNNERS[name](argument, registry)
+        folder = _out(name, argument, Path(file).stem if file else None)
+    else:
+        result = run(name, inp, registry=registry)
+        if result.output is None:
+            raise _Bad(result.error or result.status)
+        folder = _out(name, json.dumps(inp, sort_keys=True), _label(inp))
+        lines = _PRESENT[name](result.output, folder, inp)
+    _write_json(
+        folder,
+        "call.json",
+        {
+            **call.model_dump(mode="json"),
+            "routed_by": by,
+            **({"file": file} if file else {}),
+        },
+    )
+    return lines
+
 
 def capability_command(text: str) -> tuple[str, str | None] | None:
     """``(name, argument)`` when the line is one of the batch commands, else None."""
@@ -282,17 +440,4 @@ def capability_command(text: str) -> tuple[str, str | None] | None:
 
 def run_slash(name: str, argument: str | None, registry: SuiteRegistry) -> str:
     """Run one capability command. Bad input is one line, never a traceback."""
-    try:
-        return "\n".join(
-            f"- {ln}" if i else ln for i, ln in enumerate(_RUNNERS[name](argument, registry))
-        )
-    except _Bad as exc:
-        return f"/{name}: {exc}"
-    except _Failed as exc:
-        return f"/{name} failed ({exc}); the details are in the log."
-    except (OSError, ValueError, UnknownSuiteError) as exc:
-        return f"/{name}: {exc}"
-    except Exception as exc:  # noqa: BLE001 - a long batch must report, not traceback
-        # The message may carry a provider reply or a key: the chat gets the type only.
-        _log.warning("/%s failed", name, exc_info=True)
-        return f"/{name} failed ({type(exc).__name__}); the details are in the log."
+    return _guarded(name, lambda: _RUNNERS[name](argument, registry))

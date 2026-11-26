@@ -21,69 +21,35 @@ from talent_angels.llm.factory import get_llm_client
 from talent_angels.llm.protocol import bind_cancel
 from talent_angels.query_details import write_query_details
 from talent_angels.session.catalog import render_catalogue
-from talent_angels.session.copy import WELCOME
-from talent_angels.session.credentials import (
-    CredentialError,
-    looks_like_openrouter_key,
-    store,
-    verify,
-)
+from talent_angels.session.copy import NO_MODEL_NOTICE, WELCOME
 from talent_angels.session.kernel import handle_line
 from talent_angels.session.models import SessionState
+from talent_angels.session.route import Routed
+from talent_angels.session.route import route as route_plain
 from talent_angels.session.router import route_line
 from talent_angels.session.slash import capability_command
 from talent_angels.session.store import load_last, new_session, save_session, sessions_dir
 from talent_angels.session.switch import SwitchError, apply, current_choice, load_catalogue, resolve
 from talent_angels.suites import SuiteRegistry, default_suite_registry
+from talent_angels.tui.connect import ask_and_save
 from talent_angels.tui.picker_ui import Option, is_interactive, select
 from talent_angels.tui.render import render_assistant, render_status, render_welcome
 from talent_angels.tui.working import Cancelled, run_with_status
 
 
-def _collect_key(console: Console) -> str:
-    """Read the key with echo disabled, verify it, store it. Returns a message.
-
-    The value is never returned to the caller and never enters the transcript
-    or the run log, so it cannot be replayed to the model on a later turn.
-    """
-    console.print(
-        "[dim]Paste an OpenRouter key (input hidden). "
-        "Get one at https://openrouter.ai/keys — free models need no balance.[/]"
-    )
-    try:
-        key = console.input("[bold cyan]key ›[/] ", password=True).strip()
-    except (EOFError, KeyboardInterrupt):
-        console.print()
-        return "Cancelled. Nothing was stored."
-    if not key:
-        return "Nothing entered. Nothing was stored."
-    if not looks_like_openrouter_key(key):
-        return (
-            "That does not look like an OpenRouter key (they start with sk-or-). "
-            "Nothing was stored."
-        )
-    try:
-        summary = verify(key)
-        path = store(key)
-    except CredentialError as exc:
-        return f"Not stored: {exc}"
-    return f"{summary}. Saved to {path}. Use /model to pick one."
+def _writes_files(batch: bool, running: threading.Event) -> bool:
+    return batch or running.is_set()
 
 
-def _start_client(console: Console) -> LLMClient:
-    """Build the configured client, or fall back to the stub and say why.
-
-    A missing key raised out of main() before the welcome screen, so the first
-    run of a fresh checkout was a traceback with no way forward — and /login,
-    the command that fixes it, could never be reached. Start on the stub
-    instead: it answers every Locate and Connect question deterministically,
-    which is a working product, not an error state.
-    """
+def _start_client(console: Console, *, first_run: bool = False) -> LLMClient:
+    """Build the configured client, asking once on first interactive start if unset."""
+    if first_run and "LLM_PROVIDER" not in os.environ and is_interactive():
+        console.print(ask_and_save(console, first_run=True))
     try:
         return get_llm_client()
     except ValueError as exc:
         console.print(f"[yellow]Starting without a model:[/] {exc}")
-        console.print("[dim]Run /login to store an OpenRouter key, then /model to pick one.[/]")
+        console.print(f"[dim]{NO_MODEL_NOTICE}[/]")
         os.environ["LLM_PROVIDER"] = "none"
         os.environ["LLM_MODEL"] = "stub"
         return get_llm_client()
@@ -148,6 +114,11 @@ def _sync_runlog_path(state: SessionState, previous_key: str) -> str:
 
 def main(argv: Sequence[str] | None = None, *, registry: SuiteRegistry | None = None) -> int:
     args = list(sys.argv[1:] if argv is None else argv)
+    if args[:1] == ["setup"]:
+        from talent_angels.tui.connect import setup_main
+
+        return setup_main(args[1:])
+
     if args[:1] == ["tag"]:
         # Batch tagging is a one-shot command, not a chat turn: the chat's 45s
         # turn deadline would kill it mid-run, so it never enters the loop
@@ -172,7 +143,7 @@ def main(argv: Sequence[str] | None = None, *, registry: SuiteRegistry | None = 
     selected = registry or default_suite_registry()
     console = Console()
 
-    llm_client = _start_client(console)
+    llm_client = _start_client(console, first_run=True)
     try:
         state = load_last()
     except Exception:
@@ -239,6 +210,8 @@ def main(argv: Sequence[str] | None = None, *, registry: SuiteRegistry | None = 
         cancel = threading.Event()
         line_context.run(bind_cancel, cancel)
         batch = capability_command(line) is not None
+        # Set once a plain-language line starts a capability (it can write files).
+        running = threading.Event()
         if kind == "command" and not batch:
             # Commands can change session state, the active client, or the
             # process environment. Keep those effects on this thread so an
@@ -251,7 +224,11 @@ def main(argv: Sequence[str] | None = None, *, registry: SuiteRegistry | None = 
                 registry=selected,
             )
         else:
-            label = "Looking that up…" if kind == "map" else "Thinking…"
+            peek = route_plain(line, available=selected.available) if kind == "map" else None
+            if isinstance(peek, Routed):
+                label = f"Running {peek.call.capability}…"
+            else:
+                label = "Looking that up…" if kind == "map" else "Thinking…"
             if batch:
                 # /map /discover /roadmap /successors /tag change nothing but the copy of the
                 # state and their own files, so they run behind the same Esc watcher; they stop
@@ -270,10 +247,11 @@ def main(argv: Sequence[str] | None = None, *, registry: SuiteRegistry | None = 
                         line,
                         runner=make_runner(turn_outcomes),
                         llm_client=llm_client,
-                        registry=selected if batch else None,
+                        registry=selected,
+                        on_capability=running.set,
                     ),
                     cancel=cancel,
-                    wait_on_cancel=batch,
+                    wait_on_cancel=partial(_writes_files, batch, running),
                 )
             except Cancelled:
                 stage_scope.__exit__(None, None, None)
@@ -314,8 +292,8 @@ def main(argv: Sequence[str] | None = None, *, registry: SuiteRegistry | None = 
             )
             continue
         if reply.request_key:
-            console.print(_collect_key(console))
-            llm_client = get_llm_client()
+            console.print(ask_and_save(console))
+            llm_client = _start_client(console)
             render_status(
                 console,
                 suite=attached,

@@ -35,7 +35,7 @@ you  →  CLI or FastAPI (/docs)
 - Python **3.11+**
 - Docker (local Neo4j)
 - ESCO English **DATABASE** xlsx (CC BY 4.0) — not in git
-- An LLM key for the agentic demo (OpenRouter via LiteLLM)
+- An LLM key (optional — deterministic capabilities work without one). Start `ta-agent` to configure one interactively, use `/connect` inside the chat, or run `ta-agent setup`. See [`.env.example`](./.env.example) and [`docs/interfaces.md`](./docs/interfaces.md#bring-your-own-llm).
 
 This README assumes the workspace layout:
 

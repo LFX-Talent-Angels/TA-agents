@@ -133,6 +133,36 @@ On the command line, `--html PATH` on `map`, `roadmap` and `successors` also wri
 Press Esc during a chat `/discover` or `/tag` to stop it: it prints "Stopped. Nothing was
 written." (`/tag` keeps its ledger of finished units but never overwrites the workbook).
 
+## Chat: just say it
+
+In `ta-agent`, you can ask in plain language instead of typing slash commands:
+
+- **roadmap:** `"roadmap from data analyst to data scientist"`, `"what's the order from data analyst to data scientist?"`
+- **successors:** `"what comes after Python"`, `"what comes next after SQL in ESCO"`
+- **map:** `"map Python 2 levels"`, `"map the route from nurse to physician"`
+- **discover:** `"connect these: SQL, Python, statistics, Tableau"`, `"how do the items in items.csv connect?"`
+- **tag:** `"tag ./my-folder"` (free, no model), `"tag ./my-folder with my model"` (shows cost basis and asks `yes` first)
+
+Every routed line echoes `Running <capability> with …`, runs the deterministic capability, prints the code-written summary (zero model text), and saves `call.json` next to the output files. Rerun the exact call deterministically with:
+
+```bash
+ta-agent run <capability> "$(jq -c .input call.json)"
+```
+
+## Bring your own LLM
+
+Start `ta-agent` (asks on first interactive start), run `/connect` (`/login` is an alias), or run `ta-agent setup` from a terminal or script. Deterministic capabilities (`map`, `discover`, `roadmap`, `successors`, `tag --no-llm`) need no model at all.
+
+- `openai/...` → `OPENAI_API_KEY`
+- `anthropic/...` → `ANTHROPIC_API_KEY`
+- `gemini/...` → `GEMINI_API_KEY`
+- `openrouter/...` → `OPENROUTER_API_KEY`
+- `azure/<deployment>` → `AZURE_API_KEY`, `AZURE_API_BASE`, `AZURE_API_VERSION`
+- `ollama/<model>` → no key; `OLLAMA_API_BASE` (default `http://localhost:11434`)
+- any other LiteLLM model string → `TA_LLM_API_KEY`, `TA_LLM_API_BASE`
+
+Settings are verified with one tiny test call (free on OpenRouter and Ollama) and stored owner-only (`0600`) in `<TA home>/llm.env`. Precedence is `shell export > llm.env > .env`. HTTP and MCP hosts read these environment variables directly.
+
 ## HTTP API
 
 ```bash

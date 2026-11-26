@@ -6,7 +6,7 @@ from dataclasses import dataclass
 from typing import Literal
 
 CommandName = Literal[
-    "help", "quit", "save", "resume", "reset", "reset-all", "model", "login",
+    "help", "quit", "save", "resume", "reset", "reset-all", "model", "connect",
     "map", "discover", "roadmap", "successors", "tag",
 ]  # fmt: skip
 
@@ -25,7 +25,8 @@ _NAME_MAP: dict[str, CommandName] = {
     "resetall": "reset-all",
     "forget": "reset-all",
     "model": "model",
-    "login": "login",
+    "connect": "connect",
+    "login": "connect",
     "map": "map",
     "discover": "discover",
     "roadmap": "roadmap",

@@ -19,7 +19,8 @@ COMMANDS_BLOCK = (
     "**Commands**\n"
     "- `/help` — this list\n"
     "- `/model` — pick a model; type to filter, arrows to move\n"
-    "- `/login` — store an OpenRouter key (input hidden)\n"
+    "- `/connect` — use your own LLM (OpenAI, Anthropic, Gemini, OpenRouter, Azure, a local "
+    "Ollama, or any LiteLLM model); `/login` does the same\n"
     "- `/save [name]` — save this session\n"
     "- `/resume [name]` — resume a saved session (default: last)\n"
     "- `/reset` — forget this conversation (your profile and history stay)\n"
@@ -37,7 +38,9 @@ COMMANDS_BLOCK = (
     "`/map`, `/discover`, `/roadmap`, `/successors` and `/tag` print a short summary and "
     "write the full result as files under your TA home, `outputs/` (JSON, and a web page "
     "to open in a browser); they never call the model (except `/tag` without `--no-llm`).\n\n"
-    "Press `esc` while a question or a long command is running to stop it."
+    "Press `esc` while a question or a long command is running to stop it.\n\n"
+    "Or just say it: “roadmap from data analyst to data scientist”, “what comes after Python”, "
+    "“map Python 2 levels”, “connect these: SQL, Python, statistics”, “tag ./my-folder”."
 )
 STOPPED = "Stopped. Nothing was written."
 
@@ -67,3 +70,50 @@ MAP_NEXT_STEP = "You can ask for essential skills, optional skills, or pick anot
 # that, the only way to see the rest was an undocumented "say list all skills"
 # follow-up. Say the words that actually work.
 CONNECT_MORE_HINT = 'Ask "show more skills" to see the rest.'
+
+SCOPE_REFUSE = (
+    "I only report what the taxonomies hold: occupations, skills and how they connect. I don't "
+    "write courses, syllabi or learning outcomes, I don't invent or guess skills, and I can't set "
+    "the taxonomy data aside. Name a job or a skill and I'll show what the map lists, with its "
+    "source."
+)
+SALARY_NOTE = "Pay comes only from what BLS publishes, so this is the BLS record."
+SALARY_REFUSE = (
+    "I only report pay that BLS publishes on its occupation records. Name the job, "
+    "for example: “registered nurse in BLS”."
+)
+SECRET_REFUSE = (
+    "That looks like an API key, so I didn't keep it or send it anywhere. Use "
+    "/connect to add your model; its key prompt is hidden."
+)
+ROUTE_CLARIFY = (
+    "I couldn't tell which of these you want: “roadmap from data analyst to data "
+    "scientist”, “what comes after Python”, “map Python 2 levels”, “connect these: "
+    "SQL, Python, statistics”, or “tag ./my-folder”. Nothing was run."
+)
+ROADMAP_CLARIFY = (
+    "Which two jobs? Say: roadmap from data analyst to data scientist. Nothing was run."
+)
+SUCCESSORS_CLARIFY = "After which skill? Say: what comes after Python. Nothing was run."
+MAP_CLARIFY = "Map what? Say: map Python, or map the route from nurse to midwife. Nothing was run."
+NAME_CLARIFY = (
+    "That doesn't look like one job or skill name. Give just the name, for example: "
+    "map Python. Nothing was run."
+)
+NO_SUCH_PATH = (
+    "I can't find {path}. Give the full path to an existing file or folder. Nothing was run."
+)
+UNATTACHED = "{names} isn't attached here. Attached: {available}. Nothing was run."
+CANT_RUN = "I can't run {cap}: {error}. Nothing was run."
+TAG_CONFIRM = (
+    "Tagging with your model ({model}) makes about one model call per row for each of {count} "
+    "taxonomies ({suites}), across {files} file(s), plus some rewrites. There is no exact estimate "
+    "before the run; the cost is reported at the end. Reply **yes** to start. Anything else "
+    "cancels; “tag {path}” alone runs free, without the model."
+)
+TAG_CANCELLED = "Not started. Nothing was tagged and nothing was spent."
+TAG_NO_MODEL = "No model is connected, so this runs without one (free). /connect adds yours."
+NO_MODEL_NOTICE = (
+    "No model connected: every capability still works, deterministically. "
+    "/connect adds your own LLM."
+)

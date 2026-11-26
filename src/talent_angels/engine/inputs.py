@@ -98,6 +98,11 @@ class DiscoverRequest(_Request):
     nodes: list[dict[str, Any]] | None = Field(
         default=None, description="A previous result's `resolved` block: skips resolution."
     )
+    picks: list[str] = Field(
+        default_factory=list,
+        max_length=MAX_ITEMS * 5,
+        description='Your own match for an unclear item, as "item=node id".',
+    )
 
 
 class TagRequest(_Request):

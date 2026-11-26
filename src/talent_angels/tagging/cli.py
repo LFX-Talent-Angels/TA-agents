@@ -109,6 +109,11 @@ def _print_summary(summary: RunSummary, out: Callable[[str], None] = print) -> N
         out(f"model_calls={summary.model_calls} cost_usd={cost_text}")
     if summary.reviews_applied or summary.retried:
         out(f"reviews_applied={summary.reviews_applied} retried={summary.retried}")
+    if summary.units == 0:
+        out(
+            "warning: no rows were tagged: this profile matched none. "
+            "For a plain table or list, add --profile generic"
+        )
     for warning in summary.warnings:
         out(f"warning: {warning}")
     for output in summary.outputs:

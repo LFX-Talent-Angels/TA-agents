@@ -439,3 +439,24 @@ def test_tool_only_looks_at_the_edges_into_the_connector_not_all_edges_at_the_it
     order = [(c["tool_only"], c["broad"], -c["item_count"], c["label"].casefold(), c["id"])
              for c in data["connectors"]]  # fmt: skip
     assert order == sorted(order) and data["connectors"][-1]["label"] == "oven"
+
+
+def test_a_pick_resolves_one_item_and_survives_a_rerun_from_the_node_set() -> None:
+    registry = SuiteRegistry({"s": suite_factory("s", _graph())}, default="s")
+    items = _items("web developer", "javascrip")
+    data = discover(registry, items, depth=1, picks=["JavaScrip=s:js"])
+    row = next(r for r in data["resolved"] if r["item"] == "javascrip")
+    assert (row["status"], row["id"], row["picked"]) == ("resolved", "s:js", True)
+    assert data["links"]
+    again = discover(registry, items, depth=1, recorded=data["resolved"])
+    assert _dump(again) == _dump(data)
+
+
+@pytest.mark.parametrize(
+    "picks",
+    [["nope=s:js"], ["SQL"], ["SQL=other:x"], ["SQL=s:sql", "sql=s:js"]],
+)
+def test_a_bad_pick_is_refused(picks: list[str]) -> None:
+    registry = SuiteRegistry({"s": suite_factory("s", _graph())}, default="s")
+    with pytest.raises(ValueError):
+        discover(registry, _items("SQL"), picks=picks)

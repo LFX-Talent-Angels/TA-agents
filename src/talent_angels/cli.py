@@ -207,6 +207,13 @@ def _build_parser() -> argparse.ArgumentParser:
         help="Skip resolution: use the `resolved` block of a previous discovery.json (or one "
         "you edited). The same set gives byte-identical output.",
     )
+    discover_parser.add_argument(
+        "--pick",
+        action="append",
+        default=[],
+        metavar="ITEM=ID",
+        help="Choose the match for an unclear item (repeatable). IDs are listed in the report.",
+    )
     discover_parser.add_argument("--out", default=None, help="Output folder (default: the input's)")
 
     roadmap_parser = sub.add_parser(
@@ -617,6 +624,7 @@ def _run_discover(args: argparse.Namespace, registry: SuiteRegistry) -> int:
             kinds=args.kinds.split(",") if args.kinds else None,
             max_nodes=args.max_nodes,
             recorded=recorded,
+            picks=args.pick,
             notes=notes,
         )
     except (OSError, ValueError, UnknownSuiteError) as exc:  # bad input is a message, not a trace
@@ -624,6 +632,8 @@ def _run_discover(args: argparse.Namespace, registry: SuiteRegistry) -> int:
         return 2
     paths = write_outputs(data, args.out or Path(args.file).resolve().parent)
     print(discover_summary(data))
+    if any(r.get("status") == "unclear" for r in data["resolved"]):
+        print('some items are unclear: add --pick "item=ID" with an ID from the report')
     for name, state in data["suites"].items():
         if state["status"] != "ok":
             print(f"{name}: {state['status']}", file=sys.stderr)

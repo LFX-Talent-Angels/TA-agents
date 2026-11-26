@@ -224,7 +224,7 @@ def _discover(i: DiscoverRequest, reg: SuiteRegistry, ctx: RunContext) -> Json:
     items, notes = build_items(x.model_dump() for x in i.items)
     return discover(
         reg, items, suites=i.suites, depth=i.depth, breadth=i.breadth, kinds=i.kinds,
-        max_nodes=i.max_nodes, recorded=i.nodes, notes=notes,
+        max_nodes=i.max_nodes, recorded=i.nodes, picks=i.picks, notes=notes,
     )  # fmt: skip
 
 
